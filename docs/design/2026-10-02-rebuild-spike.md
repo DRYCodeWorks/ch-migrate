@@ -21,6 +21,11 @@ Four things change from the planned mechanism:
 **Materialized views follow the table name across `EXCHANGE`,** so dependent views need no
 re-pointing.
 
+**Decision (Dan, 2026-10-02):** all four are adopted. The guarantee is now "no acknowledged row is
+lost". Fire-and-forget async writers need an opt-in written in the migration file. Partition-key
+changes are refused in 1.0. Cloud is verified on a DRY-owned Cloud service at each acceptance
+check (DRY-1413). Implementation: DRY-1407.
+
 ## End-to-end runs
 
 Writers inserted throughout. The sorting key changed from `ORDER BY id` to `(k, ts, id)`. The sync

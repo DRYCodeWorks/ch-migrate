@@ -11,13 +11,14 @@ our real `env.py`. Scripts, migrations and logs are in `spikes/2026-10-02-dialec
 - The official dialect cannot run on Python 3.9. Every release that ships the Alembic integration
   requires Python 3.10 or later and refuses 3.9 at import. Alembic itself has required 3.10 since
   1.17.0.
-- Under the product definition's rule (Python 3.9 is a hard requirement), 0.6 keeps
-  clickhouse-sqlalchemy and passes an explicit session id through `connect_args`. That
-  configuration was verified to keep a `SET` in effect.
+- The fallback, clickhouse-sqlalchemy with an explicit session id passed through `connect_args`,
+  was also verified to keep a `SET` in effect.
 - **Independent of the dialect, today's version table can re-run a migration** (Q2). This must be
   fixed in 0.6.
-- **Decision: pending.** The finding conflicts with the positioning to "build on the official
-  dialect"; see DRY-1391.
+- **Decision (Dan, 2026-10-02):** 0.6 adopts the official dialect and requires Python 3.10 or
+  later. This replaces the product definition's original rule, which made 3.9 a hard requirement
+  and would have forced the fallback. 0.5.x is the last line for 3.9. Implementation: DRY-1392
+  (dialect) and DRY-1412 (version table).
 
 ## Q1. Does a `SET` carry over to the next statement?
 
