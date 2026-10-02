@@ -60,6 +60,7 @@ To stay on 0.5.x until then, pin `ch-migrate-cli==0.5.1`.
 ### Added
 
 - Versioned `--json` output and published JSON Schemas for status, history, lint, and diff, with machine-readable errors, graph-resolved applied revisions, explicit waiver reasons, and CI-friendly exit codes.
+- A SHA-pinned GitHub Actions drift gate that preserves the JSON report on failure; its install, credential, comparison, and exit steps run against the integration fixture for both matching and out-of-band schemas.
 - Reviewed idempotency corpus covering DDL, mutations, inserts, and partition operations.
 - Required-reason `ch-migrate: allow-non-idempotent` statement waivers, reported as INFO.
 - Gate findings say how to make the flagged statement safe to run twice, using its own names: the exact `IF NOT EXISTS` or `IF EXISTS` rewrite, or what a retry would do and the usual fix, such as `TRUNCATE` before a backfill or `REPLACE PARTITION` instead of `ATTACH PARTITION ... FROM`.

@@ -1,0 +1,85 @@
+name: ClickHouse schema drift
+
+on:
+  schedule:
+    - cron: '17 6 * * *'
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  drift:
+    # Fork pull requests cannot access repository secrets. Never use
+    # pull_request_target to expose database credentials to untrusted code.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    env:
+      # Set to an approved ch-migrate-cli requirement with --json support.
+      # For example, pin a released version after that feature is published.
+      # There is no fallback to an older release without the required command.
+      CH_MIGRATE_PACKAGE: ${{ vars.CH_MIGRATE_PACKAGE }}
+      CH_MIGRATE_PYTHON: '3.12'
+      # These name a config.yaml environment and its committed snapshot folder.
+      CH_MIGRATE_ENV: ${{ vars.CH_MIGRATE_ENV }}
+      CH_MIGRATE_SNAPSHOT_DIR: ${{ vars.CH_MIGRATE_SNAPSHOT_DIR }}
+      UV_TOOL_DIR: ${{ github.workspace }}/.ch-migrate-tools
+      UV_TOOL_BIN_DIR: ${{ github.workspace }}/.ch-migrate-bin
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          python-version: '3.12'
+      - name: Install ch-migrate
+        id: install
+        run: |
+          : "${CH_MIGRATE_PACKAGE:?Set a package requirement with JSON support}"
+          : "${CH_MIGRATE_ENV:?Set the config.yaml environment name}"
+          : "${CH_MIGRATE_SNAPSHOT_DIR:?Set the committed snapshot path}"
+          uv tool install --python "$CH_MIGRATE_PYTHON" "$CH_MIGRATE_PACKAGE"
+      - name: Write scoped database credential
+        id: credentials
+        env:
+          # Password for config.yaml's migration_user in CH_MIGRATE_ENV.
+          # Use a dedicated schema-inspection account, not an admin credential.
+          DRIFT_MIGRATION_PASSWORD: ${{ secrets.DRIFT_MIGRATION_PASSWORD }}
+        run: |
+          umask 077
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          password = os.environ['DRIFT_MIGRATION_PASSWORD']
+          if not password:
+              raise SystemExit('DRIFT_MIGRATION_PASSWORD is not configured')
+          key = 'CH_' + os.environ['CH_MIGRATE_ENV'].upper() + '_MIGRATION_PASSWORD'
+          Path('.env.local').write_text(key + '=' + json.dumps(password) + '\n')
+          PY
+      - name: Compare committed schema with live schema
+        id: compare
+        continue-on-error: true
+        run: |
+          "$UV_TOOL_BIN_DIR/ch-migrate" diff "$CH_MIGRATE_ENV" \
+            --snapshot-dir "$CH_MIGRATE_SNAPSHOT_DIR" --json > drift.json
+      - name: Preserve drift report even when comparison fails
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: schema-drift
+          path: drift.json
+          if-no-files-found: warn
+      - name: Fail on drift or comparison errors
+        id: gate
+        if: always()
+        env:
+          DRIFT_OUTCOME: ${{ steps.compare.outcome }}
+        run: |
+          # compare exits 1 on drift and 2 on errors; neither is a clean result.
+          test "$DRIFT_OUTCOME" = success
+      - name: Remove the temporary credential file
+        id: cleanup
+        if: always()
+        run: rm -f .env.local
