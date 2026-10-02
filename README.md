@@ -352,9 +352,57 @@ def upgrade():
     create_dictionary("history/dictionaries/dict_users/001_create.sql")
 ```
 
+## Drift detection in CI
+
+After applying and verifying migrations in an environment, capture its expected
+schema:
+
+```bash
+ch-migrate snapshot dev
+ch-migrate diff dev --snapshot-dir migrations/sql/snapshots/20261002_120000 --json
+```
+
+Replace the example timestamp with the directory reported by `snapshot`. Review
+and commit that directory alongside the migration head. Do not regenerate the
+snapshot automatically in the drift job: doing so would accept an out-of-band
+change as the new expected schema. Re-snapshot after an intentional migration or
+an explicitly reviewed reconciliation, not merely to turn a failed check green.
+
+Copy [the GitHub Actions example](docs/examples/github-actions-drift.yml) into the
+consumer repository's `.github/workflows/`. It runs on a daily schedule and
+same-repository pull requests; fork PRs are excluded because they have no database
+secret. It does not use `pull_request_target`. All actions are pinned by commit.
+The checkout must contain `config.yaml` and the committed snapshot, and the runner
+must be able to reach the selected server.
+
+Configure these repository variables:
+
+| Variable | Value |
+|---|---|
+| `CH_MIGRATE_PACKAGE` | An approved, pinned `ch-migrate-cli` requirement that supports `diff --json`. There is no fallback to an older release. |
+| `CH_MIGRATE_ENV` | An environment name in `config.yaml`, such as `dev`. |
+| `CH_MIGRATE_SNAPSHOT_DIR` | That environment's committed snapshot directory. |
+
+Set the repository secret `DRIFT_MIGRATION_PASSWORD` to the password for that
+environment's configured user. Prefer a dedicated schema-inspection account,
+not an admin account. The job writes a private `.env.local` without printing the
+value and removes the file even when comparison fails.
+
+`diff --json` exits **0** for matching schemas, **1** for drift, and **2** for a
+configuration/connection error. The workflow saves `drift.json`, uploads it even
+on comparison failure, then fails the job for either nonzero result. The report
+names changed tables and fields. The example's install and shell steps are tested
+locally against the source checkout; that does not publish the package or prove
+that a previously released version contains JSON support.
+
+Without `--snapshot-dir`, `diff` sorts entries in `migrations/sql/snapshots/` by
+name and chooses the last one. It does not select a snapshot by environment or
+recorded migration revision. Use an explicit path in CI, especially when one
+repository holds snapshots for several environments.
+
 ## Statement classification
 
-`clickhouse_alembic.classify.classify(statement, live_schema=None)` accepts SQL or
+`ch_migrate.classify.classify(statement, live_schema=None)` accepts SQL or
 an extracted migration statement. It returns `Classification(kind, table, detail)`;
 `live_schema` is the existing introspection `Schema`. Classification does not run
 SQL or change lint's gate rules.
