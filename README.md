@@ -474,9 +474,39 @@ Run the opt-in real-server suite:
 uv run --locked pytest -q -m integration
 ```
 
-The fixture starts `clickhouse/clickhouse-server:26.3` in its own `chm-it-*` container on a random loopback port. Each test uses a separate database. Finalizers clean up on success, failure, and handled interrupts; a forced process kill cannot run finalizers. Docker-unavailable runs skip with a reason.
+The single-server fixture starts `clickhouse/clickhouse-server:26.3` in its own `chm-it-*` container on a random loopback port. Each test uses a separate database. Finalizers clean up on success, failure, and handled interrupts; a forced process kill cannot run finalizers. Docker-unavailable runs skip with a reason.
 
 `CH_MIGRATE_IT_IMAGE` overrides the image tag. `CH_MIGRATE_IT_URL` selects a dedicated test server instead of starting Docker. It is an HTTP(S) URL with credentials supplied only through the environment. Tests create and drop databases there: never select a shared or production server, and never commit the URL.
+
+For the single-server suite only:
+
+```bash
+uv run --locked pytest -q -m "integration and not cluster"
+```
+
+For the replicated harness:
+
+```bash
+uv run --locked --python 3.12 pytest -q -m "integration and cluster" -k harness
+```
+
+`clickhouse_cluster` owns a Docker network and two nodes, with Keeper embedded
+in node 1. `it_cluster` has one shard and two replicas. `cluster_project` creates
+an **Atomic database on both nodes with `ON CLUSTER`**; replicated tables use
+`ReplicatedMergeTree` with a shared Keeper path and per-node replica macros.
+The fixture exposes `clients[1]` and `clients[2]`, plus `stop_node(2)` and
+`start_node(2)`. Read `clients[2]` again after a restart; its connection is renewed.
+
+Tests prove row replication and both hosts' distributed-DDL completion. The
+node-down scenario uses a five-second distributed-DDL timeout, inspects the
+unfinished host, then proves catch-up after restart. Its HTTP response is
+buffered with `wait_end_of_query=1` so the timeout is not obscured by a truncated
+chunked response.
+
+Cluster fixtures use the same image-tag override, remove their own containers,
+anonymous volumes, and network, and never operate on external servers. Cluster
+tests skip when `CH_MIGRATE_IT_URL` is set. The integration CI job runs cluster
+tests on Python 3.12 only, and single-server tests on 3.10 and 3.14.
 
 ## License
 

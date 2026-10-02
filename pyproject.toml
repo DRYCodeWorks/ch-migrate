@@ -98,5 +98,8 @@ module = [
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
-markers = ["integration: tests against a real, isolated ClickHouse server"]
+markers = [
+    "integration: tests against a real, isolated ClickHouse server",
+    "cluster: tests against an owned one-shard, two-replica ClickHouse cluster",
+]
 addopts = "-m 'not integration'"

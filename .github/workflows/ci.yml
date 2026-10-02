@@ -35,11 +35,17 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.10", "3.14"]
+        include:
+          - python-version: "3.10"
+            marker: "integration and not cluster"
+          - python-version: "3.12"
+            marker: "integration and cluster"
+          - python-version: "3.14"
+            marker: "integration and not cluster"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
           python-version: ${{ matrix.python-version }}
       - name: Test against isolated ClickHouse
-        run: uv run --locked pytest -q -m integration
+        run: uv run --locked pytest -q -m "${{ matrix.marker }}"
