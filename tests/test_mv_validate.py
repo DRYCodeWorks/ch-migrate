@@ -893,6 +893,8 @@ class TestCLIIntegration:
 
         monkeypatch.chdir(tmp_path)
         runner = CliRunner()
+        upgraded = runner.invoke(main, ["upgrade-env"], catch_exceptions=False)
+        assert upgraded.exit_code == 0, upgraded.output
         result = runner.invoke(main, ["up", "dev"], catch_exceptions=False)
         assert result.exit_code != 0
         assert "create_mv000_create_mv.py:" in result.output  # the offending file is named
@@ -919,13 +921,15 @@ class TestCLIIntegration:
 
         monkeypatch.chdir(tmp_path)
         runner = CliRunner()
-        # With --skip-mv-check, it should pass validation but fail at alembic (no DB)
+        # With --skip-mv-check, validation is bypassed before the env-version guard.
         result = runner.invoke(
             main, ["up", "dev", "--skip-mv-check"], catch_exceptions=False
         )
         # The validation finding must not be reported
         output = result.output
         assert "create_mv000_create_mv.py:" not in output
+        assert "MV declaration validation failed" not in result.output
+        assert "upgrade-env" in result.output
 
 
 class TestLintIntegration:

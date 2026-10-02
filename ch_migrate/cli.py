@@ -42,6 +42,21 @@ def render_template(template_path: Path, **kwargs: str) -> str:
     return content
 
 
+def _require_current_env() -> None:
+    from ch_migrate.alembic_env import ENV_VERSION
+    from ch_migrate.rebase import _literal_assignment
+
+    path = Path.cwd() / "migrations" / "env.py"
+    if (
+        path.is_file()
+        and _literal_assignment(path.read_text(), "CH_MIGRATE_ENV_VERSION") == ENV_VERSION
+    ):
+        return
+    raise click.ClickException(
+        "This project's migrations/env.py is from ch-migrate 0.x. Run `ch-migrate upgrade-env`."
+    )
+
+
 def _refuse_irreversible_downgrade(environment: str, target: str) -> None:
     from ch_migrate.connection import get_current_heads
     from ch_migrate.downgrade import irreversible_reason, revisions_to_revert
@@ -226,6 +241,7 @@ def up(environment: str, revision: str, skip_mv_check: bool, verbose: bool) -> N
     Validates that migrations creating MATERIALIZED VIEWs include proper
     MV_DECLARATIONS and companion grants. Use --skip-mv-check to bypass.
     """
+    _require_current_env()
     if not skip_mv_check:
         _check_mv_declarations()
     sys.exit(run_migrations(environment, ["upgrade", revision], verbose=verbose))
@@ -240,6 +256,7 @@ def down(environment: str, revision: str, verbose: bool) -> None:
 
     By default, rolls back the last migration. Use --revision to specify a target.
     """
+    _require_current_env()
     _refuse_irreversible_downgrade(environment, revision)
     sys.exit(run_migrations(environment, ["downgrade", revision], verbose=verbose))
 
@@ -274,6 +291,7 @@ def history(environment: str) -> None:
 
     Displays a tree of all migrations, color-coded by applied status.
     """
+    _require_current_env()
     from ch_migrate.display import render_history
 
     state = _load_migration_state(environment)
@@ -934,6 +952,10 @@ def upgrade_env() -> None:
 
     if not env_py_src.exists():
         ui.fail("The package's env.py is missing; reinstall ch-migrate-cli.")
+
+    if env_py_dst.exists() and env_py_dst.read_bytes() == env_py_src.read_bytes():
+        click.echo("migrations/env.py is already current; backup unchanged.")
+        return
 
     # Back up existing env.py if present
     if env_py_dst.exists():

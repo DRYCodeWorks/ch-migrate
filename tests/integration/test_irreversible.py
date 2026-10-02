@@ -2,7 +2,6 @@
 
 import subprocess
 import sys
-import time
 
 import pytest
 
@@ -37,11 +36,8 @@ def irreversible_project(project):
         },
         down_revision="bbbb",
     )
-    # Isolate the guard from the old dialect's asynchronous version-table mutations.
-    for revision in ("aaaa", "bbbb", "cccc"):
-        result = project.run("up", "it", "-r", revision)
-        assert result.exit_code == 0, result.output
-        _await_head(project, revision)
+    result = project.run("up", "it")
+    assert result.exit_code == 0, result.output
     return project
 
 
@@ -49,7 +45,7 @@ def test_irreversible_down_preserves_head_and_schema(irreversible_project):
     project = irreversible_project
     result = project.run("down", "it")
     assert result.exit_code == 0, result.output
-    _await_head(project, "bbbb")
+    assert _heads(project) == [("bbbb",)]
     before = project.client.command(f"SHOW CREATE TABLE {project.database}.logs")
     for args in (("down", "it"), ("down", "it", "-r", "base")):
         refused = project.run(*args)
@@ -78,7 +74,7 @@ def test_irreversible_direct_alembic_backstop(irreversible_project, monkeypatch)
     project = irreversible_project
     result = project.run("down", "it")
     assert result.exit_code == 0, result.output
-    _await_head(project, "bbbb")
+    assert _heads(project) == [("bbbb",)]
     monkeypatch.setenv("CH_ENVIRONMENT", "it")
     result = subprocess.run(
         [sys.executable, "-m", "alembic", "downgrade", "-1"],
@@ -92,16 +88,7 @@ def test_irreversible_direct_alembic_backstop(irreversible_project, monkeypatch)
     assert _heads(project) == [("bbbb",)]
 
 
-def _await_head(project, revision):
-    deadline = time.monotonic() + 5
-    while time.monotonic() < deadline:
-        if _heads(project) == [(revision,)]:
-            return
-        time.sleep(0.02)
-    pytest.fail(f"Version-table mutation did not settle at {revision}")
-
-
 def _heads(project):
     return project.client.query(
-        f"SELECT version_num FROM {project.database}.alembic_version FINAL"
+        f"SELECT version_num FROM {project.database}.alembic_version"
     ).result_rows

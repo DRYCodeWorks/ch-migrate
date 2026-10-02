@@ -2,7 +2,7 @@
 
 ## What it is
 
-`ch-migrate` manages SQL-first ClickHouse migrations across environments: author SQL files, bootstrap databases and roles, inspect migrations and dependencies, and compare schema snapshots. Alembic owns revision history; the database dialect owns DDL compilation. This operational layer complements ClickHouse's official Alembic integration rather than replacing it. This development line still uses `clickhouse-sqlalchemy` for Alembic connections; it does not imply an endorsement from ClickHouse.
+`ch-migrate` manages SQL-first ClickHouse migrations across environments: author SQL files, bootstrap databases and roles, inspect migrations and dependencies, and compare schema snapshots. Alembic owns revision history; ClickHouse's official `clickhouse-connect[alembic]` integration owns the dialect and DDL compilation. ch-migrate supplies the operational layer above them, without implying an endorsement from ClickHouse.
 
 Background: [ClickHouse migrations with Alembic](https://www.drycodeworks.com/articles/dev-guides/clickhouse-migrations-with-alembic).
 
@@ -20,6 +20,29 @@ The command is `ch-migrate`, the PyPI package is `ch-migrate-cli` (PyPI treats `
 To switch an existing install, remove the old package first, because both install the `ch-migrate` command and the `clickhouse_alembic` folder: `uv tool uninstall clickhouse-alembic && uv tool install ch-migrate-cli`, or `pip uninstall clickhouse-alembic && pip install ch-migrate-cli`. In a project that lists `clickhouse-alembic` as a dependency, replace it with `ch-migrate-cli`.
 
 This README describes the source checkout, which may be ahead of PyPI. To try an unreleased checkout locally, run `uv tool install .` in the repository. For development without installing a global tool, use `uv run --locked ch-migrate`.
+
+## Upgrade from 0.x
+
+0.6 requires Python 3.10+; 0.5.x is the last line supporting Python 3.9.
+After upgrading the package, run this in each migration project:
+
+```bash
+ch-migrate upgrade-env
+```
+
+`init` and `upgrade-env` write a thin version-2 environment that delegates to the
+package. The old file is saved as `migrations/env.py.bak`; repeating the command
+on the current shim leaves that backup intact. Review any old customizations.
+Existing Python migrations and version tables continue to work without edits.
+`up`, `down`, `status`, and `history` refuse old environments before connecting
+and tell you to run `upgrade-env`.
+
+One HTTP session spans a migration run, including later revisions in that run.
+A standalone `SET` therefore carries into following revisions. Prefer a
+statement's `SETTINGS` clause when the change should apply only to that query.
+`session_timeout` in an environment or `defaults` sets the idle timeout in
+seconds (default `1800`). If that session expires, the next request fails rather
+than silently recreating a session with default settings.
 
 ## Quick start
 
@@ -133,7 +156,7 @@ project/
 
 Keyword arguments to `run_sql` add or override substitutions. All other braces remain literal, including JSON and ClickHouse parameters such as `{id:UInt64}`. Doubled braces are not format escapes. Write statements that are safe to repeat where possible, such as `CREATE ... IF NOT EXISTS` and `DROP ... IF EXISTS`.
 
-To render without executing, set `CH_ENVIRONMENT` and run `alembic upgrade head --sql`. Existing projects need `ch-migrate upgrade-env` for the offline version-table and literal-rendering fixes. The package requires Alembic 1.14 or later for that extension point.
+To render without executing, set `CH_ENVIRONMENT` and run `alembic upgrade head --sql`. Existing projects need `ch-migrate upgrade-env` to use the packaged environment. The package requires Alembic 1.18 or later and the official `clickhouse-connect[alembic]` integration.
 
 ### Irreversible migrations
 

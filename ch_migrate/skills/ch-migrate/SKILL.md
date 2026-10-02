@@ -8,13 +8,20 @@ description: Use when integrating ClickHouse migrations into a project, setting 
 ## Overview
 
 `ch-migrate` adds SQL-first authoring, environment configuration, bootstrap,
-inspection, and drift checks above Alembic. It complements ClickHouse's official
-Alembic integration; this development line still uses `clickhouse-sqlalchemy`
-for migration connections. Do not imply an endorsement or promise transactional
-DDL.
+inspection, and drift checks above Alembic and ClickHouse's official
+`clickhouse-connect[alembic]` integration. Do not imply an endorsement or promise
+transactional DDL.
 
 **Install:** `uv tool install ch-migrate-cli` or `pip install ch-migrate-cli`.
 The command is `ch-migrate`; the import package is `ch_migrate`.
+
+From 0.6, Python 3.10+ is required; 0.5.x is the last line for 3.9. Existing
+projects must run `ch-migrate upgrade-env` to install the version-2 shim.
+The old environment is backed up, and repeating the command preserves that backup.
+Old environments are refused by `up`, `down`, `status`, and `history` before connecting.
+One checked HTTP session spans the whole run: `SET` carries into subsequent
+revisions. Prefer statement-level `SETTINGS` for query-local changes. An expired
+session fails loudly. Configure idle `session_timeout` in seconds (default 1800).
 
 ## CLI Quick Reference
 
