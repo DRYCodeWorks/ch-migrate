@@ -29,6 +29,10 @@ def __getattr__(name: str) -> Any:
             "on_cluster": on_cluster,
             "get_cluster": get_cluster,
         }[name]
+    elif name == "run_sql":
+        from clickhouse_alembic.sql import run_sql
+
+        return run_sql
     elif name == "get_env_config":
         from clickhouse_alembic.config import get_env_config
 
@@ -47,6 +51,7 @@ def __getattr__(name: str) -> Any:
 __all__ = [
     "__version__",
     "read_sql",
+    "run_sql",
     "get_db",
     "get_env_config",
     "create_dictionary",

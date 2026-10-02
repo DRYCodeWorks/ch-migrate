@@ -169,6 +169,32 @@ ch-migrate history dev
 
 ## Migration Patterns
 
+### Multi-statement SQL files
+
+Use `run_sql` to execute a file under `migrations/sql/`, one statement per request:
+
+```python
+from clickhouse_alembic import run_sql
+
+def upgrade():
+    run_sql("history/tables/logs/001_add_status.up.sql")
+```
+
+Semicolons inside strings, quoted identifiers, comments, and heredocs do not
+split statements. Empty or comment-only files fail rather than recording an
+unfilled migration as applied. Execution stops at the first failed statement.
+
+`run_sql` substitutes `{db}`, `{cluster}`, and `{on_cluster}` from the environment.
+Keyword arguments add or override substitutions. Other braces remain literal,
+including JSON and ClickHouse query parameters such as `{id:UInt64}`. Doubled
+braces are not format escapes. `read_sql` retains its existing `str.format`
+behavior.
+
+To render SQL without executing it, set `CH_ENVIRONMENT` and run
+`alembic upgrade head --sql`. Existing projects must run `ch-migrate upgrade-env`
+to install the offline version-table and literal-rendering fixes. Offline
+rendering requires Alembic 1.14 or later, included in the package requirements.
+
 ### Basic Table Creation
 
 1. Create SQL file in `migrations/sql/history/tables/users/001_<revision>.sql`:

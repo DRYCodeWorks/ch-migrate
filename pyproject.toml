@@ -21,7 +21,7 @@ classifiers = [
     "Topic :: Database",
 ]
 dependencies = [
-    "alembic>=1.13.0",
+    "alembic>=1.14.0", # version_table_impl supplies ClickHouse's engine in offline SQL
     "boto3>=1.42.24",
     "click>=8.1.0",
     "clickhouse-connect>=0.7.0",

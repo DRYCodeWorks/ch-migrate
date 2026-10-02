@@ -26,8 +26,10 @@ from urllib.parse import quote_plus
 
 from alembic import context
 from alembic.ddl import impl
+from clickhouse_sqlalchemy import Table, engines
+from clickhouse_sqlalchemy.drivers.compilers.sqlcompiler import ClickHouseSQLCompiler
 from dotenv import load_dotenv
-from sqlalchemy import Connection, create_engine, pool, text
+from sqlalchemy import Column, Connection, DateTime, MetaData, String, create_engine, pool, text
 
 from clickhouse_alembic.config import get_env_config
 from clickhouse_alembic.hooks import HookRegistry, run_hooks
@@ -68,6 +70,17 @@ class ClickhouseImpl(impl.DefaultImpl):
 
     __dialect__ = "clickhouse"
     transactional_ddl = False
+
+    def version_table_impl(self, *, version_table, version_table_schema, **kw):
+        """Match bootstrap's version table when Alembic renders offline DDL."""
+        return Table(
+            version_table,
+            MetaData(),
+            Column("updated", DateTime, server_default=text("now()")),
+            Column("version_num", String, nullable=False),
+            engines.ReplacingMergeTree(order_by="updated"),
+            schema=version_table_schema,
+        )
 
 
 def get_sqlalchemy_url() -> str:
@@ -148,6 +161,8 @@ def run_migrations_offline() -> None:
         version_table="alembic_version",
         version_table_schema=DATABASE_NAME,
     )
+    # No DBAPI interpolates offline output; its percent escaping would corrupt literals.
+    context.get_context().dialect.statement_compiler = _OfflineSQLCompiler
 
     with context.begin_transaction():
         context.run_migrations()
@@ -197,6 +212,12 @@ def run_migrations_online() -> None:
                 )
 
             context.run_migrations()
+
+
+class _OfflineSQLCompiler(ClickHouseSQLCompiler):
+    def post_process_text(self, text):
+        """Do not double percent signs in SQL intended for direct execution."""
+        return text
 
 
 if context.is_offline_mode():
