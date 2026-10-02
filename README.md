@@ -352,6 +352,31 @@ def upgrade():
     create_dictionary("history/dictionaries/dict_users/001_create.sql")
 ```
 
+## Statement classification
+
+`clickhouse_alembic.classify.classify(statement, live_schema=None)` accepts SQL or
+an extracted migration statement. It returns `Classification(kind, table, detail)`;
+`live_schema` is the existing introspection `Schema`. Classification does not run
+SQL or change lint's gate rules.
+
+- `metadata`: no background mutation, such as ADD COLUMN or a default-only change.
+- `mutation`: a background mutation of parts, including DROP INDEX/PROJECTION and
+  RENAME COLUMN, not just UPDATE/DELETE.
+- `rebuild`: the requested key or engine change cannot be made by that in-place ALTER.
+- `other`: non-schema operations or work not covered by the classifier.
+
+Without a live column type, MODIFY COLUMN is conservatively a mutation **if the
+type changes**. MODIFY TTL materializes existing parts unless the statement sets
+`materialize_ttl_after_modify = 0`. Lightweight DELETE creates a mutation;
+lightweight UPDATE writes synchronous patch parts and is explicitly `other`,
+not a nonexistent background mutation. A sorting-key extension is metadata only
+when it preserves the old key and appends columns added by the same ALTER.
+
+The [classification corpus](tests/corpus/classification.yaml) is checked against
+fresh seeded MergeTree tables: every ALTER must create the predicted mutation,
+create none, or be rejected as an unsupported in-place change. The server proof,
+not the apparent SQL verb, defines the classification.
+
 ## Command reference
 
 Every command accepts `--help`. Top-level `ch-migrate --version` reports the installed package version. `ENV` below names an entry in `config.yaml`.

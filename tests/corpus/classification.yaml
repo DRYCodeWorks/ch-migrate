@@ -1,0 +1,166 @@
+# Server-backed classification contract. Each ALTER gets a fresh seeded table.
+table_ddl: >-
+  CREATE TABLE {table} (
+    id UInt64, x UInt64, y UInt64 DEFAULT x + 1, s String, ts DateTime,
+    INDEX idx id TYPE minmax GRANULARITY 1,
+    PROJECTION pr (SELECT id ORDER BY id)
+  ) ENGINE = MergeTree PARTITION BY toYYYYMM(ts) ORDER BY id
+  TTL ts + INTERVAL 100 YEAR
+seed: >-
+  INSERT INTO {table} (id, x, s, ts) VALUES
+  (1, 10, 'one', '2020-01-01 00:00:00'), (2, 20, 'two', '2020-02-01 00:00:00')
+statements:
+  - id: create_table
+    sql: CREATE TABLE IF NOT EXISTS {table} (id UInt64) ENGINE = Memory
+    expected: metadata
+  - id: create_view
+    sql: CREATE VIEW {db}.sample_view AS SELECT id FROM {table}
+    expected: metadata
+  - id: drop_table
+    sql: DROP TABLE IF EXISTS {table}
+    expected: metadata
+  - id: rename_table
+    sql: RENAME TABLE {table} TO {db}.renamed_table
+    expected: metadata
+  - id: create_dictionary
+    sql: CREATE DICTIONARY {db}.lookup (id UInt64) PRIMARY KEY id LAYOUT(FLAT())
+    expected: metadata
+  - id: drop_view
+    sql: DROP VIEW IF EXISTS {db}.sample_view
+    expected: metadata
+  - id: read_only_select
+    sql: SELECT id FROM {table}
+    expected: other
+  - id: insert_select
+    sql: INSERT INTO {table} SELECT * FROM {db}.source
+    expected: other
+  - id: session_setting
+    sql: SET max_threads = 1
+    expected: other
+  - id: add_column
+    sql: ALTER TABLE {table} ADD COLUMN added UInt64
+    expected: metadata
+  - id: add_existing_column
+    sql: ALTER TABLE {table} ADD COLUMN IF NOT EXISTS x UInt64
+    expected: metadata
+  - id: add_default_column
+    sql: ALTER TABLE {table} ADD COLUMN added UInt64 DEFAULT x + 1
+    expected: metadata
+  - id: add_array_column
+    sql: ALTER TABLE {table} ADD COLUMN added Array(Tuple(UInt64, String))
+    expected: metadata
+  - id: default_only
+    sql: ALTER TABLE {table} MODIFY COLUMN y DEFAULT x + 2
+    expected: metadata
+  - id: same_type_default
+    sql: ALTER TABLE {table} MODIFY COLUMN y UInt64 DEFAULT x + 2
+    expected: metadata
+    without_schema: mutation
+  - id: comment_modifier
+    sql: ALTER TABLE {table} MODIFY COLUMN x COMMENT 'mutation UPDATE DELETE is only text'
+    expected: metadata
+  - id: comment_column
+    sql: ALTER TABLE {table} COMMENT COLUMN x 'description'
+    expected: metadata
+  - id: modify_setting
+    sql: ALTER TABLE {table} MODIFY SETTING parts_to_throw_insert = 3000
+    expected: metadata
+  - id: add_index
+    sql: ALTER TABLE {table} ADD INDEX another x TYPE minmax GRANULARITY 1
+    expected: metadata
+  - id: add_projection
+    sql: ALTER TABLE {table} ADD PROJECTION another (SELECT id, x ORDER BY x)
+    expected: metadata
+  - id: drop_index
+    sql: ALTER TABLE {table} DROP INDEX idx
+    expected: mutation
+  - id: drop_projection
+    sql: ALTER TABLE {table} DROP PROJECTION pr
+    expected: mutation
+  - id: narrow_column_type
+    sql: ALTER TABLE {table} MODIFY COLUMN x UInt32
+    expected: mutation
+  - id: nullable_column_type
+    sql: ALTER TABLE {table} MODIFY COLUMN x Nullable(UInt64)
+    expected: mutation
+  - id: low_cardinality_column_type
+    sql: ALTER TABLE {table} MODIFY COLUMN s LowCardinality(String)
+    expected: mutation
+  - id: drop_column
+    sql: ALTER TABLE {table} DROP COLUMN y
+    expected: mutation
+  - id: clear_column
+    sql: ALTER TABLE {table} CLEAR COLUMN y
+    expected: mutation
+  - id: materialize_column
+    sql: ALTER TABLE {table} MATERIALIZE COLUMN y
+    expected: mutation
+  - id: rename_column
+    sql: ALTER TABLE {table} RENAME COLUMN y TO renamed
+    expected: mutation
+  - id: update
+    sql: ALTER TABLE {table} UPDATE x = x + 1 WHERE id = 1
+    expected: mutation
+  - id: delete
+    sql: ALTER TABLE {table} DELETE WHERE id = 1
+    expected: mutation
+  - id: materialize_index
+    sql: ALTER TABLE {table} MATERIALIZE INDEX idx
+    expected: mutation
+  - id: clear_index
+    sql: ALTER TABLE {table} CLEAR INDEX idx
+    expected: mutation
+  - id: materialize_projection
+    sql: ALTER TABLE {table} MATERIALIZE PROJECTION pr
+    expected: mutation
+  - id: clear_projection
+    sql: ALTER TABLE {table} CLEAR PROJECTION pr
+    expected: mutation
+  - id: modify_ttl
+    sql: ALTER TABLE {table} MODIFY TTL ts + INTERVAL 99 YEAR
+    expected: mutation
+  - id: modify_ttl_without_materialization
+    sql: ALTER TABLE {table} MODIFY TTL ts + INTERVAL 99 YEAR SETTINGS materialize_ttl_after_modify = 0
+    expected: metadata
+  - id: materialize_ttl
+    sql: ALTER TABLE {table} MATERIALIZE TTL
+    expected: mutation
+  - id: remove_ttl
+    sql: ALTER TABLE {table} REMOVE TTL
+    expected: metadata
+  - id: append_new_sorting_column
+    sql: ALTER TABLE {table} ADD COLUMN added UInt64, MODIFY ORDER BY (id, added)
+    expected: metadata
+    without_schema: rebuild
+  - id: append_existing_sorting_column
+    sql: ALTER TABLE {table} MODIFY ORDER BY (id, x)
+    expected: rebuild
+  - id: replace_sorting_key
+    sql: ALTER TABLE {table} MODIFY ORDER BY x
+    expected: rebuild
+  - id: change_primary_key
+    sql: ALTER TABLE {table} MODIFY PRIMARY KEY x
+    expected: rebuild
+  - id: change_partition_key
+    sql: ALTER TABLE {table} MODIFY PARTITION BY toYYYYMM(ts + INTERVAL 1 MONTH)
+    expected: rebuild
+  - id: change_engine
+    sql: ALTER TABLE {table} MODIFY ENGINE = ReplacingMergeTree
+    expected: rebuild
+  - id: unchanged_type
+    sql: ALTER TABLE {table} MODIFY COLUMN x UInt64
+    expected: metadata
+    without_schema: mutation
+  - id: mixed_metadata_mutation
+    sql: ALTER TABLE {table} ADD COLUMN added String, MATERIALIZE COLUMN y
+    expected: mutation
+  - id: lightweight_delete
+    sql: DELETE FROM {table} WHERE id = 1
+    expected: mutation
+  - id: lightweight_update
+    sql: UPDATE {table} SET x = x + 1 WHERE id = 1
+    expected: other
+    detail: lightweight
+  - id: update_multiple_assignments
+    sql: ALTER TABLE {table} UPDATE x = x + 1, s = concat(s, '!') WHERE id = 1
+    expected: mutation
