@@ -101,7 +101,14 @@ class TestGenerateExchangeMigration:
             table_name="users",
             sql_path="history/tables/users/001_abc123.sql",
         )
-        assert "NotImplementedError" in content
+        from clickhouse_alembic import IrreversibleMigration
+
+        namespace = {}
+        exec(compile(content, "<generated migration>", "exec"), namespace)
+        with pytest.raises(IrreversibleMigration) as raised:
+            namespace["downgrade"]()
+        assert raised.value.revision == "abc123"
+        assert raised.value.reason == namespace["irreversible"]
 
     def test_none_down_revision(self):
         content = generate_exchange_migration(
@@ -142,9 +149,7 @@ class TestRewriteMigrationFile:
     def test_rewrites_with_dict_names(self, tmp_path: Path):
         migration = tmp_path / "001_abc123.py"
         migration.write_text(
-            '"""alter_users\n\n"""\n\n'
-            "revision = 'abc123'\n"
-            "down_revision = 'def456'\n"
+            '"""alter_users\n\n"""\n\n' "revision = 'abc123'\n" "down_revision = 'def456'\n"
         )
 
         rewrite_migration_file(
@@ -177,8 +182,12 @@ class TestFindDependentDictionaries:
             find_dependent_dictionaries(env_config, "logs")
 
         call_args = mock_client.query.call_args
-        params = call_args[1].get("parameters") or (call_args[0][1] if len(call_args[0]) > 1 else {})
+        params = call_args[1].get("parameters") or (
+            call_args[0][1] if len(call_args[0]) > 1 else {}
+        )
 
         # The pattern should NOT be a bare '%logs%' that matches 'old_logs'
         if "pattern" in params:
-            assert params["pattern"] != "%logs%", "Pattern should use precise matching, not bare substring"
+            assert (
+                params["pattern"] != "%logs%"
+            ), "Pattern should use precise matching, not bare substring"

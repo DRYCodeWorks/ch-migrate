@@ -261,6 +261,32 @@ def upgrade():
     create_dictionary("history/dictionaries/dict_users/001_abc123.sql")
 ```
 
+### Irreversible migrations
+
+When a downgrade cannot restore data, declare a module-level reason and raise the
+backstop exception:
+
+```python
+from clickhouse_alembic import IrreversibleMigration
+
+irreversible = "Drops legacy data"
+
+def downgrade():
+    raise IrreversibleMigration(revision, irreversible)
+```
+
+`ch-migrate down` reads markers without importing migration files. It refuses
+the entire requested range before running Alembic if any revision is
+irreversible. It understands `-N` on linear history, full or unique-prefix
+revision IDs, and `base`. For an unknown range, including a relative target
+across a merge point, it prints a note and relies on each migration's backstop.
+Direct Alembic calls also rely on that exception.
+
+There is no override flag. To revert past an irreversible revision, implement
+its downgrade and remove its marker in a reviewed change. A marker of `True`
+is accepted and reported as "(no reason given)". Exchange scaffolds include
+both a reason and the exception.
+
 ## CLI Reference
 
 ```bash

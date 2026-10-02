@@ -179,13 +179,16 @@ Steps: CREATE shadow -> INSERT SELECT -> EXCHANGE -> DROP
 
 from alembic import op
 
-from clickhouse_alembic import get_db, read_sql
+from clickhouse_alembic import IrreversibleMigration, get_db, read_sql
 
 # revision identifiers
 revision = {repr(revision)}
 down_revision = {down_repr}
 branch_labels = None
 depends_on = None
+irreversible = (
+    "EXCHANGE TABLES drops the old table; its data cannot be restored automatically."
+)
 
 
 def upgrade() -> None:
@@ -206,10 +209,7 @@ def upgrade() -> None:
 {dict_lines}
 
 def downgrade() -> None:
-    raise NotImplementedError(
-        "EXCHANGE TABLES migrations cannot be automatically reversed. "
-        "Create a new forward migration to restore the previous schema."
-    )
+    raise IrreversibleMigration(revision, irreversible)
 '''
 
 

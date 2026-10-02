@@ -33,6 +33,10 @@ def __getattr__(name: str) -> Any:
         from clickhouse_alembic.sql import run_sql
 
         return run_sql
+    elif name == "IrreversibleMigration":
+        from clickhouse_alembic.downgrade import IrreversibleMigration
+
+        return IrreversibleMigration
     elif name == "get_env_config":
         from clickhouse_alembic.config import get_env_config
 
@@ -52,6 +56,7 @@ __all__ = [
     "__version__",
     "read_sql",
     "run_sql",
+    "IrreversibleMigration",
     "get_db",
     "get_env_config",
     "create_dictionary",

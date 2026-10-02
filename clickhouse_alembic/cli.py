@@ -92,6 +92,36 @@ def _run_alembic(
     return result
 
 
+def _refuse_irreversible_downgrade(environment: str, target: str) -> None:
+    from clickhouse_alembic.connection import get_current_heads
+    from clickhouse_alembic.downgrade import irreversible_reason, revisions_to_revert
+    from clickhouse_alembic.rebase import build_revision_graph
+
+    try:
+        env_config = get_env_config(environment, Path.cwd() / "config.yaml")
+        heads = get_current_heads(env_config)
+    except Exception:
+        return  # Alembic reports configuration and connection errors itself.
+    graph = build_revision_graph(Path.cwd() / "migrations" / "versions")
+    revisions = revisions_to_revert(graph, heads, target)
+    if revisions is None:
+        click.echo("Note: downgrade range is unknown; relying on migration backstops.", err=True)
+        return
+    irreversible = [(rev, irreversible_reason(graph, rev)) for rev in revisions]
+    irreversible = [(rev, reason) for rev, reason in irreversible if reason is not None]
+    if not irreversible:
+        return
+    click.echo("Downgrade refused; nothing was run. Irreversible migrations:", err=True)
+    for rev, reason in irreversible:
+        click.echo(f"  {rev}: {reason}", err=True)
+    click.echo(
+        "To revert past these revisions, write their downgrades and remove the "
+        "irreversible markers in a reviewed change.",
+        err=True,
+    )
+    sys.exit(1)
+
+
 @click.group()
 @click.version_option()
 def main() -> None:
@@ -273,6 +303,7 @@ def down(environment: str, revision: str) -> None:
 
     By default, rolls back the last migration. Use --revision to specify a target.
     """
+    _refuse_irreversible_downgrade(environment, revision)
     _run_alembic(environment, ["downgrade", revision])
 
 
