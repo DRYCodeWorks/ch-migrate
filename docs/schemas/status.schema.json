@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "status.schema.json",
+  "title": "ch-migrate status schema version 1",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "command"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "command": {
+      "const": "status"
+    },
+    "error": {
+      "type": "string"
+    },
+    "database": {
+      "type": "string"
+    },
+    "current_heads": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "uniqueItems": true
+    },
+    "script_heads": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "uniqueItems": true
+    },
+    "pending": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "uniqueItems": true
+    },
+    "applied": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "uniqueItems": true
+    },
+    "at_head": {
+      "type": "boolean"
+    }
+  },
+  "anyOf": [
+    {
+      "required": [
+        "error"
+      ]
+    },
+    {
+      "required": [
+        "database",
+        "current_heads",
+        "script_heads",
+        "pending",
+        "applied",
+        "at_head"
+      ]
+    }
+  ]
+}

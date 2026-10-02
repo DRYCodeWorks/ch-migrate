@@ -1,0 +1,102 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "diff.schema.json",
+  "title": "ch-migrate diff schema version 1",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "command"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "command": {
+      "const": "diff"
+    },
+    "error": {
+      "type": "string"
+    },
+    "objects": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "enum": [
+              "table",
+              "view",
+              "materialized_view",
+              "dictionary"
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "in_sync",
+              "modified",
+              "local_only",
+              "remote_only"
+            ]
+          },
+          "details": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "field": {
+                  "type": "string"
+                },
+                "local": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "remote": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "message": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "field",
+                "local",
+                "remote",
+                "message"
+              ]
+            }
+          }
+        },
+        "required": [
+          "type",
+          "name",
+          "status",
+          "details"
+        ]
+      }
+    },
+    "in_sync": {
+      "type": "boolean"
+    }
+  },
+  "anyOf": [
+    {
+      "required": [
+        "error"
+      ]
+    },
+    {
+      "required": [
+        "objects",
+        "in_sync"
+      ]
+    }
+  ]
+}

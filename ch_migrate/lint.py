@@ -39,6 +39,7 @@ class LintResult:
     file: str | None = None
     line: int | None = None
     statement: str | None = None
+    waived: str | None = None
 
 
 @dataclass
@@ -392,7 +393,17 @@ class IdempotencyRule(LintRule):
                 "ch-migrate: allow-non-idempotent <reason> waiver"
             )
         first_line = sql.strip().splitlines()[0] if sql.strip() else ""
-        return [LintResult(self.name, message, severity, kwargs.get("file_path"), 1, first_line)]
+        return [
+            LintResult(
+                self.name,
+                message,
+                severity,
+                kwargs.get("file_path"),
+                1,
+                first_line,
+                waived=reason or None,
+            )
+        ]
 
 
 class StandaloneSetRule(LintRule):
