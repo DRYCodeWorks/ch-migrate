@@ -5,11 +5,12 @@ from pathlib import Path
 from textwrap import dedent
 
 from rich.console import Console
+from typing import Optional, Tuple, Union
 
 from clickhouse_alembic.display import render_history, render_status
 from clickhouse_alembic.rebase import build_revision_graph
 
-DownRevision = str | tuple[str, ...] | None
+DownRevision = Optional[Union[str, Tuple[str, ...]]]
 
 
 def _format_down_revision(down_revision: DownRevision) -> tuple[str, str]:

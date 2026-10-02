@@ -4,6 +4,7 @@ from pathlib import Path
 from textwrap import dedent
 
 import pytest
+from typing import Optional, Tuple, Union
 
 from clickhouse_alembic.rebase import (
     apply_rebase,
@@ -14,7 +15,7 @@ from clickhouse_alembic.rebase import (
     rewrite_down_revision,
 )
 
-DownRevision = str | tuple[str, ...] | None
+DownRevision = Optional[Union[str, Tuple[str, ...]]]
 
 
 def _format_down_revision(down_revision: DownRevision) -> tuple[str, str]:
