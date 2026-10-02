@@ -114,6 +114,24 @@ Keeper path. Generate DDL with a distinct path for each helper table.
 - **Before promising Cloud:** run the A, B, D4, D5 and E scripts against a Cloud service. Only the
   host changes.
 
+**Source/changelog cross-check during DRY-1406 reproduction:** the public
+[`MergeTreeData::checkStructureAndGetMergeTreeData` implementation at
+`5b43330791c5ff`](https://github.com/ClickHouse/ClickHouse/blob/5b43330791c5ff/src/Storages/MergeTree/MergeTreeData.cpp)
+checks physical columns, sorting/partition/primary keys, format version, indexes,
+and projections for partition transfers. That is evidence for the common
+MergeTree path, not proof of the Cloud service's behavior. The
+[2025 changelog](https://clickhouse.com/docs/resources/changelogs/oss/2025)
+records support for partition operations on `plain_rewritable` disks
+([#77406](https://github.com/ClickHouse/ClickHouse/pull/77406)) and transfer between
+different `plain_rewritable` disks
+([#79566](https://github.com/ClickHouse/ClickHouse/pull/79566)). Storage-disk support
+is not a SharedMergeTree acceptance result. The
+[partition reference](https://clickhouse.com/docs/reference/statements/alter/partition)
+requires matching structures, keys, and storage policies, with same replicated
+versus non-replicated engine family for MOVE. The
+[cross-database Replicated queue issue](https://github.com/ClickHouse/ClickHouse/issues/116383)
+remains open. None of these sources replaces the authorized Cloud A/B/D/E runs.
+
 ## D. Insert races
 
 **D1. An INSERT that started before `CREATE MATERIALIZED VIEW` does not go through the view.**
@@ -275,3 +293,81 @@ Proposal (untested):
   `deduplicate_blocks_in_dependent_materialized_views`, and `EXCHANGE` in a Replicated database.
 - The REVOKE-based block on async inserts, and the CREATE TABLE lock.
 - Scale beyond 6 million rows.
+
+## Owned-container reproduction (DRY-1406)
+
+Reproduced on 2026-10-02 with ClickHouse 26.3.39.7 and Python 3.12. The historical
+wrappers name `spike-rebuild-ch`, use a fixed port, and one uses broad `pkill`.
+Do not run those wrappers against an existing machine setup. Use the explicit
+probe from the repository root:
+
+```bash
+env -u CH_MIGRATE_IT_URL uv run --locked --python 3.12 pytest -q -s \
+  -m integration tests/integration/rebuild_spike_probe.py
+```
+
+The fixture starts and removes its own container. A scoped adapter translates
+only the archived `docker exec spike-rebuild-ch clickhouse-client ...` invocation
+to that fixture's loopback endpoint. The D scripts' SQL is unchanged; no Docker
+command from those scripts runs. Credentials remain in the temporary project's
+environment. E imports `e2e.py`, changes only its endpoint/database/stop-file
+bindings and adds query IDs and server-time observations. The original rebuild
+steps, 6-million-row preload and three writers remain in use. All writer threads
+are stopped and joined; all clients are closed.
+
+Corrections required to make the archived evidence reproducible:
+
+- A's final display query ordered a UNION branch by an alias defined only in the
+  other branch (code 47 on this server). A parenthesized UNION now defines `tbl`
+  in both branches; the CREATE/INSERT/EXCHANGE operations did not change.
+- A clickhouse-client output format is not an INSERT input format. The HTTP
+  adapter applies formatting only to result-producing statements;
+  `raw_query(fmt=...)` appends `FORMAT` to SQL, which otherwise corrupts VALUES
+  payloads and makes SYSTEM commands fail.
+- E's old verifier uses client send/ack timestamps. One preliminary run reported
+  600 fire-and-forget IDs outside the client-time window because enqueue happened
+  before the view and flush happened afterward. The accepted window is in server
+  time. The reproduction attributes every duplicate batch with query IDs:
+  synchronous execution intervals from `system.query_log`, and asynchronous
+  `flush_time_microseconds` from `system.asynchronous_insert_log`. Its interval
+  runs from the view-creation query's server start to a server timestamp after
+  snapshot completion. This is a server-observed envelope around those operations,
+  not row-level commit tracing or an exact microsecond activation timestamp.
+- After writers stop, the reproduction flushes the remaining async queue before
+  counting missing IDs. A still-queued final batch is not evidence of data loss.
+- UUID-mismatch `FlushError` entries can have `rows = 0`: rejection occurs before
+  payload rows are counted. Report error entries, bytes and query IDs, not an
+  inferred lost-row count from `sum(rows)`.
+
+The A/D observations match the mechanism above: A leaves IDs 1,2,3,5 in the new
+name `t` and the dependent sink, and 1,2,3,4,5 in the old physical table. D1 leaves
+20,000 early rows out of the new view, then copies 10 later rows. D2 copies the
+three buffered rows through the newly created view; its 6,000-row cascade is
+visible in QueryStart's table list. D4 preserves all 15,000 rows across the swap.
+D5 rejects both queued batches with code 741, and its slow flush is visible as
+`AsyncInsertFlush`. Cloud and the untested items above remain unverified.
+
+Final E measurement, after draining the stopped writers' async queue:
+
+| Trial | Preload rows | Writer rows: sync / async wait=1 / async wait=0 | Missing IDs | Duplicate IDs inside / outside server window | Final rows / distinct IDs |
+|---|---:|---|---:|---|---|
+| 1 | 6,000,000 | 218,000 / 8,600 / 25,600 | 0 | 100,000 / 0 | 6,352,200 / 6,252,200 |
+| 2 | 6,000,000 | 178,000 / 7,000 / 21,000 | 0 | 59,000 / 0 | 6,265,000 / 6,206,000 |
+
+Both runs had zero duplicated preload rows, zero unattributed duplicate IDs,
+zero writer errors and zero dependent-sink IDs with multiplicity other than one.
+The final sorting key was `k, ts, id`. Reproduction command for these two results:
+
+```bash
+env -u CH_MIGRATE_IT_URL uv run --locked --python 3.12 pytest -q -s \
+  -m integration tests/integration/rebuild_spike_probe.py -k original_prototype
+```
+
+Result: **2 passed**. The combined A/D/E run before the final-drain measurement
+correction passed **7 probes**. These measurements do not remove D5's separately
+reproduced UUID-mismatch loss mode; the final two continuous-writer runs happened
+not to lose a fire-and-forget batch.
+
+The local gate `uv run --locked --python <version> pytest -q` passed **641 tests**
+on each of Python 3.10, 3.11, 3.12, 3.13 and 3.14. The full owned-container suite
+on Python 3.14 passed **78 tests**. No remote CI, release, or Cloud test is implied.

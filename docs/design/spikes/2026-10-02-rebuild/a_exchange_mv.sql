@@ -29,5 +29,5 @@ INSERT INTO a.t VALUES (3, 'post-direct-into-name-t');
 INSERT INTO a.t_new VALUES (4, 'post-direct-into-name-t_new');
 INSERT INTO a.feeder VALUES (5, 'post-feeder');
 
-SELECT 'name t' AS tbl, id, src FROM a.t UNION ALL SELECT 'name t_new', id, src FROM a.t_new ORDER BY tbl, id;
+SELECT * FROM (SELECT 'name t' AS tbl, id, src FROM a.t UNION ALL SELECT 'name t_new' AS tbl, id, src FROM a.t_new) ORDER BY tbl, id;
 SELECT 'sink_src' AS tbl, id, src, via FROM a.sink_src ORDER BY id;
