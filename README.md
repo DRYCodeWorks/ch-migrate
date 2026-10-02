@@ -358,6 +358,8 @@ Every command accepts `--help`. Top-level `ch-migrate --version` reports the ins
 
 Output lines start with `→` for a step, `✓` for a result, `!` for a warning and `✗` for an error; warnings and errors go to stderr. Colour is dropped when output is not a terminal or `NO_COLOR` is set, and lines are never wrapped, so paths and SQL can be copied or grepped.
 
+`status`, `history`, `lint`, and `diff` accept `--json`. JSON mode writes one document to stdout; diagnostics go to stderr. Every document includes `"schema_version": 1` and `"command"`. From 1.0 this is a public interface: breaking changes require a major version. Errors include an `error` string rather than inventing a successful empty result. The schemas linked below use JSON Schema draft 2020-12.
+
 ### `init`
 
 `ch-migrate init [PATH] [-n NAME]` initializes the current directory by default. `-n/--name` sets the project name; otherwise it uses the directory name.
@@ -390,21 +392,52 @@ Example: `ch-migrate down dev --revision base`
 
 ### `status`
 
-`ch-migrate status ENV` shows connection information, applied/pending counts, and head status, and names the `up` command when migrations are pending. No command-specific options. Status is a report: it exits 0 when the database is unreachable (with a warning) or migrations are pending, and exits 1 only when the configuration or `migrations/versions/` is missing, so CI can run it as a non-blocking check.
+`ch-migrate status ENV [--json]` shows connection information, applied/pending counts, and head status, and names the `up` command when migrations are pending. Status is a report: human output exits 0 when the database is unreachable (with a warning) or migrations are pending, and exits 1 only when the configuration or `migrations/versions/` is missing, so CI can run it as a non-blocking check. JSON mode uses nonzero exits for unreachable or pending state.
 
 Example: `ch-migrate status dev`
 
+With `--json`, [the status schema](docs/schemas/status.schema.json) includes
+`database`, `current_heads`, `script_heads`, `pending`, `applied`, and `at_head`.
+`applied` includes ancestors resolved through the revision graph, not just stored
+heads. JSON exits 0 when the head sets match exactly, 1 when pending or diverged,
+and 2 when configuration or database state cannot be read. Human-mode exits are
+unchanged.
+
+```bash
+ch-migrate status dev --json | jq -e .current_heads
+# Check the actual head set, not the last element of applied:
+ch-migrate status dev --json | jq -e '.current_heads == ["PINNED_REVISION"]'
+```
+
+Replace `PINNED_REVISION` with the required revision. In a shell pipeline, enable
+`set -o pipefail` if the caller must also preserve ch-migrate's exit code.
+
 ### `history`
 
-`ch-migrate history ENV` displays the revision graph and applied state. No command-specific options.
+`ch-migrate history ENV [--json]` displays the revision graph and applied state.
 
 Example: `ch-migrate history dev`
 
+`ch-migrate history dev --json` follows [the history schema](docs/schemas/history.schema.json).
+Each entry in `revisions` includes its revision, all `down_revisions` (including
+merge parents), description, create date, path, applied status, and irreversible
+reason. A reversible revision has `irreversible: null`. If database state is
+unavailable, `applied` is null, the document includes `error`, and JSON exits 2.
+An unknown database head also makes applied status unknown instead of claiming
+that every local revision is unapplied.
+
 ### `lint`
 
-`ch-migrate lint [ENV]` analyzes upgrade statements, not downgrade SQL. Without `ENV`, it checks revisions after the gate baseline statically without credentials or a connection. With an environment, it checks only pending revisions in that scope and adds live size and dependency checks. If it cannot determine the pending set, it fails rather than silently checking a different scope. No command-specific options. Errors exit nonzero; warnings and waiver INFO lines alone do not.
+`ch-migrate lint [ENV] [--json]` analyzes upgrade statements, not downgrade SQL. Without `ENV`, it checks revisions after the gate baseline statically without credentials or a connection. With an environment, it checks only pending revisions in that scope and adds live size and dependency checks. If it cannot determine the pending set, it fails rather than silently checking a different scope. Errors exit nonzero; warnings and waiver INFO lines alone do not.
 
 Example: `ch-migrate lint`
+
+`ch-migrate lint --json` follows [the lint schema](docs/schemas/lint.schema.json).
+`findings` include rule, severity, source file/line, message, `blocking`, and
+`waived`. `blocking` means the finding currently blocks `up`; a waived finding
+has its written reason and does not block. `counts` reports total, error, warning,
+info, blocking, and waived findings. JSON and human output use the same exit
+codes: 1 for lint/configuration errors, otherwise 0.
 
 Findings name the project-relative SQL file and statement line. Inline Python SQL
 points to its `op.execute` call. Extraction reads `run_sql`/`read_sql` file
@@ -422,9 +455,15 @@ Example: `ch-migrate deps dev --validate migrations/sql/history/tables/logs/chan
 
 ### `diff`
 
-`ch-migrate diff ENV [-s PATH]` compares the live schema with the latest snapshot. `-s/--snapshot-dir PATH` chooses another snapshot. Exit code 0 means no drift; 1 means drift or an execution error.
+`ch-migrate diff ENV [-s PATH] [--json]` compares the live schema with the latest snapshot. `-s/--snapshot-dir PATH` chooses another snapshot. Exit code 0 means no drift; 1 means drift. JSON errors exit 2; human-mode execution errors retain exit 1.
 
 Example: `ch-migrate diff dev --snapshot-dir migrations/sql/snapshots/20261002_120000`
+
+`ch-migrate diff dev --json` follows [the diff schema](docs/schemas/diff.schema.json).
+`objects` identifies each object's type, name, status, and structural `details`
+(field, local value, remote value, and message). `in_sync` is true only when every
+object matches. Use the exit code as the drift gate; an error document does not
+contain a fabricated `in_sync: true`.
 
 ### `snapshot`
 

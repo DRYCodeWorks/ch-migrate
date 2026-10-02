@@ -39,6 +39,7 @@ class LintResult:
     file: str | None = None
     line: int | None = None
     statement: str | None = None
+    waived: str | None = None
 
 
 @dataclass
@@ -132,8 +133,7 @@ class LintRule(ABC):
         client: Any | None = None,
         database: str | None = None,
         graph: RevisionGraph | None = None,
-    ) -> list[LintResult]:
-        ...
+    ) -> list[LintResult]: ...
 
 
 # ---------------------------------------------------------------------------
@@ -142,31 +142,176 @@ class LintRule(ABC):
 
 # Subset of CH reserved words that commonly collide with column names.
 # Full list is version-dependent; these are the most common traps.
-_CH_RESERVED_WORDS = frozenset({
-    "add", "after", "alias", "all", "alter", "and", "anti", "any", "array",
-    "as", "asc", "attach", "between", "both", "by", "case", "cast", "check",
-    "cluster", "collate", "column", "comment", "constraint", "create",
-    "cross", "cube", "current", "database", "databases", "date", "day",
-    "default", "delete", "desc", "describe", "detach", "dictionaries",
-    "dictionary", "distinct", "distributed", "drop", "else", "end", "engine",
-    "events", "except", "exists", "explain", "expression", "extract", "fetch",
-    "final", "first", "flush", "following", "for", "format", "from", "full",
-    "function", "global", "granularity", "group", "having", "hour", "if",
-    "ilike", "in", "index", "inject", "inner", "insert", "interval", "into",
-    "is", "join", "key", "kill", "last", "layout", "leading", "left", "like",
-    "limit", "live", "local", "logs", "materialize", "materialized", "max",
-    "merges", "min", "minute", "modify", "month", "move", "mutation", "no",
-    "not", "null", "nulls", "offset", "on", "optimize", "or", "order",
-    "outer", "outfile", "over", "partition", "populate", "preceding",
-    "primary", "prewhere", "projection", "quarter", "range", "reload",
-    "remove", "rename", "replace", "right", "rollup", "row", "rows",
-    "sample", "second", "select", "semi", "set", "settings", "show",
-    "source", "start", "stop", "system", "table", "tables", "temporary",
-    "test", "then", "ties", "timestamp", "to", "top", "totals", "trailing",
-    "trim", "truncate", "type", "unbounded", "union", "update", "use",
-    "using", "uuid", "values", "view", "volume", "watch", "week", "when",
-    "where", "window", "with", "year",
-})
+_CH_RESERVED_WORDS = frozenset(
+    {
+        "add",
+        "after",
+        "alias",
+        "all",
+        "alter",
+        "and",
+        "anti",
+        "any",
+        "array",
+        "as",
+        "asc",
+        "attach",
+        "between",
+        "both",
+        "by",
+        "case",
+        "cast",
+        "check",
+        "cluster",
+        "collate",
+        "column",
+        "comment",
+        "constraint",
+        "create",
+        "cross",
+        "cube",
+        "current",
+        "database",
+        "databases",
+        "date",
+        "day",
+        "default",
+        "delete",
+        "desc",
+        "describe",
+        "detach",
+        "dictionaries",
+        "dictionary",
+        "distinct",
+        "distributed",
+        "drop",
+        "else",
+        "end",
+        "engine",
+        "events",
+        "except",
+        "exists",
+        "explain",
+        "expression",
+        "extract",
+        "fetch",
+        "final",
+        "first",
+        "flush",
+        "following",
+        "for",
+        "format",
+        "from",
+        "full",
+        "function",
+        "global",
+        "granularity",
+        "group",
+        "having",
+        "hour",
+        "if",
+        "ilike",
+        "in",
+        "index",
+        "inject",
+        "inner",
+        "insert",
+        "interval",
+        "into",
+        "is",
+        "join",
+        "key",
+        "kill",
+        "last",
+        "layout",
+        "leading",
+        "left",
+        "like",
+        "limit",
+        "live",
+        "local",
+        "logs",
+        "materialize",
+        "materialized",
+        "max",
+        "merges",
+        "min",
+        "minute",
+        "modify",
+        "month",
+        "move",
+        "mutation",
+        "no",
+        "not",
+        "null",
+        "nulls",
+        "offset",
+        "on",
+        "optimize",
+        "or",
+        "order",
+        "outer",
+        "outfile",
+        "over",
+        "partition",
+        "populate",
+        "preceding",
+        "primary",
+        "prewhere",
+        "projection",
+        "quarter",
+        "range",
+        "reload",
+        "remove",
+        "rename",
+        "replace",
+        "right",
+        "rollup",
+        "row",
+        "rows",
+        "sample",
+        "second",
+        "select",
+        "semi",
+        "set",
+        "settings",
+        "show",
+        "source",
+        "start",
+        "stop",
+        "system",
+        "table",
+        "tables",
+        "temporary",
+        "test",
+        "then",
+        "ties",
+        "timestamp",
+        "to",
+        "top",
+        "totals",
+        "trailing",
+        "trim",
+        "truncate",
+        "type",
+        "unbounded",
+        "union",
+        "update",
+        "use",
+        "using",
+        "uuid",
+        "values",
+        "view",
+        "volume",
+        "watch",
+        "week",
+        "when",
+        "where",
+        "window",
+        "with",
+        "year",
+    }
+)
 
 
 # ---------------------------------------------------------------------------
@@ -180,12 +325,8 @@ class DestructiveChangeRule(LintRule):
     name = "destructive_changes"
     default_severity = Severity.WARN
 
-    _RE_DROP_TABLE = re.compile(
-        r"\bDROP\s+TABLE\b", re.IGNORECASE
-    )
-    _RE_DROP_COLUMN = re.compile(
-        r"\bDROP\s+COLUMN\b", re.IGNORECASE
-    )
+    _RE_DROP_TABLE = re.compile(r"\bDROP\s+TABLE\b", re.IGNORECASE)
+    _RE_DROP_COLUMN = re.compile(r"\bDROP\s+COLUMN\b", re.IGNORECASE)
 
     def check(self, sql: str, **kwargs: Any) -> list[LintResult]:
         config = kwargs.get("config") or LintConfig()
@@ -197,24 +338,28 @@ class DestructiveChangeRule(LintRule):
         file_path = kwargs.get("file_path")
 
         for match in self._RE_DROP_TABLE.finditer(sql):
-            line = sql[:match.start()].count("\n") + 1
-            results.append(LintResult(
-                rule=self.name,
-                message="DROP TABLE is destructive and irreversible",
-                severity=severity,
-                file=file_path,
-                line=line,
-            ))
+            line = sql[: match.start()].count("\n") + 1
+            results.append(
+                LintResult(
+                    rule=self.name,
+                    message="DROP TABLE is destructive and irreversible",
+                    severity=severity,
+                    file=file_path,
+                    line=line,
+                )
+            )
 
         for match in self._RE_DROP_COLUMN.finditer(sql):
-            line = sql[:match.start()].count("\n") + 1
-            results.append(LintResult(
-                rule=self.name,
-                message="DROP COLUMN is destructive and irreversible",
-                severity=severity,
-                file=file_path,
-                line=line,
-            ))
+            line = sql[: match.start()].count("\n") + 1
+            results.append(
+                LintResult(
+                    rule=self.name,
+                    message="DROP COLUMN is destructive and irreversible",
+                    severity=severity,
+                    file=file_path,
+                    line=line,
+                )
+            )
 
         return results
 
@@ -246,7 +391,17 @@ class IdempotencyRule(LintRule):
                 )
             )
         first_line = sql.strip().splitlines()[0] if sql.strip() else ""
-        return [LintResult(self.name, message, severity, kwargs.get("file_path"), 1, first_line)]
+        return [
+            LintResult(
+                self.name,
+                message,
+                severity,
+                kwargs.get("file_path"),
+                1,
+                first_line,
+                waived=reason or None,
+            )
+        ]
 
 
 class StandaloneSetRule(LintRule):
@@ -294,14 +449,16 @@ class ReservedWordRule(LintRule):
         for match in self._RE_COLUMN_DEF.finditer(sql):
             col_name = match.group(1)
             if col_name.lower() in _CH_RESERVED_WORDS:
-                line = sql[:match.start()].count("\n") + 1
-                results.append(LintResult(
-                    rule=self.name,
-                    message=f"Column '{col_name}' is a ClickHouse reserved word",
-                    severity=severity,
-                    file=file_path,
-                    line=line,
-                ))
+                line = sql[: match.start()].count("\n") + 1
+                results.append(
+                    LintResult(
+                        rule=self.name,
+                        message=f"Column '{col_name}' is a ClickHouse reserved word",
+                        severity=severity,
+                        file=file_path,
+                        line=line,
+                    )
+                )
 
         return results
 
@@ -329,17 +486,19 @@ class MissingOnClusterRule(LintRule):
 
         for match in self._RE_DDL.finditer(sql):
             # Check if ON CLUSTER or {on_cluster} appears nearby
-            rest = sql[match.end():match.end() + 200]
+            rest = sql[match.end() : match.end() + 200]
             if not re.search(r"(?:ON\s+CLUSTER|{on_cluster})", rest, re.IGNORECASE):
-                line = sql[:match.start()].count("\n") + 1
+                line = sql[: match.start()].count("\n") + 1
                 stmt_type = match.group(0).strip()
-                results.append(LintResult(
-                    rule=self.name,
-                    message=f"{stmt_type} without ON CLUSTER or {{on_cluster}} placeholder",
-                    severity=severity,
-                    file=file_path,
-                    line=line,
-                ))
+                results.append(
+                    LintResult(
+                        rule=self.name,
+                        message=f"{stmt_type} without ON CLUSTER or {{on_cluster}} placeholder",
+                        severity=severity,
+                        file=file_path,
+                        line=line,
+                    )
+                )
 
         return results
 
@@ -390,17 +549,19 @@ class LargeTableMutationRule(LintRule):
                 if result.result_rows:
                     row_count = result.result_rows[0][0]
                     if row_count > threshold:
-                        line = sql[:match.start()].count("\n") + 1
-                        results.append(LintResult(
-                            rule=self.name,
-                            message=(
-                                f"ALTER on '{table_name}' which has {row_count:,} parts "
-                                f"(threshold: {threshold:,})"
-                            ),
-                            severity=severity,
-                            file=file_path,
-                            line=line,
-                        ))
+                        line = sql[: match.start()].count("\n") + 1
+                        results.append(
+                            LintResult(
+                                rule=self.name,
+                                message=(
+                                    f"ALTER on '{table_name}' which has {row_count:,} parts "
+                                    f"(threshold: {threshold:,})"
+                                ),
+                                severity=severity,
+                                file=file_path,
+                                line=line,
+                            )
+                        )
             except Exception:
                 pass
 
@@ -453,28 +614,24 @@ class MVDependencyRule(LintRule):
         for table_name, match in tables_to_check:
             affected = dep_graph.affected_by_drop(table_name)
             if affected:
-                mv_names = [
-                    n.name for n in affected if n.obj_type == "materialized_view"
-                ]
-                dict_names = [
-                    n.name for n in affected if n.obj_type == "dictionary"
-                ]
+                mv_names = [n.name for n in affected if n.obj_type == "materialized_view"]
+                dict_names = [n.name for n in affected if n.obj_type == "dictionary"]
                 if mv_names or dict_names:
-                    line = sql[:match.start()].count("\n") + 1
+                    line = sql[: match.start()].count("\n") + 1
                     deps = []
                     if mv_names:
                         deps.append(f"MVs: {', '.join(mv_names)}")
                     if dict_names:
                         deps.append(f"Dicts: {', '.join(dict_names)}")
-                    results.append(LintResult(
-                        rule=self.name,
-                        message=(
-                            f"'{table_name}' has dependent objects: {'; '.join(deps)}"
-                        ),
-                        severity=severity,
-                        file=file_path,
-                        line=line,
-                    ))
+                    results.append(
+                        LintResult(
+                            rule=self.name,
+                            message=(f"'{table_name}' has dependent objects: {'; '.join(deps)}"),
+                            severity=severity,
+                            file=file_path,
+                            line=line,
+                        )
+                    )
 
         return results
 

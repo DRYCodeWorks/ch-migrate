@@ -12,6 +12,7 @@ Changes are recorded in [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 
 ### Added
 
+- Versioned `--json` output and published JSON Schemas for status, history, lint, and diff, with machine-readable errors, graph-resolved applied revisions, explicit waiver reasons, and CI-friendly exit codes.
 - Reviewed idempotency corpus covering DDL, mutations, inserts, and partition operations.
 - Required-reason `ch-migrate: allow-non-idempotent` statement waivers, reported as INFO.
 - A `standalone_set` gate error for literal upgrade `SET` statements on environments without the v2 session-safety marker. Version-2 environments, `SETTINGS` clauses, and string literals are not flagged.

@@ -18,6 +18,15 @@ from dotenv import load_dotenv
 from ch_migrate import ui
 from ch_migrate.authoring import NewOptions
 from ch_migrate.config import get_env_config
+from ch_migrate.json_output import (
+    JsonCommand,
+    command_failure,
+    diff_document,
+    emit_json,
+    history_document,
+    lint_document,
+    status_document,
+)
 from ch_migrate.runner import alembic_failure, run_alembic, run_migrations
 
 if TYPE_CHECKING:
@@ -289,9 +298,10 @@ def down(environment: str, revision: str, verbose: bool) -> None:
     sys.exit(run_migrations(environment, ["downgrade", revision], verbose=verbose))
 
 
-@main.command()
+@main.command(cls=JsonCommand)
 @click.argument("environment")
-def status(environment: str) -> None:
+@click.option("--json", "json_output", is_flag=True, help="Emit a versioned JSON document")
+def status(environment: str, json_output: bool) -> None:
     """Show migration status.
 
     Displays environment info, applied/pending counts, and head status.
@@ -302,6 +312,12 @@ def status(environment: str) -> None:
     from ch_migrate.display import render_status
 
     state = _load_migration_state(environment)
+    if json_output:
+        if state.db_error is not None:
+            command_failure(state.db_error)
+        document = status_document(state.graph, state.heads, state.env_config["database"])
+        emit_json("status", document)
+        sys.exit(0 if document["at_head"] else 1)
     render_status(environment, state.env_config, state.graph, state.applied, db_error=state.db_error)
     if state.db_error:
         ui.warn(f"Could not reach the database: {state.db_error.strip().splitlines()[0]}")
@@ -312,9 +328,10 @@ def status(environment: str) -> None:
         ui.hint(f"Run `ch-migrate up {environment}` to apply {pending} pending {noun}.")
 
 
-@main.command()
+@main.command(cls=JsonCommand)
 @click.argument("environment")
-def history(environment: str) -> None:
+@click.option("--json", "json_output", is_flag=True, help="Emit a versioned JSON document")
+def history(environment: str, json_output: bool) -> None:
     """Show migration history.
 
     Displays a tree of all migrations, color-coded by applied status.
@@ -323,6 +340,14 @@ def history(environment: str) -> None:
     from ch_migrate.display import render_history
 
     state = _load_migration_state(environment)
+    if json_output:
+        document = history_document(
+            state.graph, None if state.heads - set(state.graph.migrations) else state.applied
+        )
+        if state.db_error is not None:
+            document["error"] = state.db_error
+        emit_json("history", document)
+        sys.exit(2 if state.db_error is not None else 0)
     render_history(state.graph, state.applied, db_error=state.db_error)
 
 
@@ -332,6 +357,7 @@ class _MigrationState:
     graph: RevisionGraph
     applied: set[str] | None  # None when the database could not be read
     db_error: str | None
+    heads: set[str]
 
 
 def _load_migration_state(environment: str) -> _MigrationState:
@@ -347,7 +373,7 @@ def _load_migration_state(environment: str) -> _MigrationState:
         if warning := state.version_table.warning():
             ui.warn(warning)
     except Exception as e:
-        return _MigrationState(env_config, graph, None, str(e))
+        return _MigrationState(env_config, graph, None, str(e), set())
     applied: set[str] = set()
     unknown = [head for head in heads if head not in graph.migrations]
     for head in heads:
@@ -357,19 +383,23 @@ def _load_migration_state(environment: str) -> _MigrationState:
         ui.warn(f"The database is at {head[:12]}, which is not in your local migration files.")
     if unknown:
         ui.warn("Applied status may be incomplete; pull the missing revisions.")
-    return _MigrationState(env_config, graph, applied, None)
+    return _MigrationState(env_config, graph, applied, None, heads)
 
 
 def _env_config_or_fail(environment: str) -> dict[str, Any]:
     try:
         return get_env_config(environment, Path.cwd() / "config.yaml")
     except Exception as e:
+        if click.get_current_context().params.get("json_output"):
+            command_failure(f"Error loading config: {e}")
         ui.fail(f"Could not load config: {e}")
 
 
 def _versions_dir_or_fail() -> Path:
     versions_dir = Path.cwd() / "migrations" / "versions"
     if not versions_dir.exists():
+        if click.get_current_context().params.get("json_output"):
+            command_failure("Error: migrations/versions/ not found")
         ui.fail("migrations/versions/ not found.", "Run `ch-migrate init` to create a project.")
     return versions_dir
 
@@ -741,9 +771,10 @@ def skill(target: str) -> None:
     ui.success(f"Installed the skill to {skill_dst}")
 
 
-@main.command()
+@main.command(cls=JsonCommand)
 @click.argument("environment", required=False, default=None)
-def lint(environment: str | None) -> None:
+@click.option("--json", "json_output", is_flag=True, help="Emit a versioned JSON document")
+def lint(environment: str | None, json_output: bool) -> None:
     """Lint upgrade statements with their source file and line.
 
     Without an environment, checks revisions after the gate baseline statically,
@@ -790,6 +821,8 @@ def lint(environment: str | None) -> None:
             )
             client = get_client(env_config)
         except Exception as e:
+            if json_output:
+                command_failure(f"Could not work out the pending revisions for {environment}: {e}")
             ui.fail(f"Could not work out the pending revisions for {environment}: {e}")
 
     try:
@@ -801,20 +834,30 @@ def lint(environment: str | None) -> None:
             revisions=revisions,
         )
     except (OSError, SyntaxError, ValueError) as e:
+        if json_output:
+            command_failure(str(e))
         ui.fail(str(e))
     finally:
         if client is not None:
             client.close()
 
-    render_lint_report(report, runtime=environment is not None)
+    if json_output:
+        emit_json("lint", lint_document(report))
+    else:
+        render_lint_report(report, runtime=environment is not None)
 
     sys.exit(1 if report.has_errors else 0)
 
 
 @main.command()
 @click.argument("environment")
-@click.option("--validate", "-v", "validate_sql", type=click.Path(exists=True),
-              help="Validate a SQL file against the dependency graph")
+@click.option(
+    "--validate",
+    "-v",
+    "validate_sql",
+    type=click.Path(exists=True),
+    help="Validate a SQL file against the dependency graph",
+)
 def deps(environment: str, validate_sql: str | None) -> None:
     """Show materialized view and dictionary dependency graph.
 
@@ -859,15 +902,16 @@ def deps(environment: str, validate_sql: str | None) -> None:
         ui.success(f"Validation passed: {validate_sql} keeps every dependency intact.")
 
 
-@main.command(name="diff")
+@main.command(name="diff", cls=JsonCommand)
 @click.argument("environment")
+@click.option("--json", "json_output", is_flag=True, help="Emit a versioned JSON document")
 @click.option(
     "--snapshot-dir",
     "-s",
     type=click.Path(exists=True),
     help="Path to a snapshot directory to compare against. Defaults to latest snapshot.",
 )
-def diff_cmd(environment: str, snapshot_dir: str | None) -> None:
+def diff_cmd(environment: str, snapshot_dir: str | None, json_output: bool) -> None:
     """Detect schema drift between local snapshot and live database.
 
     Compares the most recent snapshot (or a specified one) against the live
@@ -898,10 +942,13 @@ def diff_cmd(environment: str, snapshot_dir: str | None) -> None:
         snapshots_base = Path.cwd() / "migrations" / "sql" / "snapshots"
         dirs = sorted(snapshots_base.iterdir()) if snapshots_base.exists() else []
         if not dirs:
+            if json_output:
+                command_failure(f"No snapshots found. Run `ch-migrate snapshot {environment}` first.")
             ui.fail("No snapshots found.", f"Run `ch-migrate snapshot {environment}` first.")
         snap_path = dirs[-1]
 
-    ui.step(f"Comparing snapshot {snap_path.name} with {environment} ({database})")
+    if not json_output:
+        ui.step(f"Comparing snapshot {snap_path.name} with {environment} ({database})")
 
     # Load local schema from snapshot files
     local_schema = Schema(database=database)
@@ -938,6 +985,7 @@ def diff_cmd(environment: str, snapshot_dir: str | None) -> None:
                     TableDefinition,
                     ViewDefinition,
                 )
+
                 fallback_types = {
                     "table": lambda: TableDefinition(name=name, engine="", raw_ddl=ddl),
                     "view": lambda: ViewDefinition(name=name, select_query="", raw_ddl=ddl),
@@ -949,13 +997,21 @@ def diff_cmd(environment: str, snapshot_dir: str | None) -> None:
     # Get live schema
     try:
         client = get_client(env_config)
-        live_schema = get_live_schema(client, database)
+        try:
+            live_schema = get_live_schema(client, database)
+        finally:
+            client.close()
     except Exception as e:
+        if json_output:
+            command_failure(f"Error connecting to {environment}: {e}")
         ui.fail(f"Could not read the live schema from {environment}: {e}")
 
     # Compare
     diffs = compare_schemas(local_schema, live_schema)
-    render_diff_report(diffs)
+    if json_output:
+        emit_json("diff", diff_document(diffs))
+    else:
+        render_diff_report(diffs)
 
     if any(d.status != DiffStatus.IN_SYNC for d in diffs):
         ui.hint(

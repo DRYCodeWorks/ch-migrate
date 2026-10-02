@@ -1,0 +1,124 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "lint.schema.json",
+  "title": "ch-migrate lint schema version 1",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "command"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "command": {
+      "const": "lint"
+    },
+    "error": {
+      "type": "string"
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "rule": {
+            "type": "string"
+          },
+          "severity": {
+            "enum": [
+              "error",
+              "warn",
+              "info",
+              "off"
+            ]
+          },
+          "blocking": {
+            "type": "boolean"
+          },
+          "file": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "line": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1
+          },
+          "message": {
+            "type": "string"
+          },
+          "waived": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "rule",
+          "severity",
+          "blocking",
+          "file",
+          "line",
+          "message",
+          "waived"
+        ]
+      }
+    },
+    "counts": {
+      "type": "object",
+      "properties": {
+        "total": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "error": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "warning": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "info": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "blocking": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "waived": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "total",
+        "error",
+        "warning",
+        "info",
+        "blocking",
+        "waived"
+      ]
+    }
+  },
+  "anyOf": [
+    {
+      "required": [
+        "error"
+      ]
+    },
+    {
+      "required": [
+        "findings",
+        "counts"
+      ]
+    }
+  ]
+}

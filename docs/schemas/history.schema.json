@@ -1,0 +1,87 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "history.schema.json",
+  "title": "ch-migrate history schema version 1",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "command"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "command": {
+      "const": "history"
+    },
+    "error": {
+      "type": "string"
+    },
+    "revisions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "revision": {
+            "type": "string"
+          },
+          "down_revisions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "uniqueItems": true
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "create_date": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "path": {
+            "type": "string"
+          },
+          "applied": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "irreversible": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "revision",
+          "down_revisions",
+          "description",
+          "create_date",
+          "path",
+          "applied",
+          "irreversible"
+        ]
+      }
+    }
+  },
+  "anyOf": [
+    {
+      "required": [
+        "error"
+      ]
+    },
+    {
+      "required": [
+        "revisions"
+      ]
+    }
+  ]
+}
