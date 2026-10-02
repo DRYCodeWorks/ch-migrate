@@ -1,0 +1,79 @@
+name: release
+
+# Pushing a tag vX.Y.Z publishes that version to PyPI as `clickhouse-alembic`
+# (the CLI it installs is `ch-migrate`) and creates the matching GitHub release.
+#
+# No token: PyPI trusts this workflow through Trusted Publishing (OIDC).
+# PyPI publisher: owner DRYCodeWorks, repository clickhouse-migrate,
+# workflow release.yml, no environment.
+#
+# To release: set __version__ in clickhouse_alembic/__init__.py, commit,
+# then `git tag vX.Y.Z && git push origin vX.Y.Z`.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  build:
+    needs: ci
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v10
+
+      - name: The tag matches the package version
+        run: |
+          version=$(python3 -c 'import re; print(re.search(r"__version__ = \"(.+?)\"", open("clickhouse_alembic/__init__.py").read()).group(1))')
+          if [ "v${version}" != "${GITHUB_REF_NAME}" ]; then
+            echo "::error::tag ${GITHUB_REF_NAME} does not match __version__ ${version}"
+            exit 1
+          fi
+
+      - name: Build sdist and wheel
+        run: uv build
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dist
+          path: dist/
+
+  pypi:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write   # OIDC token for PyPI Trusted Publishing
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist/
+
+      - uses: pypa/gh-action-pypi-publish@release/v1
+
+  github-release:
+    needs: pypi
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist/
+
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh release create "${GITHUB_REF_NAME}" dist/*
+          --repo "${GITHUB_REPOSITORY}"
+          --title "${GITHUB_REF_NAME}"
+          --generate-notes
