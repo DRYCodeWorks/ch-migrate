@@ -314,6 +314,31 @@ Bootstrap creates the following roles:
 - No transactional DDL - migrations can't be atomically rolled back
 - Each `op.execute()` runs one statement (no multi-statement batches)
 
+## Development
+
+Run the unit suite without starting Docker:
+
+```bash
+uv run --locked pytest -q
+```
+
+Run the integration suite with Docker available:
+
+```bash
+uv run --locked pytest -q -m integration
+```
+
+The integration fixtures start a `chm-it-*` container on a random loopback port.
+Each test uses its own database. Pytest finalizers remove the database and
+container on success, failure, or a handled interrupt. A forced process kill
+cannot run finalizers.
+
+`CH_MIGRATE_IT_IMAGE` selects the ClickHouse image tag (default: `26.3`).
+If Docker is unavailable, integration tests skip with a reason. To use a dedicated
+test server instead, set `CH_MIGRATE_IT_URL` in the environment to an HTTP(S) URL
+with credentials. The suite creates and drops databases on that server; never
+point it at a shared or production server, and never commit its credentials.
+
 ## License
 
 MIT License - see [LICENSE](LICENSE) file for details.

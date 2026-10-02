@@ -97,3 +97,7 @@ module = [
     "clickhouse_sqlalchemy.*",
 ]
 ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+markers = ["integration: tests against a real, isolated ClickHouse server"]
+addopts = "-m 'not integration'"
