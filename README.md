@@ -161,10 +161,17 @@ To render without executing, set `CH_ENVIRONMENT` and run `alembic upgrade head 
 ### Re-runnable migrations
 
 `up` statically checks pending upgrade statements before Alembic executes any of
-them. Idempotency errors refuse the whole run and print the source file, line,
+them. Idempotency and standalone-SET errors refuse the whole run and print the source file, line,
 statement, and suggested fix. There is no command-line bypass; `--skip-mv-check`
 does not skip this gate. Other findings are warnings in `up`; standalone `lint`
 retains their configured severities.
+
+Static lint rejects a standalone `SET` when `migrations/env.py` lacks the
+`CH_MIGRATE_ENV_VERSION = 2` marker: that statement would be ignored on the old
+connection. Run `ch-migrate upgrade-env`, or put the setting in the relevant
+statement's `SETTINGS` clause. Version-2 projects allow `SET`; `SETTINGS` clauses
+and the word `SET` inside string literals are not flagged. `standalone_set` is
+a gate rule whose severity cannot be lowered.
 
 Use `IF NOT EXISTS` for `CREATE` and `ALTER ... ADD`, and `IF EXISTS` for `DROP`,
 `ALTER ... DROP`, and `RENAME COLUMN`, where supported. This includes tables,

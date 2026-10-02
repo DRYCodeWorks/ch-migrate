@@ -9,6 +9,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
+from ch_migrate.alembic_env import has_current_env
 from ch_migrate.baseline import baseline_exemptions, normalize_baseline
 from ch_migrate.idempotency import classify_idempotency, waiver_reason
 from ch_migrate.mv_validate import MVValidationError, validate_mv_migrations
@@ -246,6 +247,28 @@ class IdempotencyRule(LintRule):
             )
         first_line = sql.strip().splitlines()[0] if sql.strip() else ""
         return [LintResult(self.name, message, severity, kwargs.get("file_path"), 1, first_line)]
+
+
+class StandaloneSetRule(LintRule):
+    """Reject SET on project environments without the session-safe v2 marker."""
+
+    name = "standalone_set"
+    default_severity = Severity.ERROR
+
+    def check(self, sql: str, **kwargs: Any) -> list[LintResult]:
+        if kwargs.get("session_safe", False) or not re.match(r"^\s*SET\b", sql, re.IGNORECASE):
+            return []
+        return [
+            LintResult(
+                self.name,
+                "This SET is ignored on this project's connection. Run `ch-migrate upgrade-env`, "
+                "or put the setting in a SETTINGS clause on the statement that needs it.",
+                Severity.ERROR,
+                kwargs.get("file_path"),
+                1,
+                sql.strip().splitlines()[0],
+            )
+        ]
 
 
 class ReservedWordRule(LintRule):
@@ -500,6 +523,7 @@ class MVDeclarationRule(LintRule):
 STATIC_RULES: list[LintRule] = [
     DestructiveChangeRule(),
     IdempotencyRule(),
+    StandaloneSetRule(),
     ReservedWordRule(),
     MissingOnClusterRule(),
     MVDeclarationRule(),
@@ -529,7 +553,9 @@ def lint_migrations(
     """Lint upgrade statements, optionally restricted to an explicit revision set."""
     config = config or LintConfig()
     graph = build_revision_graph(versions_dir)
-    scope = _LintScope(config, client, database, graph)
+    scope = _LintScope(
+        config, client, database, graph, has_current_env(versions_dir.parent / "env.py")
+    )
     exempt = baseline_exemptions(graph, config.gate_baseline)
     selected = {}
     for migration in graph.migrations.values():
@@ -559,6 +585,7 @@ class _LintScope:
     client: Any
     database: str | None
     graph: RevisionGraph
+    session_safe: bool
 
 
 def _gate_configuration_errors(config: LintConfig) -> list[LintResult]:
@@ -590,6 +617,7 @@ def _lint_statement(
             database=scope.database,
             graph=scope.graph,
             comments=statement.comments,
+            session_safe=scope.session_safe,
         )
         for finding in findings:
             finding.file = statement.source

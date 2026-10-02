@@ -456,3 +456,49 @@ class TestLintMigrations:
         report = lint_migrations(versions_dir)
         assert not report.has_errors
         assert report.results == []
+
+
+class TestStandaloneSetRule:
+    def test_set_legacy_env_is_an_error(self, tmp_path):
+        legacy = (Path(__file__).parent / "fixtures/env_v0_4_1.py").read_text()
+        versions = self._project(tmp_path, "SET max_threads = 3", legacy)
+        [finding] = lint_migrations(versions).results
+        assert finding.rule == "standalone_set"
+        assert finding.severity == Severity.ERROR
+        assert finding.file == "migrations/versions/set.py" and finding.line == 4
+        assert "upgrade-env" in finding.message and "SETTINGS clause" in finding.message
+
+    def test_set_v2_env_is_silent_without_importing_it(self, tmp_path):
+        versions = self._project(
+            tmp_path,
+            "SET max_threads = 3",
+            "CH_MIGRATE_ENV_VERSION = 2\nraise RuntimeError('must not import')\n",
+        )
+        assert lint_migrations(versions).results == []
+
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            "SELECT 1 SETTINGS max_threads = 3",
+            "SELECT 'SET max_threads = 3; still a string'",
+            "SELECT 'SETTINGS max_threads = 3'",
+        ],
+    )
+    def test_set_ignores_settings_clauses_and_strings(self, tmp_path, sql):
+        versions = self._project(tmp_path, sql, None)
+        assert lint_migrations(versions).results == []
+
+    def test_set_missing_marker_and_mixed_case(self, tmp_path):
+        versions = self._project(tmp_path, "-- note\nsEt max_threads = 3", "# custom env\n")
+        [finding] = lint_migrations(versions).results
+        assert finding.rule == "standalone_set" and finding.severity == Severity.ERROR
+
+    def _project(self, root, sql, environment):
+        versions = root / "migrations/versions"
+        versions.mkdir(parents=True)
+        if environment is not None:
+            (versions.parent / "env.py").write_text(environment)
+        (versions / "set.py").write_text(
+            "revision = 'set'\ndown_revision = None\ndef upgrade():\n" f"    op.execute({sql!r})\n"
+        )
+        return versions

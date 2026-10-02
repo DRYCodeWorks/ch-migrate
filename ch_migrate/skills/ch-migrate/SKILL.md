@@ -25,6 +25,9 @@ Old environments are refused by `up`, `down`, `status`, and `history` before con
 One checked HTTP session spans the whole run: `SET` carries into subsequent
 revisions. Prefer statement-level `SETTINGS` for query-local changes. An expired
 session fails loudly. Configure idle `session_timeout` in seconds (default 1800).
+Static lint rejects standalone `SET` on environments without the v2 marker.
+Upgrade the environment or use a statement-level `SETTINGS` clause instead.
+The `standalone_set` gate rule cannot be lowered through configuration.
 
 ## CLI Quick Reference
 

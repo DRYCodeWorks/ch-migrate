@@ -77,14 +77,9 @@ def _print_gate_findings(report) -> bool:
 
 
 def _require_current_env() -> None:
-    from ch_migrate.alembic_env import ENV_VERSION
-    from ch_migrate.rebase import _literal_assignment
+    from ch_migrate.alembic_env import has_current_env
 
-    path = Path.cwd() / "migrations" / "env.py"
-    if (
-        path.is_file()
-        and _literal_assignment(path.read_text(), "CH_MIGRATE_ENV_VERSION") == ENV_VERSION
-    ):
+    if has_current_env(Path.cwd() / "migrations" / "env.py"):
         return
     raise click.ClickException(
         "This project's migrations/env.py is from ch-migrate 0.x. Run `ch-migrate upgrade-env`."
@@ -272,7 +267,7 @@ def up(environment: str, revision: str, skip_mv_check: bool, verbose: bool) -> N
     Runs all unapplied migrations to bring the database to the latest version.
     Use --revision to upgrade to a specific revision instead of head.
 
-    Idempotency gate errors refuse the run before Alembic.
+    Idempotency and standalone-SET gate errors refuse the run before Alembic.
     Other findings are warnings; --skip-mv-check only skips MV declaration checks.
     """
     _require_current_env()

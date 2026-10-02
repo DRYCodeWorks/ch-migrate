@@ -15,6 +15,7 @@ from sqlalchemy import URL, create_engine, pool
 
 from ch_migrate.config import get_env_config
 from ch_migrate.hooks import HookRegistry, run_hooks
+from ch_migrate.rebase import _literal_assignment
 
 ENV_VERSION = 2
 DEFAULT_SESSION_TIMEOUT = 1800
@@ -42,6 +43,14 @@ def run() -> None:
         _run_offline(env_config)
     else:
         _run_online(env_config)
+
+
+def has_current_env(path: Path) -> bool:
+    """Read the session-safety marker without importing project code."""
+    return (
+        path.is_file()
+        and _literal_assignment(path.read_text(), "CH_MIGRATE_ENV_VERSION") == ENV_VERSION
+    )
 
 
 def _run_offline(env_config: dict[str, Any]) -> None:
