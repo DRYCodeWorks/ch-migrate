@@ -1,0 +1,33 @@
+> DROP DATABASE IF EXISTS d4 SYNC
+> CREATE DATABASE d4
+> CREATE TABLE d4.t (id UInt64) ENGINE = MergeTree ORDER BY id
+> CREATE TABLE d4.t_new (id UInt64) ENGINE = MergeTree ORDER BY (intHash32(id), id)
+> CREATE TABLE d4.sink (id UInt64) ENGINE = MergeTree ORDER BY id
+> CREATE MATERIALIZED VIEW d4.mv_src TO d4.sink AS SELECT id FROM d4.t
+> CREATE MATERIALIZED VIEW d4.t_dual TO d4.t_new AS SELECT id FROM d4.t
+> SELECT name, uuid FROM system.tables WHERE database='d4' AND name IN ('t','t_new') ORDER BY name
+   ┌─name──┬─uuid─────────────────────────────────┐
+1. │ t     │ 2e556ea7-5d38-4ebb-a928-f95c0a5f7a86 │
+2. │ t_new │ adda6974-11a8-4f9d-a5ec-6891a172e593 │
+   └───────┴──────────────────────────────────────┘
+> SELECT (SELECT count() FROM d4.t) AS old_t_so_far
+   ┌─old_t_so_far─┐
+1. │         3000 │
+   └──────────────┘
+> EXCHANGE TABLES d4.t AND d4.t_new
+> DROP TABLE d4.t_dual SYNC
+> SELECT name, uuid FROM system.tables WHERE database='d4' AND name IN ('t','t_new') ORDER BY name
+   ┌─name──┬─uuid─────────────────────────────────┐
+1. │ t     │ adda6974-11a8-4f9d-a5ec-6891a172e593 │
+2. │ t_new │ 2e556ea7-5d38-4ebb-a928-f95c0a5f7a86 │
+   └───────┴──────────────────────────────────────┘
+> SYSTEM FLUSH LOGS
+> SELECT query_duration_ms, substr(query,1,40) q FROM system.query_log WHERE type='QueryFinish' AND (query LIKE 'EXCHANGE TABLES d4%' OR query LIKE 'DROP TABLE d4.t_dual%')
+   ┌─query_duration_ms─┬─q─────────────────────────────────┐
+1. │                 0 │ EXCHANGE TABLES d4.t AND d4.t_new │
+2. │             10906 │ DROP TABLE d4.t_dual SYNC         │
+   └───────────────────┴───────────────────────────────────┘
+> SELECT (SELECT count() FROM d4.t) AS new_physical_named_t, (SELECT uniqExact(id) FROM d4.t) AS new_t_uniq, (SELECT count() FROM d4.t_new) AS old_physical_named_t_new, (SELECT count() FROM d4.sink) AS sink_rows, (SELECT uniqExact(id) FROM d4.sink) AS sink_uniq
+   ┌─new_physical_named_t─┬─new_t_uniq─┬─old_physical_named_t_new─┬─sink_rows─┬─sink_uniq─┐
+1. │                15000 │      15000 │                    15000 │     15000 │     15000 │
+   └──────────────────────┴────────────┴──────────────────────────┴───────────┴───────────┘

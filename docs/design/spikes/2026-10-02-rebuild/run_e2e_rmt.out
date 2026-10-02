@@ -1,0 +1,78 @@
+[('202607', 2, 2000000), ('202608', 2, 2000000), ('202609', 2, 2000000)]
+[10:48:15] re-running rebuild
+rebuild already complete
+[10:48:16] rebuild finished; writers keep going 3s
+mv_dep	MaterializedView	1f88fc84-2ae8-468c-889d-19071041d465
+sink	ReplicatedMergeTree	1cbe8077-d1f0-4e34-9bc4-20bf111bf2fe
+t	ReplicatedMergeTree	680d9922-5e5d-4642-9a45-d44a30c40cf6
+t_old_rebuilt	ReplicatedMergeTree	0d8d805b-8456-49d1-9b77-5fa24d096dba
+final sorting key	k, ts, id
+{
+ "preload_rows": 6000000,
+ "preload_missing": 0,
+ "preload_duplicated": 0,
+ "writer_batches": 724,
+ "writer_rows_acked": {
+  "sync": 414000,
+  "async": 8600,
+  "async0": 94800
+ },
+ "writer_errors_logged": 0,
+ "missing_acked_ids_by_writer": {
+  "async0": 400
+ },
+ "missing_sample": {
+  "async0": [
+   90059000,
+   90059001,
+   90059002
+  ]
+ },
+ "duplicate_ids_inside_window": 68051,
+ "duplicate_ids_outside_window": 0,
+ "outside_sample": [],
+ "final_rows": 6585051,
+ "final_distinct_ids": 6517000,
+ "dependent_mv_sink_ids_not_exactly_once": 0,
+ "sink_rows": 6517000,
+ "window_seconds": 2.767,
+ "step_marks_rel": [
+  "1:start@0.000",
+  "1:end@0.245",
+  "2:start@0.252",
+  "2:end@2.324",
+  "3:start@2.324",
+  "3:end@2.767",
+  "4:start@2.767",
+  "4:stage-start:202607@2.920",
+  "4:moved:202607@3.318",
+  "4:stage-start:202608@3.342",
+  "4:moved:202608@3.757",
+  "4:stage-start:202609@3.785",
+  "4:moved:202609@4.204",
+  "4:end@4.204",
+  "5:start@4.204",
+  "5:exchanged@4.707",
+  "5:t_dual_dropped@5.085",
+  "5:end@5.530",
+  "1:start@6.812"
+ ]
+}
+{"step": 2, "waiting_on": [["f065c24c-ea7a-4b36-b220-6afef159e961", "Insert", "0.064477", "INSERT INTO e.t (`id`, `ts`, `k`, `payload`) FORMAT Native\n"], ["013ace74-9ba7-42fc-b9ca-0f6e0858720d", "AsyncInsertFlush", "0.064312", "INSERT INTO e.t (id, ts, k, payload) FORMAT Native"], ["413fc1e6-e717-43c5-a3ba-14256d50536f", "AsyncInsertFlush", "0.034175", "INSERT INTO e.t (id, ts, k, payload) FORMAT Native"]], "t": 1790952489.455847}
+{"step": 2, "waiting_on": [["bb9ad367-b31c-4700-9cc6-b869d884a2a7", "Insert", "0.026306", "INSERT INTO e.t (`id`, `ts`, `k`, `payload`) FORMAT Native\n"], ["d1b54cf0-dbf0-4e93-b7e8-621d10c8ecd4", "AsyncInsertFlush", "0.018882", "INSERT INTO e.t (id, ts, k, payload) FORMAT Native"], ["2941a2a5-eb5d-454e-995f-852e54f7874b", "Insert", "0.011064", "INSERT INTO e.t (`id`, `ts`, `k`, `payload`) FORMAT Native\n"], ["04c21dbe-8d3a-435c-95af-7e5a1fd89b31", "AsyncInsertFlush", "0.010871", "INSERT INTO e.t (id, ts, k, payload) FORMAT Native"]], "t": 1790952489.664879}
+{"step": 2, "waiting_on": [["d1b54cf0-dbf0-4e93-b7e8-621d10c8ecd4", "AsyncInsertFlush", "0.221971", "INSERT INTO e.t (id, ts, k, payload) FORMAT Native"], ["2941a2a5-eb5d-454e-995f-852e54f7874b", "Insert", "0.214164", "INSERT INTO e.t (`id`, `ts`, `k`, `payload`) FORMAT Native\n"], ["04c21dbe-8d3a-435c-95af-7e5a1fd89b31", "AsyncInsertFlush", "0.213976", "INSERT INTO e.t (id, ts, k, payload) FORMAT Native"], ["224b7f4b-a382-44c5-b510-16a19c28bfc3", "AsyncInsertFlush", "0.014953", "INSERT INTO e.t (id, ts, k, payload) FORMAT Native"], ["334d0696-306e-4ef1-b591-5798b117087f", "Insert", "0.001095", "INSERT INTO e.t (`id`, `ts`, `k`, `payload`) FORMAT Native\n"]], "t": 1790952489.868196}
+async_insert_log	Ok	10083	2144635	
+async_insert_log	FlushError	5	0	Code: 741. DB::Exception: Table e.t (16be1d2b-22d6-4b5f-83c0-4dac6c904e36) does not match 
+stage queries	rebuild-stage-202607	QueryFinish	161	2022215	
+stage queries	rebuild-stage-202608	QueryFinish	160	2022178	
+stage queries	rebuild-stage-202609	QueryFinish	169	2020007	
+stage queries	rebuild-stage-202607	QueryFinish	196	2136623	
+stage queries	rebuild-stage-202608	QueryFinish	205	2137119	
+stage queries	rebuild-stage-202609	QueryFinish	158	2124858	
+stage queries	rebuild-stage-202607	QueryFinish	22243	2111969	
+stage queries	rebuild-stage-202608	ExceptionWhileProcessing	5792	557056	Code: 394. DB::Exception: Query was cancelled. (QUERY_WAS_CANCELLED) (version 26
+stage queries	rebuild-stage-202608	QueryFinish	22336	2113624	
+stage queries	rebuild-stage-202609	QueryFinish	21986	2103363	
+stage queries	rebuild-stage-202607	QueryFinish	222	2085505	
+stage queries	rebuild-stage-202608	QueryFinish	203	2086842	
+stage queries	rebuild-stage-202609	QueryFinish	195	2080304	

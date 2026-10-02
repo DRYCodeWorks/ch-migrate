@@ -1,0 +1,29 @@
+> DROP DATABASE IF EXISTS d SYNC
+> CREATE DATABASE d
+> CREATE TABLE d.t (id UInt64) ENGINE = MergeTree ORDER BY id
+> CREATE TABLE d.t_new (id UInt64) ENGINE = MergeTree ORDER BY id
+> [background, 10:35:51] INSERT INTO d.t SELECT number FROM numbers(20000) WHERE sleepEachRow(0.001) = 0 SETTINGS max_block_size = 1000, min_insert_block_size_rows = 1000, min_insert_block_size_bytes = 0, max_threads = 1, function_sleep_max_microseconds_per_block = 10000000
+> SELECT query_id, query_kind, current_database, round(elapsed,1) AS elapsed, now() - toIntervalSecond(toUInt64(elapsed)) AS approx_start, written_rows, substr(query,1,40) AS q FROM system.processes WHERE query_kind = 'Insert'
+   ┌─query_id─┬─query_kind─┬─current_database─┬─elapsed─┬────────approx_start─┬─written_rows─┬─q────────────────────────────────────────┐
+1. │ d1-slow  │ Insert     │ default          │       5 │ 2026-10-02 14:35:51 │         4000 │ INSERT INTO d.t SELECT number FROM numbe │
+   └──────────┴────────────┴──────────────────┴─────────┴─────────────────────┴──────────────┴──────────────────────────────────────────┘
+> SELECT count() AS t_rows_so_far FROM d.t
+   ┌─t_rows_so_far─┐
+1. │          4000 │
+   └───────────────┘
+> [10:35:56] creating MV
+> CREATE MATERIALIZED VIEW d.t_dual TO d.t_new AS SELECT id FROM d.t
+> SELECT count() AS t_rows_so_far FROM d.t
+   ┌─t_rows_so_far─┐
+1. │          7000 │
+   └───────────────┘
+> [10:36:11] slow insert finished
+> SELECT (SELECT count() FROM d.t) AS t_rows, (SELECT count() FROM d.t_new) AS t_new_rows_via_mv
+   ┌─t_rows─┬─t_new_rows_via_mv─┐
+1. │  20000 │                 0 │
+   └────────┴───────────────────┘
+> INSERT INTO d.t SELECT number + 100000 FROM numbers(10)
+> SELECT (SELECT count() FROM d.t) AS t_rows, (SELECT count() FROM d.t_new) AS t_new_rows_via_mv
+   ┌─t_rows─┬─t_new_rows_via_mv─┐
+1. │  20010 │                10 │
+   └────────┴───────────────────┘

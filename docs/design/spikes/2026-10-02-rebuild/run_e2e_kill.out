@@ -1,0 +1,140 @@
+[('202607', 2, 2000000), ('202608', 2, 2000000), ('202609', 2, 2000000)]
+[10:45:54] SIGKILL rebuild python (moved=1, stage query written_rows=311296)
+right after kill: server-side stage query still running?	rebuild-stage-202608	3.35	327680
+ledger	uuids		recorded	{"old": "6b4100e2-71fb-465b-b359-104db98d7da0", "new": "a2707621-d726-4077-a41a-c3fcebfa429a"}
+ledger	snapshot		done	{"202608": 2113624, "202607": 2111969, "202609": 2103363}
+ledger	copy	202607	staged	2111969
+ledger	copy	202607	moved	2111969
+Received exception from server (version 26.3.32):
+Code: 215. DB::Exception: Received from localhost:9000. DB::Exception: Column 'e.t_stage._partition_id' is not under aggregate function and not in GROUP BY keys. In query SELECT 't_stage rows per partition', _partition_id, count() FROM e.t_stage GROUP BY 1. (NOT_AN_AGGREGATE)
+(query: SELECT 't_stage rows per partition', _partition_id, count() FROM e.t_stage GROUP BY 1 FORMAT TSV)
+after 2s: server-side stage query	rebuild-stage-202608	5.53	540672
+[10:45:56] re-running rebuild
+[10:46:41] rebuild finished; writers keep going 3s
+ledger	uuids		recorded	{"old": "6b4100e2-71fb-465b-b359-104db98d7da0", "new": "a2707621-d726-4077-a41a-c3fcebfa429a"}
+ledger	snapshot		done	{"202608": 2113624, "202607": 2111969, "202609": 2103363}
+ledger	copy	202607	staged	2111969
+ledger	copy	202607	moved	2111969
+ledger	copy	202608	staged	2113624
+ledger	copy	202608	moved	2113624
+ledger	copy	202609	staged	2103363
+ledger	copy	202609	moved	2103363
+ledger	rebuild		done	
+ledger	MergeTree	4f8086b1-043c-444e-835b-4ba618bc0424
+mv_dep	MaterializedView	3d6b0351-5e05-482e-a225-364aaef41b84
+sink	MergeTree	a51899e2-5f74-4a9c-b6e9-c75e966d1055
+t	MergeTree	a2707621-d726-4077-a41a-c3fcebfa429a
+t_old_rebuilt	MergeTree	6b4100e2-71fb-465b-b359-104db98d7da0
+final sorting key	k, ts, id
+{
+ "preload_rows": 6000000,
+ "preload_missing": 0,
+ "preload_duplicated": 0,
+ "writer_batches": 5760,
+ "writer_rows_acked": {
+  "sync": 4262000,
+  "async": 173600,
+  "async0": 552200
+ },
+ "writer_errors_logged": 0,
+ "missing_acked_ids_by_writer": {},
+ "missing_sample": {},
+ "duplicate_ids_inside_window": 50756,
+ "duplicate_ids_outside_window": 200,
+ "outside_sample": [
+  [
+   90026600,
+   -0.020801067352294922,
+   -0.018185138702392578
+  ],
+  [
+   90026601,
+   -0.020801067352294922,
+   -0.018185138702392578
+  ],
+  [
+   90026602,
+   -0.020801067352294922,
+   -0.018185138702392578
+  ],
+  [
+   90026603,
+   -0.020801067352294922,
+   -0.018185138702392578
+  ],
+  [
+   90026604,
+   -0.020801067352294922,
+   -0.018185138702392578
+  ],
+  [
+   90026605,
+   -0.020801067352294922,
+   -0.018185138702392578
+  ],
+  [
+   90026606,
+   -0.020801067352294922,
+   -0.018185138702392578
+  ],
+  [
+   90026607,
+   -0.020801067352294922,
+   -0.018185138702392578
+  ],
+  [
+   90026608,
+   -0.020801067352294922,
+   -0.018185138702392578
+  ],
+  [
+   90026609,
+   -0.020801067352294922,
+   -0.018185138702392578
+  ]
+ ],
+ "final_rows": 11038756,
+ "final_distinct_ids": 10987800,
+ "dependent_mv_sink_ids_not_exactly_once": 0,
+ "sink_rows": 10987800,
+ "window_seconds": 1.073,
+ "step_marks_rel": [
+  "1:start@0.000",
+  "1:end@0.129",
+  "2:start@0.136",
+  "2:end@0.973",
+  "3:start@0.973",
+  "3:end@1.073",
+  "4:start@1.073",
+  "4:stage-start:202607@1.095",
+  "4:moved:202607@23.416",
+  "4:stage-start:202608@23.425",
+  "1:start@29.063",
+  "1:end@29.080",
+  "2:start@29.086",
+  "2:end@29.090",
+  "3:start@29.090",
+  "3:skip@29.098",
+  "4:start@29.098",
+  "4:stage-start:202608@29.312",
+  "4:moved:202608@51.767",
+  "4:stage-start:202609@51.775",
+  "4:moved:202609@73.892",
+  "4:end@73.892",
+  "5:start@73.892",
+  "5:exchanged@73.912",
+  "5:t_dual_dropped@73.916",
+  "5:end@73.985"
+ ]
+}
+stage queries	rebuild-stage-202607	QueryFinish	161	2022215	
+stage queries	rebuild-stage-202608	QueryFinish	160	2022178	
+stage queries	rebuild-stage-202609	QueryFinish	169	2020007	
+stage queries	rebuild-stage-202607	QueryFinish	196	2136623	
+stage queries	rebuild-stage-202608	QueryFinish	205	2137119	
+stage queries	rebuild-stage-202609	QueryFinish	158	2124858	
+stage queries	rebuild-stage-202607	QueryFinish	22243	2111969	
+stage queries	rebuild-stage-202608	ExceptionWhileProcessing	5792	557056	Code: 394. DB::Exception: Query was cancelled. (QUERY_WAS_CANCELLED) (version 26
+stage queries	rebuild-stage-202608	QueryFinish	22336	2113624	
+stage queries	rebuild-stage-202609	QueryFinish	21986	2103363	
+FlushError this run	3	36144

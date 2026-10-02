@@ -1,0 +1,18 @@
+spike_official		SELECT name, value, readonly FROM system.settings LIMIT 10000 FORMAT Native
+spike_official		SELECT 1 AS check FORMAT Native
+spike_official		SELECT currentDatabase() FORMAT Native
+spike_official		EXISTS TABLE `spike_official`.`alembic_version` FORMAT Native
+spike_official		EXISTS TABLE `spike_official`.`alembic_version` FORMAT Native
+spike_official		CREATE TABLE `spike_official`.`alembic_version` (`version_num` VARCHAR(32)) Engine MergeTree ORDER BY version_num
+spike_official		CREATE TABLE IF NOT EXISTS spike_official.spike_probe (rev String, label String, val String, ts DateTime64(3) DEFAULT no
+spike_official		SET max_threads = 1
+spike_official	1	INSERT INTO spike_official.spike_probe (rev, label, val) SELECT \'r001\', \'op.execute INSERT after SET\', toString(getSetti
+spike_official	1	SELECT getSetting(\'max_threads\') FORMAT Native
+spike_official	1	INSERT INTO `spike_official`.`alembic_version` (`version_num`) VALUES 
+spike_official	1	INSERT INTO spike_official.spike_probe (rev, label, val) SELECT \'r002\', \'next revision, no SET\', toString(getSetting(\'ma
+spike_official	1	SELECT getSetting(\'max_threads\') FORMAT Native
+spike_official	1	INSERT INTO `spike_official`.`alembic_version` (version_num) VALUES 
+spike_official	1	ALTER TABLE `spike_official`.`alembic_version` DELETE WHERE `version_num` = \'r001\' SETTINGS mutations_sync = 2
+spike_official	1	SELECT 1 FORMAT Native
+spike_official	1	INSERT INTO `spike_official`.`alembic_version` (version_num) VALUES 
+spike_official	1	ALTER TABLE `spike_official`.`alembic_version` DELETE WHERE `version_num` = \'r002\' SETTINGS mutations_sync = 2

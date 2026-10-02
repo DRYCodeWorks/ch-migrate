@@ -1,0 +1,33 @@
+project:
+  name: spike
+environments:
+  legacy:
+    host: 127.0.0.1
+    port: 18123
+    secure: false
+    database: spike_legacy
+    migration_user: default
+  legacysid:
+    host: 127.0.0.1
+    port: 18123
+    secure: false
+    database: spike_legacy_sid
+    migration_user: default
+  legacyca:
+    host: 127.0.0.1
+    port: 18123
+    secure: false
+    database: spike_legacy_ca
+    migration_user: default
+  legacyrace:
+    host: 127.0.0.1
+    port: 18123
+    secure: false
+    database: spike_legacy_race
+    migration_user: default
+  legacyrepl:
+    host: 127.0.0.1
+    port: 18125
+    secure: false
+    database: spike_repl_legacy
+    migration_user: default

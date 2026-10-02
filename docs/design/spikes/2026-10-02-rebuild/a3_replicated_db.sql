@@ -1,0 +1,17 @@
+SET send_logs_level = 'none';
+DROP DATABASE IF EXISTS rdb SYNC;
+CREATE DATABASE rdb ENGINE = Replicated('/clickhouse/databases/rdb', '{shard}', '{replica}');
+SET distributed_ddl_output_mode = 'none';
+CREATE TABLE rdb.t     (id UInt64, src String) ENGINE = ReplicatedMergeTree ORDER BY id;
+CREATE TABLE rdb.t_new (id UInt64, src String) ENGINE = ReplicatedMergeTree ORDER BY (src, id);
+CREATE TABLE rdb.sink_src (id UInt64, src String) ENGINE = ReplicatedMergeTree ORDER BY id;
+CREATE MATERIALIZED VIEW rdb.mv_src TO rdb.sink_src AS SELECT id, src FROM rdb.t;
+CREATE MATERIALIZED VIEW rdb.t_dual TO rdb.t_new AS SELECT id, src FROM rdb.t;
+CREATE TABLE rdb.t_snap AS rdb.t;
+INSERT INTO rdb.t VALUES (1, 'pre');
+ALTER TABLE rdb.t_snap ATTACH PARTITION tuple() FROM rdb.t;
+SELECT 't_snap rows', count() FROM rdb.t_snap;
+EXCHANGE TABLES rdb.t AND rdb.t_new;
+INSERT INTO rdb.t VALUES (2, 'post-into-name-t');
+SELECT * FROM (SELECT 'name t' AS tbl, id, src FROM rdb.t UNION ALL SELECT 'name t_new' AS tbl, id, src FROM rdb.t_new UNION ALL SELECT 'sink_src' AS tbl, id, src FROM rdb.sink_src) ORDER BY tbl, id;
+SELECT name, engine, uuid FROM system.tables WHERE database='rdb' ORDER BY name;

@@ -1,0 +1,43 @@
+> DROP DATABASE IF EXISTS d5 SYNC
+> CREATE DATABASE d5
+> CREATE TABLE d5.t (id UInt64) ENGINE = MergeTree ORDER BY id
+> CREATE TABLE d5.t_new (id UInt64) ENGINE = MergeTree ORDER BY (intHash32(id), id)
+> CREATE MATERIALIZED VIEW d5.t_dual TO d5.t_new AS SELECT id FROM d5.t
+> INSERT INTO d5.t SETTINGS async_insert = 1, async_insert_use_adaptive_busy_timeout = 0, async_insert_busy_timeout_ms = 8000, async_insert_busy_timeout_max_ms = 8000, wait_for_async_insert = 0 VALUES (1),(2),(3)
+> [background] INSERT INTO d5.t SETTINGS async_insert = 1, async_insert_use_adaptive_busy_timeout = 0, async_insert_busy_timeout_ms = 8000, async_insert_busy_timeout_max_ms = 8000, wait_for_async_insert = 1 VALUES (4),(5)
+> SELECT database, table, total_bytes, length(entries.query_id) entries FROM system.asynchronous_inserts WHERE database='d5'
+   ┌─database─┬─table─┬─total_bytes─┬─entries─┐
+1. │ d5       │ t     │           7 │       1 │
+2. │ d5       │ t     │          11 │       1 │
+   └──────────┴───────┴─────────────┴─────────┘
+> EXCHANGE TABLES d5.t AND d5.t_new
+> SYSTEM FLUSH ASYNC INSERT QUEUE
+> client of the wait_for_async_insert=1 insert saw:
+Received exception from server (version 26.3.32):
+Code: 741. DB::Exception: Received from localhost:9000. DB::Exception: Table d5.t (96184385-400e-44c8-b539-369958dbdf62) does not match d5.t_new (96184385-400e-44c8-b539-369958dbdf62): While executing WaitForAsyncInsert. (TABLE_UUID_MISMATCH)
+(query: INSERT INTO d5.t SETTINGS async_insert = 1, async_insert_use_adaptive_busy_timeout = 0, async_insert_busy_timeout_ms = 8000, async_insert_busy_timeout_max_ms = 8000, wait_for_async_insert = 1 VALUES (4),(5))
+> SELECT (SELECT groupArray(id) FROM d5.t) AS name_t_new_physical, (SELECT groupArray(id) FROM d5.t_new) AS name_t_new_old_physical
+   ┌─name_t_new_physical─┬─name_t_new_old_physical─┐
+1. │ []                  │ []                      │
+   └─────────────────────┴─────────────────────────┘
+> SYSTEM FLUSH LOGS
+> SELECT status, rows, substr(exception, 1, 110) AS exception FROM system.asynchronous_insert_log WHERE database = 'd5' ORDER BY event_time_microseconds
+   ┌─status─────┬─rows─┬─exception──────────────────────────────────────────────────────────────────────────────────────────────────────┐
+1. │ FlushError │    0 │ Code: 741. DB::Exception: Table d5.t (96184385-400e-44c8-b539-369958dbdf62) does not match d5.t_new (96184385- │
+2. │ FlushError │    0 │ Code: 741. DB::Exception: Table d5.t (96184385-400e-44c8-b539-369958dbdf62) does not match d5.t_new (96184385- │
+   └────────────┴──────┴────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+=== D5c: is an in-progress AsyncInsertFlush visible in system.processes? ===
+> CREATE TABLE d5.slow_src (id UInt64) ENGINE = MergeTree ORDER BY id
+> CREATE TABLE d5.slow_dst (id UInt64) ENGINE = MergeTree ORDER BY id
+> CREATE MATERIALIZED VIEW d5.slow_mv TO d5.slow_dst AS SELECT id FROM d5.slow_src WHERE sleepEachRow(0.5) = 0
+> INSERT INTO d5.slow_src SETTINGS async_insert = 1, async_insert_use_adaptive_busy_timeout = 0, async_insert_busy_timeout_ms = 8000, async_insert_busy_timeout_max_ms = 8000, wait_for_async_insert = 0 VALUES (1),(2),(3),(4),(5),(6)
+> SELECT query_kind, round(elapsed, 2) AS elapsed, is_initial_query, substr(query, 1, 50) AS q FROM system.processes WHERE query_kind != 'Select'
+   ┌─query_kind───────┬─elapsed─┬─is_initial_query─┬─q──────────────────────────────────────────────────┐
+1. │ System           │    1.01 │                1 │ SYSTEM FLUSH ASYNC INSERT QUEUE                    │
+2. │ AsyncInsertFlush │    1.01 │                1 │ INSERT INTO d5.slow_src (id) SETTINGS async_insert │
+   └──────────────────┴─────────┴──────────────────┴────────────────────────────────────────────────────┘
+> SELECT count() FROM d5.slow_dst
+   ┌─count()─┐
+1. │       6 │
+   └─────────┘

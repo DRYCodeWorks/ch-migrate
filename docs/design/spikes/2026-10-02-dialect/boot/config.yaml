@@ -1,0 +1,10 @@
+project:
+  name: spikeboot
+environments:
+  boot:
+    host: 127.0.0.1
+    port: 18125
+    secure: false
+    database: spike_boot
+    admin_user: default
+    migration_user: spike_migrator

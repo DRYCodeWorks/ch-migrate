@@ -1,0 +1,18 @@
+--- spike_legacy (statements after the SET):
+	SET max_threads = 1
+	INSERT INTO spike_legacy.spike_probe (rev, label, val) SELECT \'r001\', \'op.execute INSERT after SET\',
+	SELECT getSetting(\'max_threads\')
+	INSERT INTO spike_legacy.spike_probe (rev, label, val) SELECT \'r002\', \'next revision, no SET\', toStr
+	SELECT getSetting(\'max_threads\')
+--- spike_legacy_sid (statements after the SET):
+	SET max_threads = 1
+	INSERT INTO spike_legacy_sid.spike_probe (rev, label, val) SELECT \'r001\', \'op.execute INSERT after S
+	SELECT getSetting(\'max_threads\')
+	INSERT INTO spike_legacy_sid.spike_probe (rev, label, val) SELECT \'r002\', \'next revision, no SET\', t
+	SELECT getSetting(\'max_threads\')
+--- spike_legacy_ca (statements after the SET):
+	SET max_threads = 1
+1	INSERT INTO spike_legacy_ca.spike_probe (rev, label, val) SELECT \'r001\', \'op.execute INSERT after SE
+1	SELECT getSetting(\'max_threads\')
+1	INSERT INTO spike_legacy_ca.spike_probe (rev, label, val) SELECT \'r002\', \'next revision, no SET\', to
+1	SELECT getSetting(\'max_threads\')

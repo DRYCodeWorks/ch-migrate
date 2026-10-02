@@ -1,0 +1,12 @@
+SELECT * FROM (SELECT 'name t (uuid c202..)' AS tbl, id, src FROM a.t UNION ALL SELECT 'name t_new (uuid 74a5..)' AS tbl, id, src FROM a.t_new) ORDER BY tbl, id;
+   ┌─tbl──────────────────────┬─id─┬─src─────────────────────────┐
+1. │ name t (uuid c202..)     │  1 │ pre-direct                  │
+2. │ name t (uuid c202..)     │  2 │ pre-feeder                  │
+3. │ name t (uuid c202..)     │  3 │ post-direct-into-name-t     │
+4. │ name t (uuid c202..)     │  5 │ post-feeder                 │
+5. │ name t_new (uuid 74a5..) │  1 │ pre-direct                  │
+6. │ name t_new (uuid 74a5..) │  2 │ pre-feeder                  │
+7. │ name t_new (uuid 74a5..) │  3 │ post-direct-into-name-t     │
+8. │ name t_new (uuid 74a5..) │  4 │ post-direct-into-name-t_new │
+9. │ name t_new (uuid 74a5..) │  5 │ post-feeder                 │
+   └──────────────────────────┴────┴─────────────────────────────┘

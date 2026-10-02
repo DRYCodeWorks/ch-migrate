@@ -1,0 +1,28 @@
+SET send_logs_level = 'none';
+CREATE TABLE f.rp (id UInt64) ENGINE = ReplicatedMergeTree('/clickhouse/tables/{shard}/f/rp', '{replica}') ORDER BY id;
+CREATE TABLE f.rp_snap AS f.rp;
+CREATE TABLE f.ru (id UInt64) ENGINE = ReplicatedMergeTree ORDER BY id;
+Received exception from server (version 26.3.32):
+Code: 253. DB::Exception: Received from localhost:9000. DB::Exception: Replica /clickhouse/tables/01/f/rp/replicas/r1 already exists. (REPLICA_ALREADY_EXISTS)
+(query: CREATE TABLE f.rp_snap AS f.rp;)
+CREATE TABLE f.ru_snap AS f.ru;
+Received exception from server (version 26.3.32):
+Code: 36. DB::Exception: Received from localhost:9000. DB::Exception: Macro 'uuid' in engine arguments is only supported when the UUID is explicitly specified, used within an ON CLUSTER query, or when using the Replicated database engine. (BAD_ARGUMENTS)
+(query: CREATE TABLE f.ru (id UInt64) ENGINE = ReplicatedMergeTree ORDER BY id;)
+Received exception from server (version 26.3.32):
+Code: 390. DB::Exception: Received from localhost:9000. DB::Exception: Table `ru` doesn't exist. (CANNOT_GET_CREATE_TABLE_QUERY)
+(query: CREATE TABLE f.ru_snap AS f.ru;)
+SELECT name, engine_full FROM system.tables WHERE database='f' AND name IN ('ru','ru_snap') FORMAT TSV;
+SELECT name, zookeeper_path FROM system.replicas WHERE database='f' AND table IN ('ru','ru_snap') FORMAT TSV;
+Received exception from server (version 26.3.32):
+Code: 47. DB::Exception: Received from localhost:9000. DB::Exception: Unknown expression identifier `name` in scope SELECT name, zookeeper_path FROM system.replicas WHERE (database = 'f') AND (`table` IN ('ru', 'ru_snap')). (UNKNOWN_IDENTIFIER)
+(query: SELECT name, zookeeper_path FROM system.replicas WHERE database='f' AND table IN ('ru','ru_snap') FORMAT TSV;)
+-- projections: does ATTACH PARTITION FROM require identical projections?
+CREATE TABLE f.pa (id UInt64, v UInt64) ENGINE = MergeTree ORDER BY id;
+INSERT INTO f.pa SELECT number, number FROM numbers(100);
+CREATE TABLE f.pb (id UInt64, v UInt64, PROJECTION p (SELECT * ORDER BY v)) ENGINE = MergeTree ORDER BY id;
+ALTER TABLE f.pb ATTACH PARTITION tuple() FROM f.pa;
+SELECT 'proj-mismatch attach rows', count() FROM f.pb;
+   ┌─'proj-mismatch attach rows'─┬─count()─┐
+1. │ proj-mismatch attach rows   │     100 │
+   └─────────────────────────────┴─────────┘
