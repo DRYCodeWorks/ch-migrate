@@ -1,0 +1,31 @@
+name: ci
+
+# Runs the test suite on every supported Python. release.yml calls this same
+# workflow, so a tag can only publish code that passes it.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v10
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      # --locked fails if uv.lock is stale against pyproject.toml.
+      - name: Test
+        run: uv run --locked pytest -q
