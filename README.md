@@ -24,10 +24,12 @@ Alembic-based migrations for ClickHouse, optimized for ClickHouse Cloud.
 
 ### Installation
 
+The package on PyPI is `clickhouse-alembic`; the command it installs is `ch-migrate`.
+
 **For CLI usage** (recommended for most users):
 ```bash
 # Install globally - ch-migrate available everywhere
-uv tool install git+https://github.com/DRYCodeWorks/clickhouse-migrate.git
+uv tool install clickhouse-alembic
 
 # Verify installation
 ch-migrate --version
@@ -35,19 +37,21 @@ ch-migrate --version
 
 **As a project dependency** (for importing in Python code):
 ```bash
-# Add to your project
-uv add git+https://github.com/DRYCodeWorks/clickhouse-migrate.git
-
-# Run via uv
+uv add clickhouse-alembic
 uv run ch-migrate --version
 
 # Or with pip
-pip install git+https://github.com/DRYCodeWorks/clickhouse-migrate.git
+pip install clickhouse-alembic
 ```
 
 **Pin to a specific version**:
 ```bash
-uv tool install git+https://github.com/DRYCodeWorks/clickhouse-migrate.git@v0.1.0
+uv tool install clickhouse-alembic==0.4.1
+```
+
+**Unreleased changes from `main`**:
+```bash
+uv tool install git+https://github.com/DRYCodeWorks/clickhouse-migrate.git
 ```
 
 ### Initialize a Project
