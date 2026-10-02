@@ -227,8 +227,8 @@ def _find_permissive_row_policies(content: str) -> list[tuple[str, str]]:
 def _read_migration_sql_from_content(content: str, path: Path) -> str:
     """Extract SQL from migration file content.
 
-    Extracts SQL string literals from op.execute() calls and read_sql() file
-    references. Falls back to returning the full file content if no SQL is found.
+    Extracts SQL string literals from op.execute() calls and read_sql()/run_sql()
+    file references. Falls back to the full file content if no SQL is found.
 
     Args:
         content: The migration file's text content.
@@ -241,7 +241,7 @@ def _read_migration_sql_from_content(content: str, path: Path) -> str:
     ):
         sql_parts.append(match.group(1) or match.group(2) or "")
 
-    for match in re.finditer(r'read_sql\(\s*["\']([^"\']+)["\']', content):
+    for match in re.finditer(r'(?:read_sql|run_sql)\(\s*["\']([^"\']+)["\']', content):
         sql_path = path.parent.parent / "sql" / match.group(1)
         if sql_path.exists():
             sql_parts.append(sql_path.read_text())
@@ -250,7 +250,7 @@ def _read_migration_sql_from_content(content: str, path: Path) -> str:
 
 
 def _read_migration_sql(path: Path) -> str:
-    """Extract SQL from a migration file's op.execute() calls and read_sql() files.
+    """Extract SQL from op.execute() calls and read_sql()/run_sql() files.
 
     Convenience wrapper that reads the file and delegates to
     _read_migration_sql_from_content.

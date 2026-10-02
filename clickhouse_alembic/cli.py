@@ -13,6 +13,7 @@ from pathlib import Path
 import click
 from dotenv import load_dotenv
 
+from clickhouse_alembic.authoring import NewOptions
 from clickhouse_alembic.config import get_env_config
 
 # Load .env.local if it exists in the current directory
@@ -208,7 +209,8 @@ def init(path: str, name: str | None) -> None:
     click.echo("  1. Edit config.yaml with your ClickHouse hosts")
     click.echo("  2. Copy .env.local.example to .env.local and add passwords")
     click.echo("  3. Run: ch-migrate bootstrap dev")
-    click.echo("  4. Create your first migration: ch-migrate new dev create_users_table")
+    click.echo("  4. Create your first migration: ch-migrate new dev create_users --table users")
+    click.echo("     then write its SQL in the .up.sql and .down.sql files it creates")
 
 
 @main.command()
@@ -418,6 +420,15 @@ def history(environment: str) -> None:
 @click.option(
     "--exchange", is_flag=True, help="Generate EXCHANGE TABLES scaffold (requires --table)"
 )
+@click.option(
+    "--python", "python_migration", is_flag=True, help="Keep the Python migration template"
+)
+@click.option(
+    "--irreversible",
+    "irreversible_reason",
+    metavar="REASON",
+    help="Write only upgrade SQL and refuse downgrades, with this reason",
+)
 def new(
     environment: str,
     name: str,
@@ -425,57 +436,78 @@ def new(
     view_name: str | None,
     dict_name: str | None,
     exchange: bool,
+    python_migration: bool,
+    irreversible_reason: str | None,
 ) -> None:
-    """Create a new migration.
+    """Create upgrade and downgrade SQL files, plus the revision that runs them.
 
-    Creates a new migration file with the given name. Edit the generated file
-    to add your upgrade() and downgrade() logic.
-
-    Use --table, --view, or --dict with the object name to create a SQL history file:
-
-    \b
-        ch-migrate new dev add_status_column --table logs
-
-    Use --exchange with --table to generate a zero-downtime EXCHANGE TABLES scaffold:
-
-    \b
-        ch-migrate new dev alter_users --table users --exchange
+    Name an object with --table, --view or --dict to group its SQL history.
+    Use --irreversible REASON when a change cannot restore dropped data.
+    --python keeps the Python template; --exchange still requires --table.
     """
-    if exchange and not table_name:
-        click.echo("Error: --exchange requires --table", err=True)
-        sys.exit(1)
-
+    options = NewOptions(
+        table_name, view_name, dict_name, exchange, python_migration, irreversible_reason
+    )
+    _check_new_options(options)
     result = _run_alembic(environment, ["revision", "-m", name], exit_on_complete=False)
-
     if result is None or result.returncode != 0:
         sys.exit(1 if result is None else result.returncode)
-
-    revision = _extract_revision_from_output(result.stdout)
-    if not revision:
-        click.echo("Warning: Could not extract revision ID, SQL file not created", err=True)
-        sys.exit(0)
-
+    migration_path = _find_migration_file(result.stdout)
+    if migration_path is None:
+        click.echo("Error: could not find the revision file Alembic generated", err=True)
+        sys.exit(1)
     if exchange:
-        _create_exchange_scaffold(environment, table_name, revision, result.stdout)
-        sys.exit(0)
+        revision = _extract_revision_from_output(result.stdout) or ""
+        _create_exchange_scaffold(environment, table_name or "", revision, result.stdout)
+    elif python_migration:
+        _create_python_migration(migration_path, options)
+    else:
+        _create_sql_first_migration(migration_path, options)
 
-    # Determine object type and name from options
-    object_name: str | None = None
-    object_type: str | None = None
-    if table_name:
-        object_name, object_type = table_name, "table"
-    elif view_name:
-        object_name, object_type = view_name, "view"
-    elif dict_name:
-        object_name, object_type = dict_name, "dictionary"
 
-    # If object specified, create SQL file
-    if object_name and object_type:
+def _check_new_options(options: NewOptions) -> None:
+    problems = []
+    if len(options.named_objects()) > 1:
+        problems.append("use only one of --table, --view and --dict")
+    if options.exchange and not options.table_name:
+        problems.append("--exchange requires --table")
+    if options.exchange and options.python_migration:
+        problems.append("--exchange cannot be combined with --python")
+    if options.irreversible_reason is not None:
+        if options.exchange or options.python_migration:
+            problems.append("--irreversible cannot be combined with --python or --exchange")
+        if not options.irreversible_reason.strip():
+            problems.append("--irreversible needs a non-empty reason")
+    if problems:
+        for problem in problems:
+            click.echo(f"Error: {problem}", err=True)
+        sys.exit(1)
+
+
+def _create_sql_first_migration(migration_path: Path, options: NewOptions) -> None:
+    from clickhouse_alembic.authoring import read_revision_header, render_revision, write_sql_files
+
+    header = read_revision_header(migration_path)
+    files = write_sql_files(Path.cwd() / "migrations" / "sql", header, options)
+    migration_path.write_text(render_revision(header, files, options.irreversible_reason))
+    click.echo(f"  Created migrations/sql/{files.upgrade}")
+    if files.downgrade:
+        click.echo(f"  Created migrations/sql/{files.downgrade}")
+    else:
+        click.echo("  Marked irreversible: `ch-migrate down` will refuse to revert it")
+    click.echo("  Write the SQL in these files; the revision needs no edits.")
+
+
+def _create_python_migration(migration_path: Path, options: NewOptions) -> None:
+    from clickhouse_alembic.authoring import read_revision_header
+
+    named = options.named_objects()
+    if named:
+        object_type, object_name = named[0]
+        revision = read_revision_header(migration_path).revision
         sql_path = _create_sql_file(object_name, object_type, revision)
         if sql_path:
             click.echo(f"  Created {sql_path.relative_to(Path.cwd())}")
-
-    sys.exit(0)
 
 
 def _extract_revision_from_output(stdout: str) -> str | None:

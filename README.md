@@ -151,8 +151,9 @@ ch-migrate bootstrap dev --dry-run
 ### Create and Run Migrations
 
 ```bash
-# Create a new migration
-ch-migrate new dev create_users_table
+# Create upgrade and downgrade SQL files
+ch-migrate new dev create_users_table --table users
+# Fill in the generated .up.sql and .down.sql files before running up.
 
 # Run pending migrations
 ch-migrate up dev
@@ -168,6 +169,22 @@ ch-migrate history dev
 ```
 
 ## Migration Patterns
+
+### SQL-first authoring
+
+`ch-migrate new dev add_status --table logs` creates an Alembic revision and two
+SQL files in `migrations/sql/history/tables/logs/`. Edit the `.up.sql` and
+`.down.sql` files; the generated Python revision needs no changes. Filenames
+include the timestamp, revision, and a message slug of at most 40 characters.
+
+Use `--view NAME` or `--dict NAME` for those object histories. Without an object,
+SQL files go in `history/other/`. Only one object option may be supplied.
+
+Use `--irreversible "reason"` when the change cannot be undone. It creates only
+an upgrade SQL file and installs both the static marker and downgrade backstop.
+An empty reason is rejected. `--python` retains the Python template and optional
+single SQL history file. `--exchange --table NAME` retains the exchange scaffold.
+`--python`, `--exchange`, and `--irreversible` are mutually exclusive.
 
 ### Multi-statement SQL files
 
@@ -308,8 +325,9 @@ ch-migrate status <environment>
 # Show migration history
 ch-migrate history <environment>
 
-# Create new migration
-ch-migrate new <environment> <name>
+# Create a SQL-first migration (or opt into Python/exchange authoring)
+ch-migrate new <environment> <name> [--table NAME | --view NAME | --dict NAME]
+# Additional choices: --irreversible REASON | --python | --exchange
 ```
 
 ## Configuration Reference
