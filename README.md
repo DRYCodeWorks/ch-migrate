@@ -158,6 +158,72 @@ Keyword arguments to `run_sql` add or override substitutions. All other braces r
 
 To render without executing, set `CH_ENVIRONMENT` and run `alembic upgrade head --sql`. Existing projects need `ch-migrate upgrade-env` to use the packaged environment. The package requires Alembic 1.18 or later and the official `clickhouse-connect[alembic]` integration.
 
+### The version table
+
+New `alembic_version` tables use `ORDER BY version_num`. The runtime inspects
+`system.databases.engine` and the environment's `cluster` setting:
+
+| Deployment | New version table |
+|---|---|
+| Shared database on ClickHouse Cloud | `MergeTree`; Cloud supplies its shared implementation |
+| Self-hosted `Replicated` database | `ReplicatedMergeTree()` with server-default arguments |
+| Atomic database with `cluster` configured | `ReplicatedMergeTree` created `ON CLUSTER`, with a Keeper path containing the database name and shard macro |
+| Single server | `MergeTree` |
+
+The official Alembic implementation advances a version by **inserting the new
+row, then deleting the old row with `mutations_sync = 2`**. It does not issue an
+asynchronous version UPDATE. If the process stops while the delete is pending,
+both rows remain and Alembic refuses their overlapping history rather than
+repeating the migration. Let the version mutation finish, then retry. A
+server-reported failed version mutation stops the run with its reason; ch-migrate
+never kills that mutation.
+
+Before reading replicated heads, the tool catches up replicated database
+metadata and inserted version parts. The table barrier uses
+[`SYSTEM SYNC REPLICA ... LIGHTWEIGHT`](https://clickhouse.com/docs/reference/statements/system#sync-replica),
+which does not wait for held mutation tasks. Failure checks cover reachable
+hosts in the configured cluster, or the
+[Replicated database's automatically named cluster](https://clickhouse.com/docs/reference/engines/database-engines/replicated).
+An unavailable host is not evidence that its state is healthy.
+
+Self-hosted replicas need Keeper and suitable `{shard}`/`{replica}` macros.
+Configure authentication for a Replicated database's automatic cluster through
+its `collection_name` setting; the named collection uses `cluster_username`,
+`cluster_password`, and optionally `cluster_secret`/`cluster_secure_connection`.
+Keep those values in server-side secret configuration, not migration files.
+Provision the migration user on each node. Re-run bootstrap when upgrading to
+grant the system-table reads and available `CLUSTER`, remote-read, and replica
+synchronization privileges used by these checks.
+
+Existing 0.4.1 `ReplacingMergeTree ORDER BY updated` tables are **never converted
+automatically**. `upgrade-env` remains offline: it prints a conditional advisory
+instead of probing every configured environment. `status ENV` performs the live
+check and warns when existing state is not replicated but the deployment is.
+Do not route migrations across nodes until that state is reconciled.
+
+For a manual conversion:
+
+1. Stop every migration runner. Back up the old table's DDL and rows on each
+   node, and inspect unfinished version mutations.
+2. Reconcile one authoritative set of completed revision heads with the
+   revision graph. Do not infer it from the newest timestamp or blindly use
+   `FINAL`: the old timestamp key can collapse heads written in the same second.
+3. Keep the old tables as backups. On an Atomic cluster, rename each existing
+   old table on its own node, then create the replacement on the cluster.
+   In a Replicated database, issue schema changes once and let its DDL log
+   propagate them.
+4. Use `MergeTree ORDER BY version_num` on a single server, or the replicated
+   engine from the table above. For an Atomic cluster, use a fresh shared Keeper
+   path containing the database and the appropriate replica macros.
+5. Copy the reconciled, distinct heads **once** into the empty replacement,
+   synchronize replicas, and compare `status` through every routing endpoint.
+   Resume runners only after they agree. Keep backups until the result is verified.
+
+Offline SQL cannot inspect a live database engine: it uses configured `cluster`
+information or the single-server/Cloud default for version-table DDL. Review
+that DDL before using it for a self-hosted Replicated database. Cloud qualification
+is separate from the local suite; the local replicated harness has one shard.
+
 ### Re-runnable migrations
 
 `up` statically checks pending upgrade statements before Alembic executes any of
@@ -456,7 +522,7 @@ Review findings rather than treating a successful command as a guarantee that a 
 
 ### Bootstrap roles and Cloud notes
 
-Bootstrap creates `{project}_migration_role` for schema/data operations and introspection, including explicit `system.grants` access. Optional users add `{project}_readonly_role` (SELECT/SHOW) and `{project}_dict_role` (dictionary sources). Bootstrap uses explicit grants rather than `GRANT ALL` for Cloud compatibility.
+Bootstrap creates `{project}_migration_role` for schema/data operations and introspection, including explicit `system.grants`, `system.databases`, `system.tables`, and `system.mutations` access. It grants available cluster, remote-read, and synchronization rights through `CURRENT GRANTS`. Optional users add `{project}_readonly_role` (SELECT/SHOW) and `{project}_dict_role` (dictionary sources). Bootstrap uses explicit grants rather than `GRANT ALL` for Cloud compatibility.
 
 Use standard table engine names such as `MergeTree` and `ReplacingMergeTree`; ClickHouse Cloud supplies its shared variants. Cloud usually uses HTTPS port `8443`; local HTTP usually uses `8123`.
 

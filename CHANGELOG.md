@@ -16,6 +16,8 @@ Changes are recorded in [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 - Required-reason `ch-migrate: allow-non-idempotent` statement waivers, reported as INFO.
 - A `standalone_set` gate error for literal upgrade `SET` statements on environments without the v2 session-safety marker. Version-2 environments, `SETTINGS` clauses, and string literals are not flagged.
 - An isolated one-shard/two-replica integration harness with embedded Keeper, owned Docker network cleanup, node stop/start, and distributed-DDL timeout/catch-up coverage.
+- Deployment-aware version-table engines: replicated state for self-hosted replicated databases and configured clusters, preserving existing tables without automatic conversion.
+- Replica read barriers and failed version-mutation checks, plus live status warnings and an offline upgrade advisory for manual conversion.
 
 ## [0.5.1]
 

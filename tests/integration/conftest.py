@@ -389,6 +389,10 @@ def _cluster_xml(hostnames, node):
   <interserver_http_host>{hostnames[node]}</interserver_http_host>
   {keeper}
   <zookeeper><node><host>{hostnames[1]}</host><port>9181</port></node></zookeeper>
+  <named_collections><chm_it_auth><cluster_username>default</cluster_username>
+    <cluster_password from_env="CLICKHOUSE_PASSWORD"/>
+  </chm_it_auth></named_collections>
+  <database_replicated><collection_name>chm_it_auth</collection_name></database_replicated>
   <remote_servers>
     <it_cluster><shard><internal_replication>true</internal_replication>{replicas}</shard></it_cluster>
   </remote_servers>

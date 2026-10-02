@@ -24,7 +24,7 @@ def test_unreachable_database_is_reported_and_exits_zero(project, monkeypatch):
     def refuse(env_config):
         raise ConnectionError("Connection refused")
 
-    monkeypatch.setattr(connection, "get_current_heads", refuse)
+    monkeypatch.setattr(connection, "get_migration_state", refuse)
     result = CliRunner().invoke(main, ["status", "dev"])
     assert result.exit_code == 0, result.output
     assert "Could not reach the database: Connection refused" in result.output

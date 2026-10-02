@@ -5,7 +5,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from ch_migrate.config import get_env_config, load_config
-from ch_migrate.connection import get_current_heads
+from ch_migrate.connection import get_migration_state
 from ch_migrate.lint import LintConfig, LintReport, Severity, lint_migrations
 from ch_migrate.rebase import build_revision_graph
 from ch_migrate.statements import pending_revisions
@@ -22,5 +22,5 @@ def lint_pending_up(
     versions = project_root / "migrations" / "versions"
     graph = build_revision_graph(versions)
     env_config = get_env_config(environment, config_path)
-    pending = pending_revisions(graph, get_current_heads(env_config))
+    pending = pending_revisions(graph, get_migration_state(env_config).heads)
     return lint_migrations(versions, config=config, revisions=pending)

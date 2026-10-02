@@ -22,6 +22,13 @@ GRANT CREATE TEMPORARY TABLE ON *.* TO {project}_migration_role;
 GRANT CURRENT GRANTS(SELECT ON system.*) TO {project}_migration_role WITH GRANT OPTION;
 -- ClickHouse Cloud requires explicit grants for individual system tables.
 GRANT SELECT ON system.grants TO {project}_migration_role;
+GRANT SELECT ON system.databases TO {project}_migration_role;
+GRANT SELECT ON system.tables TO {project}_migration_role;
+GRANT SELECT ON system.mutations TO {project}_migration_role;
+GRANT CURRENT GRANTS(SYSTEM SYNC REPLICA ON {db}.*) TO {project}_migration_role;
+GRANT CURRENT GRANTS(SYSTEM SYNC DATABASE REPLICA ON {db}.*) TO {project}_migration_role;
+GRANT CURRENT GRANTS(CLUSTER ON *.*) TO {project}_migration_role;
+GRANT CURRENT GRANTS(READ ON REMOTE) TO {project}_migration_role;
 
 -- =============================================================================
 -- USERS (always created)

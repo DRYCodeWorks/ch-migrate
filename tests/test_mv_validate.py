@@ -893,7 +893,12 @@ class TestCLIIntegration:
 
         monkeypatch.chdir(tmp_path)
         runner = CliRunner()
-        monkeypatch.setattr("ch_migrate.gate.get_current_heads", lambda config: set())
+        from types import SimpleNamespace
+
+        monkeypatch.setattr(
+            "ch_migrate.gate.get_migration_state",
+            lambda config: SimpleNamespace(heads=set()),
+        )
         upgraded = runner.invoke(main, ["upgrade-env"], catch_exceptions=False)
         assert upgraded.exit_code == 0, upgraded.output
         result = runner.invoke(main, ["up", "dev"], catch_exceptions=False)

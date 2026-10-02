@@ -87,13 +87,13 @@ def _require_current_env() -> None:
 
 
 def _refuse_irreversible_downgrade(environment: str, target: str) -> None:
-    from ch_migrate.connection import get_current_heads
+    from ch_migrate.connection import get_migration_state
     from ch_migrate.downgrade import irreversible_reason, revisions_to_revert
     from ch_migrate.rebase import build_revision_graph
 
     try:
         env_config = get_env_config(environment, Path.cwd() / "config.yaml")
-        heads = get_current_heads(env_config)
+        heads = get_migration_state(env_config).heads
     except Exception:
         return  # `up`/`down` report configuration and connection errors themselves.
     graph = build_revision_graph(Path.cwd() / "migrations" / "versions")
@@ -336,13 +336,16 @@ class _MigrationState:
 
 def _load_migration_state(environment: str) -> _MigrationState:
     """Local revision graph plus what the database says is applied."""
-    from ch_migrate.connection import get_current_heads
+    from ch_migrate.connection import get_migration_state
     from ch_migrate.rebase import build_revision_graph
 
     env_config = _env_config_or_fail(environment)
     graph = build_revision_graph(_versions_dir_or_fail())
     try:
-        heads = get_current_heads(env_config)
+        state = get_migration_state(env_config)
+        heads = state.heads
+        if warning := state.version_table.warning():
+            ui.warn(warning)
     except Exception as e:
         return _MigrationState(env_config, graph, None, str(e))
     applied: set[str] = set()
@@ -780,10 +783,10 @@ def lint(environment: str | None) -> None:
             env_config = get_env_config(environment, config_path)
             database = env_config["database"]
 
-            from ch_migrate.connection import get_client, get_current_heads
+            from ch_migrate.connection import get_client, get_migration_state
 
             revisions = pending_revisions(
-                build_revision_graph(versions_dir), get_current_heads(env_config)
+                build_revision_graph(versions_dir), get_migration_state(env_config).heads
             )
             client = get_client(env_config)
         except Exception as e:
@@ -988,6 +991,13 @@ def upgrade_env() -> None:
     except Exception as error:
         raise click.ClickException(f"Could not record gate baseline: {error}") from error
     click.echo("  Recorded gate baseline: " + (", ".join(heads) if heads else "(empty)"))
+    # This command stays offline; status performs the live check for a selected environment.
+    click.echo(
+        "Warning: existing version tables are not converted. If the deployment is replicated, "
+        "run `ch-migrate status <env>` and follow README 'The version table' to back up, "
+        "reconcile, and manually convert non-replicated state before routing across nodes.",
+        err=True,
+    )
 
     if env_py_dst.exists() and env_py_dst.read_bytes() == env_py_src.read_bytes():
         click.echo("migrations/env.py is already current; backup unchanged.")

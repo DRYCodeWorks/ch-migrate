@@ -5,7 +5,21 @@ from __future__ import annotations
 import io
 import sys
 from contextlib import contextmanager
+from dataclasses import dataclass
 from typing import Any
+
+from ch_migrate.version_table import (
+    VersionTableState,
+    assert_version_mutations_healthy,
+    inspect_version_table,
+    sync_version_replica,
+)
+
+
+@dataclass(frozen=True)
+class MigrationState:
+    heads: set[str]
+    version_table: VersionTableState
 
 
 @contextmanager
@@ -47,37 +61,24 @@ def get_client(env_config: dict[str, Any]) -> Any:
     )
 
 
-def get_current_heads(env_config: dict[str, Any]) -> set[str]:
-    """Query alembic_version table for current head revision(s).
-
-    Alembic stores only the current head(s) in alembic_version, not
-    every historically applied revision. Use resolve_applied_revisions()
-    to expand these into the full set of applied revisions.
-
-    Args:
-        env_config: Environment config dict from get_env_config().
-
-    Returns:
-        Set of current head revision ID strings (usually just one).
-    """
+def get_migration_state(env_config: dict[str, Any]) -> MigrationState:
+    """Read heads and deployment state after the selected replica has caught up."""
     from clickhouse_connect.driver.binding import quote_identifier
 
     with _suppress_stderr():
         client = get_client(env_config)
         try:
             db = env_config["database"]
-            engines = client.query(
-                "SELECT engine FROM system.tables "
-                "WHERE database = {db:String} AND name = 'alembic_version'",
-                parameters={"db": db},
-            ).result_rows
-            if not engines:
-                return set()
-            # Legacy tables require FINAL; the official plain MergeTree rejects it.
-            final = " FINAL" if engines[0][0].endswith("ReplacingMergeTree") else ""
+            state = inspect_version_table(client, db, env_config.get("cluster"))
+            assert_version_mutations_healthy(client, state)
+            state = sync_version_replica(client, state)
+            if not state.table_engine:
+                return MigrationState(set(), state)
+            # Preserve legacy ReplacingMergeTree reads without applying FINAL to MergeTree.
+            final = " FINAL" if state.table_engine.endswith("ReplacingMergeTree") else ""
             result = client.query(
                 f"SELECT version_num FROM {quote_identifier(db)}.alembic_version{final}"
             )
-            return {row[0] for row in result.result_rows}
+            return MigrationState({row[0] for row in result.result_rows}, state)
         finally:
             client.close()
