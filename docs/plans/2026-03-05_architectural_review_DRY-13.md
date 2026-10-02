@@ -154,7 +154,7 @@ See Key Recommendation #4 above. Separate package.
 
 These are correctly categorized as future/nice-to-have. Declarative mode (feature 9) is a very large scope change that would require rethinking the Alembic foundation. Only pursue if there's strong user demand.
 
-Hooks (feature 11) is the most likely to be needed soon -- dictionary reloads after migrations are a common pattern in the Metopio codebase.
+Hooks (feature 11) is the most likely to be needed soon -- dictionary reloads after migrations are a common pattern in a client codebase.
 
 ---
 
