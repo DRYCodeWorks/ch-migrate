@@ -1,9 +1,8 @@
-"""Project Alembic entrypoint; implementation lives in clickhouse_alembic."""
+"""Project Alembic entrypoint; implementation lives in ch_migrate."""
 
-from clickhouse_alembic.alembic_env import run
+from ch_migrate.alembic_env import run
 
 CH_MIGRATE_ENV_VERSION = 2
 
-from ch_migrate.alembic_env import run
 
 run()

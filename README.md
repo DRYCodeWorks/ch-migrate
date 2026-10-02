@@ -158,6 +158,55 @@ Keyword arguments to `run_sql` add or override substitutions. All other braces r
 
 To render without executing, set `CH_ENVIRONMENT` and run `alembic upgrade head --sql`. Existing projects need `ch-migrate upgrade-env` to use the packaged environment. The package requires Alembic 1.18 or later and the official `clickhouse-connect[alembic]` integration.
 
+### Re-runnable migrations
+
+`up` statically checks pending upgrade statements before Alembic executes any of
+them. Idempotency errors refuse the whole run and print the source file, line,
+statement, and suggested fix. There is no command-line bypass; `--skip-mv-check`
+does not skip this gate. Other findings are warnings in `up`; standalone `lint`
+retains their configured severities.
+
+Use `IF NOT EXISTS` for `CREATE` and `ALTER ... ADD`, and `IF EXISTS` for `DROP`,
+`ALTER ... DROP`, and `RENAME COLUMN`, where supported. This includes tables,
+views, materialized views, dictionaries, databases, users, roles, row policies,
+settings profiles, quotas, functions, and named collections. Column, index,
+projection, and constraint changes are checked separately. `CREATE OR REPLACE`
+is accepted. `ATTACH` and `DETACH` need their matching `IF` form.
+
+Inserts, exchanges, table/dictionary/database renames, updates/deletes,
+`ATTACH PARTITION ... FROM`, and `MOVE PARTITION ... TO TABLE` need a reasoned
+waiver. Put it directly above the statement, without a separating blank line:
+
+```sql
+-- ch-migrate: allow-non-idempotent This backfill targets a reviewed deduplicating table
+INSERT INTO {db}.target SELECT id FROM {db}.source;
+```
+
+For inline Python SQL, use the same directive in a `#` comment directly above
+`op.execute`. Empty reasons remain errors. Waivers print as INFO with their
+reasons in `lint` and `up`; they do not make the statement idempotent.
+`MODIFY`, `MATERIALIZE`, `CLEAR COLUMN`, `TRUNCATE`, `OPTIMIZE`, `SYSTEM`, grants,
+revokes, `REPLACE PARTITION`, and comments are not flagged by this rule.
+The reviewable classification corpus is `tests/corpus/idempotency.yaml`.
+
+**Recovery:** fix the cause of a partial failure, then run `ch-migrate up ENV`
+again. Earlier idempotent statements can run again; the version advances only
+when the revision completes. Before retrying waived operations, review what the
+earlier attempt actually changed.
+
+**Existing history:** `upgrade-env` records the current local script head(s) in
+`config.yaml` as `lint.gate_baseline`, preserving YAML comments. It records
+script history, not the deployed database head. The baseline and its ancestors
+are exempt in every environment, including where they have not yet run.
+Multiple heads are stored as a list. `init` writes no baseline, so new projects
+gate every revision.
+
+Review and commit the baseline diff. Running `upgrade-env` again updates it to
+the current script heads; do not use that operation to hide new findings.
+Static `lint` checks revisions after the baseline, and live `lint ENV` intersects
+that scope with pending revisions. Lowering a gate rule through `lint.rules`
+is an error: use a reviewed baseline or an explicit statement waiver instead.
+
 ### Irreversible migrations
 
 ```bash
@@ -206,6 +255,9 @@ def downgrade():
 
 `new --exchange --table NAME` generates the existing shadow-table, copy, exchange, and drop scaffold. Coordinate or pause writers: this copy-and-swap pattern alone does not preserve inserts arriving during the copy. It is not an online-rebuild guarantee. Review the generated SQL and column mapping before applying it. The scaffold is marked irreversible because it drops the old table.
 
+The generated copy and exchange statements require explicit, reasoned waivers
+before `up` accepts them. The generator does not waive them automatically.
+
 For a controlled change, the underlying pattern is:
 
 ```sql
@@ -253,7 +305,7 @@ Example: `ch-migrate new dev add_status --table logs`
 
 ### `up`
 
-`ch-migrate up ENV [-r REV] [--skip-mv-check] [--verbose]` applies migrations to `head` by default, printing one line per migration. `-r/--revision` selects a target. `--skip-mv-check` bypasses materialized-view declaration validation; use it only after reviewing those findings. If a migration fails, `up` names it, the SQL file, the statement and its line, and ClickHouse's error; `--verbose` adds the Python traceback.
+`ch-migrate up ENV [-r REV] [--skip-mv-check] [--verbose]` applies migrations to `head` by default after the idempotency gate passes, printing one line per migration. `-r/--revision` selects a target. `--skip-mv-check` skips nonblocking materialized-view declaration checks, not the idempotency gate; use it only after reviewing those findings. If a migration fails, `up` names it, the SQL file, the statement and its line, and ClickHouse's error; `--verbose` adds the Python traceback.
 
 Example: `ch-migrate up dev --revision abc123`
 
@@ -277,7 +329,7 @@ Example: `ch-migrate history dev`
 
 ### `lint`
 
-`ch-migrate lint [ENV]` analyzes upgrade statements, not downgrade SQL. Without `ENV`, it checks every revision statically without credentials or a connection. With an environment, it checks only pending revisions and adds live size and dependency checks. If it cannot determine the pending set, it fails rather than silently checking a different scope. No command-specific options. Errors exit nonzero; warnings alone do not.
+`ch-migrate lint [ENV]` analyzes upgrade statements, not downgrade SQL. Without `ENV`, it checks revisions after the gate baseline statically without credentials or a connection. With an environment, it checks only pending revisions in that scope and adds live size and dependency checks. If it cannot determine the pending set, it fails rather than silently checking a different scope. No command-specific options. Errors exit nonzero; warnings and waiver INFO lines alone do not.
 
 Example: `ch-migrate lint`
 
@@ -315,7 +367,7 @@ Example: `ch-migrate rebase dev --onto abc123 --dry-run`
 
 ### `upgrade-env`
 
-`ch-migrate upgrade-env` replaces `migrations/env.py` with the installed version and backs up the old file as `env.py.bak`. No command-specific options. It does not merge: any local customizations (connection settings, session pins, hooks) are dropped from the new file. Reapply them from the backup, or skip `upgrade-env` and edit a customized `env.py` by hand.
+`ch-migrate upgrade-env` replaces `migrations/env.py` with the installed version, backs up the old file as `env.py.bak`, and records current script heads as `lint.gate_baseline` while preserving YAML comments. No command-specific options. Review the baseline diff. It does not merge: any local customizations (connection settings, session pins, hooks) are dropped from the new file. Reapply them from the backup, or skip `upgrade-env` and edit a customized `env.py` by hand. An unchanged shim is not backed up again.
 
 Example: `ch-migrate upgrade-env`
 
@@ -381,7 +433,7 @@ Only configure the dictionary hook when that dictionary exists at every revision
 
 ### Lint configuration
 
-Set rule severities to `error`, `warn`, or `off`. `mv_validation_cutoff` can exclude older revisions from materialized-view declaration checks.
+Non-gate rule severities can be `error`, `warn`, or `off`. Gate rules must remain `error`. `mv_validation_cutoff` can exclude older revisions from materialized-view declaration checks.
 
 ```yaml
 lint:
@@ -389,7 +441,7 @@ lint:
   mv_validation_cutoff: "2026-01-01"
   rules:
     destructive_changes: warn
-    idempotency: warn
+    idempotency: error
     reserved_words: warn
 ```
 

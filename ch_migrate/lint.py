@@ -9,9 +9,13 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
+from ch_migrate.baseline import baseline_exemptions, normalize_baseline
+from ch_migrate.idempotency import classify_idempotency, waiver_reason
 from ch_migrate.mv_validate import MVValidationError, validate_mv_migrations
 from ch_migrate.rebase import RevisionGraph, build_revision_graph
 from ch_migrate.statements import MigrationStatement, migration_statements
+
+GATE_RULES = frozenset(("idempotency", "standalone_set"))
 
 
 # ---------------------------------------------------------------------------
@@ -22,6 +26,7 @@ from ch_migrate.statements import MigrationStatement, migration_statements
 class Severity(str, Enum):
     ERROR = "error"
     WARN = "warn"
+    INFO = "info"
     OFF = "off"
 
 
@@ -32,6 +37,7 @@ class LintResult:
     severity: Severity
     file: str | None = None
     line: int | None = None
+    statement: str | None = None
 
 
 @dataclass
@@ -50,6 +56,10 @@ class LintReport:
     def warning_count(self) -> int:
         return sum(1 for r in self.results if r.severity == Severity.WARN)
 
+    @property
+    def info_count(self) -> int:
+        return sum(1 for result in self.results if result.severity == Severity.INFO)
+
 
 @dataclass
 class LintConfig:
@@ -58,6 +68,7 @@ class LintConfig:
     large_table_threshold: int = 100_000_000
     rules: dict[str, Severity] = field(default_factory=dict)
     mv_validation_cutoff: str | None = None
+    gate_baseline: tuple[str, ...] = ()
 
     @classmethod
     def from_config(cls, config: dict[str, Any]) -> LintConfig:
@@ -69,6 +80,11 @@ class LintConfig:
         rules_raw = lint_section.get("rules", {})
         rules = {}
         for name, level in rules_raw.items():
+            if name in GATE_RULES and level != Severity.ERROR:
+                raise ValueError(
+                    f"lint.rules.{name} must remain error; use an in-file waiver "
+                    "or a reviewed lint.gate_baseline instead"
+                )
             try:
                 rules[name] = Severity(level)
             except ValueError:
@@ -80,6 +96,7 @@ class LintConfig:
             large_table_threshold=threshold,
             rules=rules,
             mv_validation_cutoff=cutoff,
+            gate_baseline=normalize_baseline(lint_section.get("gate_baseline")),
         )
 
 
@@ -100,6 +117,8 @@ class LintRule(ABC):
     requires_db: bool = False
 
     def get_severity(self, config: LintConfig) -> Severity:
+        if self.name in GATE_RULES:
+            return Severity.ERROR
         return config.rules.get(self.name, self.default_severity)
 
     @abstractmethod
@@ -200,55 +219,33 @@ class DestructiveChangeRule(LintRule):
 
 
 class IdempotencyRule(LintRule):
-    """Flags CREATE/DROP without IF EXISTS / IF NOT EXISTS."""
+    """Require repeat-safe syntax or a visible, reasoned statement waiver."""
 
     name = "idempotency"
-    default_severity = Severity.WARN
-
-    _RE_CREATE_NO_IF = re.compile(
-        r"\bCREATE\s+(?:OR\s+REPLACE\s+)?(?:TABLE|VIEW|MATERIALIZED\s+VIEW|DICTIONARY)\s+"
-        r"(?!IF\s+NOT\s+EXISTS\b)",
-        re.IGNORECASE,
-    )
-    _RE_DROP_NO_IF = re.compile(
-        r"\bDROP\s+(?:TABLE|VIEW|DICTIONARY)\s+(?!IF\s+EXISTS\b)",
-        re.IGNORECASE,
-    )
+    default_severity = Severity.ERROR
 
     def check(self, sql: str, **kwargs: Any) -> list[LintResult]:
-        config = kwargs.get("config") or LintConfig()
-        severity = self.get_severity(config)
-        if severity == Severity.OFF:
-            return []
-
-        results: list[LintResult] = []
-        file_path = kwargs.get("file_path")
-
-        for match in self._RE_CREATE_NO_IF.finditer(sql):
-            # Skip CREATE OR REPLACE (already idempotent)
-            matched_text = match.group(0)
-            if re.search(r"OR\s+REPLACE", matched_text, re.IGNORECASE):
-                continue
-            line = sql[:match.start()].count("\n") + 1
-            results.append(LintResult(
-                rule=self.name,
-                message="CREATE without IF NOT EXISTS is not idempotent",
-                severity=severity,
-                file=file_path,
-                line=line,
-            ))
-
-        for match in self._RE_DROP_NO_IF.finditer(sql):
-            line = sql[:match.start()].count("\n") + 1
-            results.append(LintResult(
-                rule=self.name,
-                message="DROP without IF EXISTS is not idempotent",
-                severity=severity,
-                file=file_path,
-                line=line,
-            ))
-
-        return results
+        reason = waiver_reason(tuple(kwargs.get("comments", ())))
+        severity = Severity.ERROR
+        if reason == "":
+            message = "A waiver needs a reason: ch-migrate: allow-non-idempotent <reason>"
+        elif reason is not None:
+            severity = Severity.INFO
+            message = f"Idempotency waiver: {reason}"
+        else:
+            check = classify_idempotency(sql)
+            if check.status == "ok":
+                return []
+            message = (
+                check.suggestion
+                if check.status == "fix"
+                else (
+                    "Not idempotent by syntax; add an in-file "
+                    "ch-migrate: allow-non-idempotent <reason> waiver"
+                )
+            )
+        first_line = sql.strip().splitlines()[0] if sql.strip() else ""
+        return [LintResult(self.name, message, severity, kwargs.get("file_path"), 1, first_line)]
 
 
 class ReservedWordRule(LintRule):
@@ -533,15 +530,18 @@ def lint_migrations(
     config = config or LintConfig()
     graph = build_revision_graph(versions_dir)
     scope = _LintScope(config, client, database, graph)
+    exempt = baseline_exemptions(graph, config.gate_baseline)
     selected = {}
     for migration in graph.migrations.values():
-        if revisions is None or migration.revision in revisions:
+        if migration.revision not in exempt and (
+            revisions is None or migration.revision in revisions
+        ):
             selected[migration.path.name] = [
                 statement
                 for statement in migration_statements(migration.path)
                 if statement.direction == "upgrade"
             ]
-    report = LintReport()
+    report = LintReport(results=_gate_configuration_errors(config))
     rules = list(STATIC_RULES) + (RUNTIME_RULES if client is not None else [])
     for statements in selected.values():
         for statement in statements:
@@ -561,6 +561,20 @@ class _LintScope:
     graph: RevisionGraph
 
 
+def _gate_configuration_errors(config: LintConfig) -> list[LintResult]:
+    return [
+        LintResult(
+            name,
+            f"lint.rules.{name} must remain error; use an in-file waiver "
+            "or a reviewed lint.gate_baseline instead",
+            Severity.ERROR,
+            "config.yaml",
+        )
+        for name in GATE_RULES
+        if name in config.rules and config.rules[name] != Severity.ERROR
+    ]
+
+
 def _lint_statement(
     statement: MigrationStatement, rules: list[LintRule], scope: _LintScope
 ) -> list[LintResult]:
@@ -575,10 +589,12 @@ def _lint_statement(
             client=scope.client,
             database=scope.database,
             graph=scope.graph,
+            comments=statement.comments,
         )
         for finding in findings:
             finding.file = statement.source
             finding.line = statement.line
+            finding.statement = statement.sql.splitlines()[0]
         results.extend(findings)
     return results
 

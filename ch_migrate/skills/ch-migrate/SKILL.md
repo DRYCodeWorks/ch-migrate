@@ -18,6 +18,9 @@ The command is `ch-migrate`; the import package is `ch_migrate`.
 From 0.6, Python 3.10+ is required; 0.5.x is the last line for 3.9. Existing
 projects must run `ch-migrate upgrade-env` to install the version-2 shim.
 The old environment is backed up, and repeating the command preserves that backup.
+It also records current script heads as `lint.gate_baseline`, preserving YAML
+comments. Review that committed boundary; it exempts those revisions and their
+ancestors in every environment. Repeating `upgrade-env` updates the boundary.
 Old environments are refused by `up`, `down`, `status`, and `history` before connecting.
 One checked HTTP session spans the whole run: `SET` carries into subsequent
 revisions. Prefer statement-level `SETTINGS` for query-local changes. An expired
@@ -186,6 +189,29 @@ ch-migrate new dev backfill --python
 
 `read_sql` and `get_db` remain available to Python migrations. `read_sql` still
 uses `str.format`, so its literal-brace rules differ from `run_sql`.
+
+### Re-runnable migrations
+
+Before Alembic runs, `up` refuses pending statements that violate idempotency
+rules. Use `IF NOT EXISTS` / `IF EXISTS` where supported. Inserts, exchanges,
+renames, updates/deletes, and cross-table partition copies/moves need a waiver.
+
+```sql
+-- ch-migrate: allow-non-idempotent Reviewed backfill into a deduplicating destination
+INSERT INTO {db}.target SELECT id FROM {db}.source;
+```
+
+The reason is mandatory and the comment must be directly above its statement.
+For inline `op.execute`, use a Python `#` comment. Waivers remain visible as INFO;
+they do not make an operation idempotent. There is no CLI bypass, and lowering
+gate-rule severity in `lint.rules` is an error. `--skip-mv-check` only skips
+nonblocking MV checks. Other findings warn in `up`.
+
+Recovery is to fix the cause and run `up` again. Review earlier effects before
+retrying waived operations. `init` writes no baseline; upgraded projects exempt
+the baseline and ancestors, even where those revisions are still pending.
+`lint` checks after the baseline; `lint ENV` also restricts to pending revisions.
+Exchange scaffolds require explicit reviewed waivers; none are generated for you.
 
 ### Irreversible changes
 

@@ -13,7 +13,7 @@ def irreversible_project(project):
     project.write_revision(
         "aaaa",
         {
-            "upgrade": 'op.execute(f"CREATE TABLE {db}.logs '
+            "upgrade": 'op.execute(f"CREATE TABLE IF NOT EXISTS {db}.logs '
             '(id UInt64, legacy String) ENGINE = Memory")',
             "downgrade": 'op.execute(f"DROP TABLE {db}.logs")',
         },
@@ -21,7 +21,7 @@ def irreversible_project(project):
     path = project.write_revision(
         "bbbb",
         {
-            "upgrade": 'op.execute(f"ALTER TABLE {db}.logs DROP COLUMN legacy")',
+            "upgrade": 'op.execute(f"ALTER TABLE {db}.logs DROP COLUMN IF EXISTS legacy")',
             "downgrade": "from ch_migrate import IrreversibleMigration\n"
             "raise IrreversibleMigration(revision, irreversible)",
         },
@@ -31,7 +31,7 @@ def irreversible_project(project):
     project.write_revision(
         "cccc",
         {
-            "upgrade": 'op.execute(f"ALTER TABLE {db}.logs ADD COLUMN current String")',
+            "upgrade": 'op.execute(f"ALTER TABLE {db}.logs ADD COLUMN IF NOT EXISTS current String")',
             "downgrade": 'op.execute(f"ALTER TABLE {db}.logs DROP COLUMN current")',
         },
         down_revision="bbbb",

@@ -1,0 +1,266 @@
+# Reviewable idempotency contract: ok, syntax fix, or explicit waiver.
+
+- sql: "CREATE TABLE sample (id UInt64) ENGINE = Memory"
+  expected: fix
+  suggestion: "IF NOT EXISTS"
+- sql: "CREATE TABLE IF NOT EXISTS sample (id UInt64) ENGINE = Memory"
+  expected: ok
+- sql: "DROP TABLE sample"
+  expected: fix
+  suggestion: "IF EXISTS"
+- sql: "DROP TABLE IF EXISTS sample"
+  expected: ok
+- sql: "CREATE VIEW sample AS SELECT 1"
+  expected: fix
+  suggestion: "IF NOT EXISTS"
+- sql: "CREATE VIEW IF NOT EXISTS sample AS SELECT 1"
+  expected: ok
+- sql: "DROP VIEW sample"
+  expected: fix
+  suggestion: "IF EXISTS"
+- sql: "DROP VIEW IF EXISTS sample"
+  expected: ok
+- sql: "CREATE MATERIALIZED VIEW sample TO target AS SELECT id FROM source"
+  expected: fix
+  suggestion: "IF NOT EXISTS"
+- sql: "CREATE MATERIALIZED VIEW IF NOT EXISTS sample TO target AS SELECT id FROM source"
+  expected: ok
+- sql: "DROP MATERIALIZED VIEW sample"
+  expected: fix
+  suggestion: "IF EXISTS"
+- sql: "DROP MATERIALIZED VIEW IF EXISTS sample"
+  expected: ok
+- sql: "CREATE DICTIONARY sample (id UInt64) PRIMARY KEY id LAYOUT(FLAT())"
+  expected: fix
+  suggestion: "IF NOT EXISTS"
+- sql: "CREATE DICTIONARY IF NOT EXISTS sample (id UInt64) PRIMARY KEY id LAYOUT(FLAT())"
+  expected: ok
+- sql: "DROP DICTIONARY sample"
+  expected: fix
+  suggestion: "IF EXISTS"
+- sql: "DROP DICTIONARY IF EXISTS sample"
+  expected: ok
+- sql: "CREATE DATABASE sample"
+  expected: fix
+  suggestion: "IF NOT EXISTS"
+- sql: "CREATE DATABASE IF NOT EXISTS sample"
+  expected: ok
+- sql: "DROP DATABASE sample"
+  expected: fix
+  suggestion: "IF EXISTS"
+- sql: "DROP DATABASE IF EXISTS sample"
+  expected: ok
+- sql: "CREATE USER sample"
+  expected: fix
+  suggestion: "IF NOT EXISTS"
+- sql: "CREATE USER IF NOT EXISTS sample"
+  expected: ok
+- sql: "DROP USER sample"
+  expected: fix
+  suggestion: "IF EXISTS"
+- sql: "DROP USER IF EXISTS sample"
+  expected: ok
+- sql: "CREATE ROLE sample"
+  expected: fix
+  suggestion: "IF NOT EXISTS"
+- sql: "CREATE ROLE IF NOT EXISTS sample"
+  expected: ok
+- sql: "DROP ROLE sample"
+  expected: fix
+  suggestion: "IF EXISTS"
+- sql: "DROP ROLE IF EXISTS sample"
+  expected: ok
+- sql: "CREATE ROW POLICY sample ON {db}.events USING 1"
+  expected: fix
+  suggestion: "IF NOT EXISTS"
+- sql: "CREATE ROW POLICY IF NOT EXISTS sample ON {db}.events USING 1"
+  expected: ok
+- sql: "DROP ROW POLICY sample"
+  expected: fix
+  suggestion: "IF EXISTS"
+- sql: "DROP ROW POLICY IF EXISTS sample"
+  expected: ok
+- sql: "CREATE SETTINGS PROFILE sample SETTINGS max_threads = 2"
+  expected: fix
+  suggestion: "IF NOT EXISTS"
+- sql: "CREATE SETTINGS PROFILE IF NOT EXISTS sample SETTINGS max_threads = 2"
+  expected: ok
+- sql: "DROP SETTINGS PROFILE sample"
+  expected: fix
+  suggestion: "IF EXISTS"
+- sql: "DROP SETTINGS PROFILE IF EXISTS sample"
+  expected: ok
+- sql: "CREATE QUOTA sample FOR INTERVAL 1 HOUR MAX queries = 10"
+  expected: fix
+  suggestion: "IF NOT EXISTS"
+- sql: "CREATE QUOTA IF NOT EXISTS sample FOR INTERVAL 1 HOUR MAX queries = 10"
+  expected: ok
+- sql: "DROP QUOTA sample"
+  expected: fix
+  suggestion: "IF EXISTS"
+- sql: "DROP QUOTA IF EXISTS sample"
+  expected: ok
+- sql: "CREATE FUNCTION sample AS x -> x + 1"
+  expected: fix
+  suggestion: "IF NOT EXISTS"
+- sql: "CREATE FUNCTION IF NOT EXISTS sample AS x -> x + 1"
+  expected: ok
+- sql: "DROP FUNCTION sample"
+  expected: fix
+  suggestion: "IF EXISTS"
+- sql: "DROP FUNCTION IF EXISTS sample"
+  expected: ok
+- sql: "CREATE NAMED COLLECTION sample AS key = 'value'"
+  expected: fix
+  suggestion: "IF NOT EXISTS"
+- sql: "CREATE NAMED COLLECTION IF NOT EXISTS sample AS key = 'value'"
+  expected: ok
+- sql: "DROP NAMED COLLECTION sample"
+  expected: fix
+  suggestion: "IF EXISTS"
+- sql: "DROP NAMED COLLECTION IF EXISTS sample"
+  expected: ok
+- sql: "ALTER TABLE {db}.`events` ADD COLUMN x UInt64"
+  expected: fix
+  suggestion: "IF NOT EXISTS"
+- sql: "ALTER TABLE {db}.`events` ADD COLUMN IF NOT EXISTS x UInt64"
+  expected: ok
+- sql: "ALTER TABLE {db}.`events` DROP COLUMN sample"
+  expected: fix
+  suggestion: "IF EXISTS"
+- sql: "ALTER TABLE {db}.`events` DROP COLUMN IF EXISTS sample"
+  expected: ok
+- sql: "ALTER TABLE {db}.`events` ADD INDEX idx x TYPE minmax GRANULARITY 1"
+  expected: fix
+  suggestion: "IF NOT EXISTS"
+- sql: "ALTER TABLE {db}.`events` ADD INDEX IF NOT EXISTS idx x TYPE minmax GRANULARITY 1"
+  expected: ok
+- sql: "ALTER TABLE {db}.`events` DROP INDEX sample"
+  expected: fix
+  suggestion: "IF EXISTS"
+- sql: "ALTER TABLE {db}.`events` DROP INDEX IF EXISTS sample"
+  expected: ok
+- sql: "ALTER TABLE {db}.`events` ADD PROJECTION p (SELECT x)"
+  expected: fix
+  suggestion: "IF NOT EXISTS"
+- sql: "ALTER TABLE {db}.`events` ADD PROJECTION IF NOT EXISTS p (SELECT x)"
+  expected: ok
+- sql: "ALTER TABLE {db}.`events` DROP PROJECTION sample"
+  expected: fix
+  suggestion: "IF EXISTS"
+- sql: "ALTER TABLE {db}.`events` DROP PROJECTION IF EXISTS sample"
+  expected: ok
+- sql: "ALTER TABLE {db}.`events` ADD CONSTRAINT c CHECK x > 0"
+  expected: fix
+  suggestion: "IF NOT EXISTS"
+- sql: "ALTER TABLE {db}.`events` ADD CONSTRAINT IF NOT EXISTS c CHECK x > 0"
+  expected: ok
+- sql: "ALTER TABLE {db}.`events` DROP CONSTRAINT sample"
+  expected: fix
+  suggestion: "IF EXISTS"
+- sql: "ALTER TABLE {db}.`events` DROP CONSTRAINT IF EXISTS sample"
+  expected: ok
+- sql: "ALTER TABLE t RENAME COLUMN old TO new"
+  expected: fix
+  suggestion: "IF EXISTS"
+- sql: "ATTACH TABLE t"
+  expected: fix
+  suggestion: "IF NOT EXISTS"
+- sql: "DETACH TABLE t"
+  expected: fix
+  suggestion: "IF EXISTS"
+- sql: "ATTACH DATABASE sample"
+  expected: fix
+  suggestion: "IF NOT EXISTS"
+- sql: "DETACH DATABASE sample"
+  expected: fix
+  suggestion: "IF EXISTS"
+- sql: "ALTER TABLE t ADD x UInt64"
+  expected: fix
+  suggestion: "IF NOT EXISTS"
+- sql: "ALTER TABLE t DROP x"
+  expected: fix
+  suggestion: "IF EXISTS"
+- sql: "ALTER TABLE t ADD COLUMN IF NOT EXISTS x UInt64, DROP COLUMN y"
+  expected: fix
+  suggestion: "IF EXISTS"
+- sql: "CREATE TEMPORARY TABLE sample (id UInt64) ENGINE = Memory"
+  expected: fix
+  suggestion: "IF NOT EXISTS"
+- sql: "/* IF NOT EXISTS */ CREATE TABLE t (x String DEFAULT 'IF NOT EXISTS') ENGINE = Memory"
+  expected: fix
+  suggestion: "IF NOT EXISTS"
+- sql: "EXCHANGE TABLES {db}.old AND {db}.new"
+  expected: waiver
+- sql: "RENAME TABLE a TO b"
+  expected: waiver
+- sql: "RENAME DICTIONARY a TO b"
+  expected: waiver
+- sql: "RENAME DATABASE a TO b"
+  expected: waiver
+- sql: "INSERT INTO t VALUES (1)"
+  expected: waiver
+- sql: "INSERT INTO t SELECT id FROM other"
+  expected: waiver
+- sql: "ALTER TABLE t UPDATE x = x + 1 WHERE id = 1"
+  expected: waiver
+- sql: "ALTER TABLE t DELETE WHERE id = 1"
+  expected: waiver
+- sql: "DELETE FROM t WHERE id = 1"
+  expected: waiver
+- sql: "UPDATE t SET x = x + 1 WHERE id = 1"
+  expected: waiver
+- sql: "ALTER TABLE t ATTACH PARTITION 'p' FROM source"
+  expected: waiver
+- sql: "ALTER TABLE t MOVE PARTITION 'p' TO TABLE target"
+  expected: waiver
+- sql: "ALTER TABLE t ADD COLUMN IF NOT EXISTS x UInt64, UPDATE x = x + 1 WHERE 1"
+  expected: waiver
+- sql: "CREATE OR REPLACE TABLE t (id UInt64) ENGINE = Memory"
+  expected: ok
+- sql: "CREATE OR REPLACE VIEW v AS SELECT 1"
+  expected: ok
+- sql: "ALTER TABLE t RENAME COLUMN IF EXISTS old TO new"
+  expected: ok
+- sql: "ATTACH TABLE IF NOT EXISTS t"
+  expected: ok
+- sql: "DETACH TABLE IF EXISTS t"
+  expected: ok
+- sql: "ALTER TABLE t ADD IF NOT EXISTS x UInt64"
+  expected: ok
+- sql: "ALTER TABLE t DROP IF EXISTS x"
+  expected: ok
+- sql: "ALTER TABLE t ADD COLUMN IF NOT EXISTS pair Tuple(a UInt64, b String), DROP COLUMN IF EXISTS obsolete"
+  expected: ok
+- sql: "ALTER TABLE t MODIFY COLUMN x String"
+  expected: ok
+- sql: "ALTER TABLE t MODIFY TTL ts + INTERVAL 1 DAY"
+  expected: ok
+- sql: "ALTER TABLE t MATERIALIZE COLUMN x"
+  expected: ok
+- sql: "ALTER TABLE t MATERIALIZE INDEX idx"
+  expected: ok
+- sql: "ALTER TABLE t CLEAR COLUMN x IN PARTITION 'p'"
+  expected: ok
+- sql: "TRUNCATE TABLE t"
+  expected: ok
+- sql: "OPTIMIZE TABLE t"
+  expected: ok
+- sql: "SYSTEM RELOAD DICTIONARY {db}.lookup"
+  expected: ok
+- sql: "GRANT SELECT ON {db}.t TO reader"
+  expected: ok
+- sql: "REVOKE SELECT ON {db}.t FROM reader"
+  expected: ok
+- sql: "ALTER TABLE t REPLACE PARTITION 'p' FROM source"
+  expected: ok
+- sql: "COMMENT ON TABLE t IS 'description'"
+  expected: ok
+- sql: "SET max_threads = 3"
+  expected: ok
+- sql: "SELECT 'INSERT INTO t', ':abc', 'a%b'"
+  expected: ok
+- sql: "cReAtE /* note */ TaBlE IF NOT EXISTS {db}.`events` ON CLUSTER {cluster} (id UInt64) ENGINE = Memory"
+  expected: ok
+- sql: "-- header\n# note\nCREATE TABLE IF NOT EXISTS `DROP` (`UPDATE` UInt64) ENGINE = Memory"
+  expected: ok

@@ -232,9 +232,10 @@ def render_lint_report(
     # One finding per line, file:line first, so terminals and editors can jump to it.
     for r in report.results:
         is_error = r.severity.value == "error"
-        # Text(marker, style=...) would make that style the base for the whole line.
         line = Text()
-        line.append("✗ " if is_error else "! ", style="bold red" if is_error else "yellow")
+        marker = "✓ " if r.severity.value == "info" else ("✗ " if is_error else "! ")
+        style = "cyan" if r.severity.value == "info" else ("bold red" if is_error else "yellow")
+        line.append(marker, style=style)
         location = f"{r.file}:{r.line}" if r.file and r.line else (r.file or "")
         line.append(location, style="bold")
         line.append(f"  {r.message}  ")
@@ -248,6 +249,9 @@ def render_lint_report(
     if report.warning_count:
         noun = "warning" if report.warning_count == 1 else "warnings"
         summary_parts.append(f"[yellow]{report.warning_count} {noun}[/yellow]")
+    if report.info_count:
+        noun = "info line" if report.info_count == 1 else "info lines"
+        summary_parts.append(f"[cyan]{report.info_count} {noun}[/cyan]")
 
     console.print(", ".join(summary_parts))
 

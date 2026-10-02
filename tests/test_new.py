@@ -127,7 +127,7 @@ def test_new_python_preserves_legacy_authoring(root, options, sql_count):
 def test_new_lint_and_mv_validation_discover_run_sql(root):
     _new("drop_old", [])
     [upgrade] = list((root / "migrations" / "sql").rglob("*.up.sql"))
-    upgrade.write_text("DROP TABLE {db}.old;\n")
+    upgrade.write_text("DROP TABLE IF EXISTS {db}.old;\n")
     report = lint_migrations(root / "migrations" / "versions")
     assert any(result.rule == "destructive_changes" for result in report.results)
     result = CliRunner().invoke(main, ["lint"])

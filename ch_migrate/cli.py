@@ -42,6 +42,40 @@ def render_template(template_path: Path, **kwargs: str) -> str:
     return content
 
 
+def _enforce_up_gate(environment: str, skip_mv_check: bool) -> None:
+    from ch_migrate.gate import lint_pending_up
+
+    try:
+        report = lint_pending_up(Path.cwd(), environment, skip_mv_check)
+    except Exception as error:
+        raise click.ClickException(f"Migration preflight failed: {error}") from error
+    if _print_gate_findings(report):
+        raise click.ClickException(
+            "Migration gate failed; nothing was applied. Fix SQL or add a reasoned in-file waiver."
+        )
+
+
+def _print_gate_findings(report) -> bool:
+    from ch_migrate.lint import GATE_RULES, Severity
+
+    blocked = False
+    for finding in report.results:
+        gate_error = finding.rule in GATE_RULES and finding.severity == Severity.ERROR
+        blocked |= gate_error
+        severity = finding.severity.value
+        if severity == "error" and not gate_error:
+            severity = "warn"
+        position = finding.file or "config.yaml"
+        if finding.line is not None:
+            position += f":{finding.line}"
+        click.echo(
+            f"{position}: {severity.upper()} [{finding.rule}] {finding.message}", err=gate_error
+        )
+        if finding.statement:
+            click.echo(f"  {finding.statement}", err=gate_error)
+    return blocked
+
+
 def _require_current_env() -> None:
     from ch_migrate.alembic_env import ENV_VERSION
     from ch_migrate.rebase import _literal_assignment
@@ -238,12 +272,11 @@ def up(environment: str, revision: str, skip_mv_check: bool, verbose: bool) -> N
     Runs all unapplied migrations to bring the database to the latest version.
     Use --revision to upgrade to a specific revision instead of head.
 
-    Validates that migrations creating MATERIALIZED VIEWs include proper
-    MV_DECLARATIONS and companion grants. Use --skip-mv-check to bypass.
+    Idempotency gate errors refuse the run before Alembic.
+    Other findings are warnings; --skip-mv-check only skips MV declaration checks.
     """
     _require_current_env()
-    if not skip_mv_check:
-        _check_mv_declarations()
+    _enforce_up_gate(environment, skip_mv_check)
     sys.exit(run_migrations(environment, ["upgrade", revision], verbose=verbose))
 
 
@@ -715,8 +748,8 @@ def skill(target: str) -> None:
 def lint(environment: str | None) -> None:
     """Lint upgrade statements with their source file and line.
 
-    Without an environment, checks every local revision statically without
-    credentials or a database connection.
+    Without an environment, checks revisions after the gate baseline statically,
+    without credentials or a database connection.
 
     With an environment, checks only pending revisions and adds live size and
     dependency checks. Fails if the pending scope cannot be determined.
@@ -740,8 +773,8 @@ def lint(environment: str | None) -> None:
         try:
             raw_config = load_config(config_path)
             lint_config = LintConfig.from_config(raw_config)
-        except Exception:
-            pass
+        except Exception as error:
+            raise click.ClickException(f"Invalid lint configuration: {error}") from error
 
     client = None
     database = None
@@ -940,7 +973,7 @@ def upgrade_env() -> None:
 
     Updates the Alembic environment file to the latest version shipped with
     ch-migrate. This is needed when upgrading ch-migrate to pick up new
-    features like execution hooks.
+    features. Records current script heads as the lint gate baseline.
 
     The previous env.py is backed up as env.py.bak.
     """
@@ -952,6 +985,14 @@ def upgrade_env() -> None:
 
     if not env_py_src.exists():
         ui.fail("The package's env.py is missing; reinstall ch-migrate-cli.")
+
+    from ch_migrate.baseline import record_baseline
+
+    try:
+        heads = record_baseline(Path.cwd())
+    except Exception as error:
+        raise click.ClickException(f"Could not record gate baseline: {error}") from error
+    click.echo("  Recorded gate baseline: " + (", ".join(heads) if heads else "(empty)"))
 
     if env_py_dst.exists() and env_py_dst.read_bytes() == env_py_src.read_bytes():
         click.echo("migrations/env.py is already current; backup unchanged.")

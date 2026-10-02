@@ -233,6 +233,7 @@ class TestUpgradeEnvCommand:
         migrations_dir.mkdir()
         existing_env = migrations_dir / "env.py"
         existing_env.write_text("# old env.py content\n")
+        (tmp_path / "config.yaml").write_text("project: {name: example}\n")
 
         monkeypatch.chdir(tmp_path)
 

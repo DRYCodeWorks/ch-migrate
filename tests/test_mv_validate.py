@@ -868,9 +868,9 @@ class TestSQLFileReferences:
 
 
 class TestCLIIntegration:
-    """Test the up command's MV validation gate."""
+    """Test the up command's MV declaration preflight behavior."""
 
-    def test_up_blocks_on_mv_errors(self, tmp_path: Path, monkeypatch):
+    def test_up_does_not_block_on_mv_warnings(self, tmp_path: Path, monkeypatch):
         from click.testing import CliRunner
         from ch_migrate.cli import main
 
@@ -893,11 +893,12 @@ class TestCLIIntegration:
 
         monkeypatch.chdir(tmp_path)
         runner = CliRunner()
+        monkeypatch.setattr("ch_migrate.gate.get_current_heads", lambda config: set())
         upgraded = runner.invoke(main, ["upgrade-env"], catch_exceptions=False)
         assert upgraded.exit_code == 0, upgraded.output
         result = runner.invoke(main, ["up", "dev"], catch_exceptions=False)
         assert result.exit_code != 0
-        assert "create_mv000_create_mv.py:" in result.output  # the offending file is named
+        assert "script_location" in result.output  # reached Alembic after nonblocking preflight
 
     def test_up_skip_mv_check_bypasses(self, tmp_path: Path, monkeypatch):
         from click.testing import CliRunner

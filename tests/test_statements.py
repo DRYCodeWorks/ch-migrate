@@ -101,7 +101,10 @@ def test_explicit_empty_revision_scope_does_not_lint_everything(project):
     _revision(project, "def upgrade():\n    op.execute('DROP TABLE old')\n")
     versions = project / "migrations/versions"
     assert lint_migrations(versions, revisions=set()).results == []
-    assert lint_migrations(versions, revisions={"a"}).warning_count == 2
+    assert {r.rule for r in lint_migrations(versions, revisions={"a"}).results} == {
+        "destructive_changes",
+        "idempotency",
+    }
 
 
 def test_pending_scope_expands_applied_ancestors_and_keeps_other_branch(project):

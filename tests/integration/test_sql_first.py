@@ -49,8 +49,26 @@ def test_sql_first_exchange_still_generates_legacy_scaffold(project):
         if isinstance(node, ast.Assign)
     }
     assert metadata["irreversible"]
+    refused = project.run("up", "it")
+    assert refused.exit_code == 1, refused.output
+    assert "idempotency" in refused.output
+    assert project.client.command(f"EXISTS TABLE {project.database}.logs_shadow") == 0
+    _waive_controlled_exchange(revision)
     applied = project.run("up", "it")
     assert applied.exit_code == 0, applied.output
     assert project.client.query(f"SELECT id FROM {project.database}.logs").result_rows == [(7,)]
     assert project.client.command(f"EXISTS TABLE {project.database}.logs") == 1
     assert project.client.command(f"EXISTS TABLE {project.database}.logs_shadow") == 0
+
+
+def _waive_controlled_exchange(path):
+    lines = []
+    for line in path.read_text().splitlines():
+        if line.lstrip().startswith("op.execute("):
+            indent = line[: len(line) - len(line.lstrip())]
+            lines.append(
+                indent
+                + "# ch-migrate: allow-non-idempotent Test uses paused writers and a fresh fixture"
+            )
+        lines.append(line)
+    path.write_text("\n".join(lines) + "\n")

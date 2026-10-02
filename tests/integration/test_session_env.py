@@ -64,8 +64,9 @@ def legacy_project(project):
 
 def test_session_sql_first_setting_applies(project):
     (project.sql_dir / "settings.sql").write_text(
-        "CREATE TABLE {db}.probe (value UInt64) ENGINE = Memory;\n"
+        "CREATE TABLE IF NOT EXISTS {db}.probe (value UInt64) ENGINE = Memory;\n"
         "SET max_threads = 3;\n"
+        "-- ch-migrate: allow-non-idempotent Test records the observed session setting once\n"
         "INSERT INTO {db}.probe SELECT getSetting('max_threads');\n"
     )
     project.write_revision(
@@ -80,13 +81,16 @@ def test_session_setting_carries_across_revisions(project):
     project.write_revision(
         "aaaa",
         {
-            "upgrade": 'op.execute(f"CREATE TABLE {db}.probe (value UInt64) ENGINE = Memory")\n'
+            "upgrade": 'op.execute(f"CREATE TABLE IF NOT EXISTS {db}.probe (value UInt64) ENGINE = Memory")\n'
             'op.execute("SET max_threads = 3")'
         },
     )
     project.write_revision(
         "bbbb",
-        {"upgrade": "op.execute(f\"INSERT INTO {db}.probe SELECT getSetting('max_threads')\")"},
+        {
+            "upgrade": "# ch-migrate: allow-non-idempotent Test records the next-revision setting once\n"
+            "op.execute(f\"INSERT INTO {db}.probe SELECT getSetting('max_threads')\")"
+        },
         down_revision="aaaa",
     )
     result = project.run("up", "it")
@@ -102,9 +106,10 @@ def test_session_expiry_fails_instead_of_losing_settings(project):
         "aaaa",
         {
             "upgrade": "import time\n"
-            'op.execute(f"CREATE TABLE {db}.probe (value UInt64) ENGINE = Memory")\n'
+            'op.execute(f"CREATE TABLE IF NOT EXISTS {db}.probe (value UInt64) ENGINE = Memory")\n'
             'op.execute("SET max_threads = 3")\n'
             "time.sleep(4)\n"
+            "# ch-migrate: allow-non-idempotent Probe must fail after session expiry\n"
             "op.execute(f\"INSERT INTO {db}.probe SELECT getSetting('max_threads')\")"
         },
     )

@@ -2,6 +2,19 @@
 
 Changes are recorded in [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format.
 
+## [Unreleased]
+
+### Changed
+
+- `lint ENV` analyzes only pending revisions after the gate baseline; static `lint` checks every revision after it.
+- `up` refuses idempotency gate errors before applying migrations; other lint findings are nonblocking warnings.
+- `upgrade-env` records current script heads as a comment-preserving `lint.gate_baseline`.
+
+### Added
+
+- Reviewed idempotency corpus covering DDL, mutations, inserts, and partition operations.
+- Required-reason `ch-migrate: allow-non-idempotent` statement waivers, reported as INFO.
+
 ## [0.5.1]
 
 ### Fixed
