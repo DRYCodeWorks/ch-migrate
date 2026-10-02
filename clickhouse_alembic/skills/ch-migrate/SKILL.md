@@ -7,9 +7,14 @@ description: Use when integrating ClickHouse migrations into a project, setting 
 
 ## Overview
 
-`ch-migrate` is a CLI tool for managing ClickHouse schema migrations built on Alembic. It handles multi-environment configuration, role-based access control, and ClickHouse Cloud compatibility.
+`ch-migrate` adds SQL-first authoring, environment configuration, bootstrap,
+inspection, and drift checks above Alembic. It complements ClickHouse's official
+Alembic integration; this development line still uses `clickhouse-sqlalchemy`
+for migration connections. Do not imply an endorsement or promise transactional
+DDL.
 
-**Install:** `uv add clickhouse-alembic` or `pip install clickhouse-alembic`
+**Install:** `uv tool install clickhouse-alembic` or `pip install clickhouse-alembic`.
+The command is `ch-migrate`; the import package is `clickhouse_alembic`.
 
 ## CLI Quick Reference
 
@@ -17,14 +22,28 @@ description: Use when integrating ClickHouse migrations into a project, setting 
 |---------|-------------|
 | `ch-migrate init [PATH] [--name NAME]` | Initialize project structure |
 | `ch-migrate bootstrap ENV [--dry-run]` | Create database, roles, users |
-| `ch-migrate new ENV NAME [--table X]` | Create migration (optionally with SQL file) |
+| `ch-migrate new ENV NAME [--table X] [--irreversible REASON]` | Create upgrade/downgrade SQL and their revision |
 | `ch-migrate up ENV [-r REV]` | Apply migrations (default: head, or to REV) |
 | `ch-migrate down ENV [-r REV]` | Rollback (default: last, or to REV) |
 | `ch-migrate status ENV` | Show current migration state |
 | `ch-migrate history ENV` | Show migration history |
+| `ch-migrate lint [ENV]` | Static checks; ENV adds live checks |
+| `ch-migrate deps ENV [--validate PATH]` | Inspect live dependencies |
+| `ch-migrate snapshot ENV [--exclude GLOB] [--filter GLOB]` | Capture schema |
+| `ch-migrate diff ENV [--snapshot-dir PATH]` | Compare snapshot and live schema |
+| `ch-migrate rebase ENV [--onto REV] [--dry-run]` | Preview/rewrite dangling revision branches |
+| `ch-migrate upgrade-env` | Refresh env.py, keeping env.py.bak |
 | `ch-migrate skill [--user\|--project]` | Install Claude skill for ch-migrate |
 
-**Options for `new`:** `--table NAME`, `--view NAME`, `--dict NAME` create SQL history files organized by object name in `migrations/sql/history/{tables|views|dictionaries}/{object_name}/`.
+**Options for `new`:** choose one of `--table NAME`, `--view NAME`, and
+`--dict NAME`. SQL lives under `migrations/sql/history/{tables|views|dictionaries}/NAME/`;
+without an object it goes under `history/other/`. Filenames are
+`<YYYY_MM_DD_HHMM>_<revision>_<slug>.up.sql` and `.down.sql`.
+`--irreversible REASON` omits the down file and installs a static marker plus
+`IrreversibleMigration` backstop. `--python` retains the Python template and
+optional single SQL file. `--exchange --table NAME` retains the exchange
+scaffold. These three modes are mutually exclusive; invalid choices fail
+before Alembic writes a revision.
 
 ## Project Structure
 
@@ -35,13 +54,14 @@ project/
 ├── alembic.ini           # Alembic configuration
 └── migrations/
     ├── env.py            # Alembic environment
-    ├── versions/         # Migration Python files
+    ├── versions/         # Generated revision adapters; no Python edits needed
     └── sql/
         ├── bootstrap/    # Custom bootstrap SQL (optional)
         └── history/      # Object-centric SQL versions
             ├── tables/
             ├── views/
-            └── dictionaries/
+            ├── dictionaries/
+            └── other/
 ```
 
 ## Configuration
@@ -100,111 +120,96 @@ CH_PRODUCTION_ADMIN_PASSWORD=prod-admin-password
 
 ## Integration Workflow
 
-### For Existing Projects
+### SQL-first workflow
+
+Use a dedicated, authorized server. Local HTTP normally uses port `8123` and
+`secure: false`; Cloud normally uses HTTPS `8443`. Do not start or modify shared
+infrastructure as part of trying the tool.
 
 ```bash
-# 1. Install
-uv add clickhouse-alembic
-
-# 2. Initialize (in project root or subdirectory)
-ch-migrate init ./migrations --name my_project
-
-# 3. Configure
-# Edit migrations/config.yaml with your hosts
-# Create migrations/.env.local with passwords
-
-# 4. Bootstrap (safe on existing databases)
-ch-migrate bootstrap dev --dry-run   # Preview
-ch-migrate bootstrap dev             # Execute
-
-# 5. Create baseline migration (documents existing schema)
-ch-migrate new dev baseline
-
-# 6. Apply baseline
-ch-migrate up dev
-```
-
-### For New Projects (with Docker)
-
-```bash
-# Start ClickHouse
-docker run -d --name clickhouse -p 8123:8123 \
-  -e CLICKHOUSE_PASSWORD=admin123 clickhouse/clickhouse-server
-
-# Initialize and configure for local (port 8123, secure: false)
-ch-migrate init --name my_project
-# Edit config.yaml: host: localhost, port: 8123, secure: false
-# Create .env.local with CH_DEV_ADMIN_PASSWORD=admin123
-
+ch-migrate init ./schema --name my_project
+cd schema
+# Edit config.yaml and create .env.local here.
+ch-migrate bootstrap dev --dry-run
 ch-migrate bootstrap dev
-ch-migrate new dev create_users_table --table users
+ch-migrate new dev add_status --table logs
+```
+
+Fill the generated `.up.sql` with:
+
+```sql
+CREATE TABLE IF NOT EXISTS {db}.logs (id UInt64)
+ENGINE = MergeTree ORDER BY id;
+ALTER TABLE {db}.logs ADD COLUMN IF NOT EXISTS status String;
+```
+
+For an empty test project only, fill `.down.sql` with:
+
+```sql
+DROP TABLE IF EXISTS {db}.logs;
+```
+
+Then run:
+
+```bash
+ch-migrate lint
 ch-migrate up dev
+ch-migrate status dev
+ch-migrate history dev
+ch-migrate down dev
 ```
 
-## Migration Patterns
+Do not edit the generated Python adapter. Empty/comment-only SQL files fail.
+The example downgrade drops the table and its data; do not apply it to a live
+table that needs preserving.
 
-### Basic Table
+### SQL execution
 
-```python
-from alembic import op
-from clickhouse_alembic import get_db
+`run_sql` splits on semicolons outside strings, identifiers, comments, and
+heredocs, then sends one statement per request. It substitutes `{db}`,
+`{cluster}`, and `{on_cluster}`, plus explicit keyword overrides. Other braces
+remain literal, including JSON and `{id:UInt64}` parameters. Doubled braces
+are not escapes. A failure stops later statements but cannot undo earlier DDL.
 
-def upgrade():
-    db = get_db()
-    op.execute(f"""
-        CREATE TABLE {db}.users (
-            id UInt64,
-            email String,
-            created_at DateTime DEFAULT now()
-        ) ENGINE = MergeTree() ORDER BY id
-    """)
+For migrations requiring logic:
 
-def downgrade():
-    db = get_db()
-    op.execute(f"DROP TABLE IF EXISTS {db}.users")
+```bash
+ch-migrate new dev backfill --python
 ```
 
-### Zero-Downtime with EXCHANGE TABLES
+`read_sql` and `get_db` remain available to Python migrations. `read_sql` still
+uses `str.format`, so its literal-brace rules differ from `run_sql`.
 
-For schema changes that preserve data:
+### Irreversible changes
 
-```python
-def upgrade():
-    db = get_db()
-
-    # 1. Create new table with updated schema
-    op.execute(f"""
-        CREATE TABLE {db}.users_new (
-            id UInt64,
-            email String,
-            phone String,  -- new column
-            created_at DateTime DEFAULT now()
-        ) ENGINE = MergeTree() ORDER BY id
-    """)
-
-    # 2. Copy data with transformation
-    op.execute(f"""
-        INSERT INTO {db}.users_new
-        SELECT id, email, '' as phone, created_at FROM {db}.users
-    """)
-
-    # 3. Atomic swap
-    op.execute(f"EXCHANGE TABLES {db}.users AND {db}.users_new")
-
-    # 4. Drop old
-    op.execute(f"DROP TABLE {db}.users_new")
+```bash
+ch-migrate new dev drop_legacy --table logs --irreversible "Drops legacy data"
 ```
 
-### Using SQL Files
+`down` statically checks the whole known range before running Alembic and refuses
+if any revision carries an irreversible marker. It understands `-N` on a linear
+chain, full or unique-prefix IDs, and `base`. Unknown ranges fall back to each
+migration's exception; direct Alembic calls also rely on that backstop.
 
-```python
-from clickhouse_alembic import get_db, read_sql
+There is no override flag. Implement a real downgrade and remove the marker
+through review to revert past it. Hand-written Python revisions must provide
+both `irreversible = "reason"` and a downgrade that raises
+`IrreversibleMigration(revision, irreversible)`.
 
-def upgrade():
-    db = get_db()
-    # Reads from migrations/sql/history/tables/users/2026_01_08_1400_abc123.sql
-    op.execute(read_sql("history/tables/users/2026_01_08_1400_abc123.sql", db=db))
-```
+### Exchange and dictionary operations
+
+`new --exchange --table NAME` creates the existing copy-and-swap scaffold.
+Pause or coordinate writers: copying and exchanging alone does not preserve
+inserts arriving during the copy. Review the schema and column mapping.
+The generated revision is irreversible because it drops the old table.
+
+For dictionaries, `create_dictionary("history/dictionaries/NAME/file.sql")`
+retains the configured dictionary reader's automatic SELECT grant.
+
+For offline SQL, set `CH_ENVIRONMENT` and run `alembic upgrade head --sql`.
+Existing projects need `ch-migrate upgrade-env` for the offline version-table
+and literal-rendering fixes. Keep credentials out of SQL files and logs.
+
 
 ## Roles Created by Bootstrap
 
