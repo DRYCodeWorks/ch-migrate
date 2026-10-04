@@ -516,6 +516,40 @@ preserve the journaled UUIDs and isolated Keeper paths; value `2` would replace
 them and is not used. A settings profile that forbids these overrides must be
 reconciled before the rebuild. The tool does not change server/profile defaults.
 
+### Dependent views and dictionaries
+
+The rebuild inspects dependents in the same database before creating its copying
+view. It creates owned empty replacement helpers, then uses `EXPLAIN` and
+zero-row result headers to validate source views, materialized views, dictionary
+projections, and views that write `TO` the table against the replacement.
+Compatible server-side conversions remain allowed; these checks cannot predict
+invalid values that a future writer might supply.
+
+A missing/renamed column or incompatible view expression names the failing
+dependent and refuses before any copying or swap. The tool removes its fresh
+validation helpers and releases its own lock; the source remains unchanged.
+Repairing the replacement SQL and rerunning starts a fresh attempt from that
+known rejection. A failure after copying begins does not use this cleanup path:
+it retains ownership/state for operator reconciliation.
+
+Materialized views follow the original table name across the swap, including
+views with an inner engine and views that write `TO` the rebuilt table. The tool
+does not re-point or recreate application views. Snapshot/staging copies do not
+replay the source view's historical aggregate: a source-to-aggregate difference
+can therefore equal the duplicate rows inside the recorded rebuild window.
+
+After the swap, the tool reloads each discovered dependent ClickHouse dictionary.
+Reload errors name the dictionary and fail the migration rather than declaring
+completion with an old cache. This needs the global `SYSTEM RELOAD DICTIONARY`
+privilege; bootstrap grants it only where the administrator's current grants
+allow it, while the runtime reloads only the discovered names.
+
+Distributed routes to the source are conservatively refused **even when the
+route has only one shard**. Cross-database views and dictionaries that the scoped
+dependency inspection cannot see are a known limitation: inspect and manage them
+explicitly before rebuilding. Do not make concurrent schema/dependency changes
+while a rebuild is running.
+
 ### Recover an interrupted rebuild
 
 Progress is stored in the database, not on the runner's filesystem. A completed

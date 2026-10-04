@@ -77,7 +77,7 @@ def execute_rebuild_operation(operations: Operations, operation: RebuildTableOp)
     sql = statements[0].sql
     request = _request(operation, waiter)
     key, record, _ = waiter.reserve(
-        {"kind": "rebuild", "phase": "intent", "digest": _digest(request, sql)}
+        {"kind": "rebuild", "phase": "intent", "digest": _digest(request, sql), "repeat_safe": True}
     )
     source = _source(waiter, request, record)
     definition = build_definition(source, sql, request)
@@ -90,7 +90,7 @@ def execute_rebuild_operation(operations: Operations, operation: RebuildTableOp)
         budget=waiter.budget,
         record=record,
         checkpoint=lambda: waiter.journal.write(key, record),
-        refresh=lambda: _refresh(waiter, key),
+        refresh=lambda: _refresh(waiter, key, record),
     )
     result = execute_rebuild(runtime)
     record.update(phase="done", result=result)
@@ -136,8 +136,11 @@ def _source(waiter, request: RebuildOptions, record: dict):
     return source
 
 
-def _refresh(waiter, key):
+def _refresh(waiter, key, current):
     # Ownership may have changed since the CLI's initial journal snapshot.
     # Read the previous owner's acknowledged checkpoints on this replica.
     waiter.journal.synchronize()
-    return waiter.journal.read(key)
+    previous = waiter.journal.read(key)
+    if previous and previous.get("phase") == "rejected" and current.get("phase") == "intent":
+        return None  # Known pre-copy rejection was cleaned; reserve authorized a fresh attempt.
+    return previous

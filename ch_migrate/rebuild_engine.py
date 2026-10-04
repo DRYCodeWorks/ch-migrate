@@ -7,6 +7,13 @@ import threading
 from uuid import uuid4
 
 from ch_migrate.rebuild_ddl import dual_ddl, helper_ddl
+from ch_migrate.rebuild_dependents import (
+    DependentValidationError,
+    DictionaryReload,
+    inspect_dependents,
+    reload_dictionaries,
+    validate_dependents,
+)
 from ch_migrate.rebuild_preflight import RebuildRequest, inspect_rebuild
 from ch_migrate.waiting_ddl import DistributedDDLWaiter
 from ch_migrate.waiting_types import UnknownOutcome, WaitingError
@@ -25,36 +32,16 @@ def execute_rebuild(runtime) -> dict:
         return previous["result"]
     if not previous:
         _preflight(ctx)
+    rejected = None
     with _Lock(ctx) as lock:
-        refreshed = runtime.refresh()
-        if refreshed is not None:
-            runtime.record.clear()
-            runtime.record.update(refreshed)
-        state = runtime.record.get("rebuild")
-        if state and state.get("result") is not None:
-            _verify_complete(ctx)
-            return state["result"]
-        if not state:
-            _preflight(ctx)
-        _initialize(ctx)
-        lock.check()
-        _resolve_exchange(ctx)
-        if not _swapped(ctx):
-            _helpers(ctx)
-            _dual(ctx)
-            lock.check()
-            _drain(ctx)
-            _snapshot(ctx)
-            _copy(ctx, lock)
-            if ctx.definition.target.engine.startswith("Replicated"):
-                _sync_replica(ctx, ctx.name("new"))
-            _swap(ctx, lock)
-        _cleanup(ctx, lock)
-        _async_report(ctx)
-        result = _result(ctx)
-        ctx.state["result"] = result
-        ctx.save()
-        return result
+        try:
+            result = _run_locked(ctx, lock)
+        except DependentValidationError as error:
+            _discard_validation(ctx, error)
+            rejected = error
+    if rejected is not None:
+        raise rejected
+    return result
 
 
 class _Context:
@@ -69,6 +56,7 @@ class _Context:
         self.budget = runtime.budget
         self.waiter = DistributedDDLWaiter(self.client, self.budget)
         self.hosts = self._hosts()
+        self.dependents = None
 
     @property
     def state(self):
@@ -178,12 +166,13 @@ class _Context:
             )
             intent["acknowledged"] = True
             self.save()
+        if self.ddl_cluster and not intent.get("done"):
+            self.waiter.wait(intent["receipt"], self.save)
         if converged():
             intent["done"] = True
             self.save()
             return
         if self.ddl_cluster:
-            self.waiter.wait(intent["receipt"], self.save)
             self.wait(f"DDL {key} replica catalogs", converged)
         elif fresh or intent["acknowledged"]:
             self.wait(f"DDL {key} replica catalogs", converged)
@@ -368,6 +357,90 @@ class _Lock:
         )
 
 
+def _run_locked(ctx, lock):
+    runtime = ctx.runtime
+    refreshed = runtime.refresh()
+    if refreshed is not None:
+        runtime.record.clear()
+        runtime.record.update(refreshed)
+    state = runtime.record.get("rebuild")
+    if state and state.get("result") is not None:
+        _verify_complete(ctx)
+        return state["result"]
+    if state and state.get("validation_rejection"):
+        raise DependentValidationError(state["validation_rejection"])
+    if not state:
+        _preflight(ctx)
+    _initialize(ctx)
+    lock.check()
+    _resolve_exchange(ctx)
+    if not _swapped(ctx):
+        _helpers(ctx)
+        _validate_owned_dependents(ctx)
+        _dual(ctx)
+        lock.check()
+        _drain(ctx)
+        _snapshot(ctx)
+        _copy(ctx, lock)
+        if ctx.definition.target.engine.startswith("Replicated"):
+            _sync_replica(ctx, ctx.name("new"))
+        _swap(ctx, lock)
+    _cleanup(ctx, lock)
+    _reload_owned_dictionaries(ctx)
+    _async_report(ctx)
+    result = _result(ctx)
+    ctx.state["result"] = result
+    ctx.save()
+    return result
+
+
+def _validate_owned_dependents(ctx):
+    if ctx.state.get("dependents_validated"):
+        return
+    inventory = ctx.dependents or inspect_dependents(ctx.client, ctx.database, ctx.table)
+    validate_dependents(ctx.client, ctx.definition, inventory)
+    ctx.state["dependent_dictionaries"] = [item.name for item in inventory.dictionaries]
+    ctx.state["dependents_validated"] = True
+    ctx.save()
+
+
+def _discard_validation(ctx, error):
+    state = ctx.runtime.record.get("rebuild")
+    if state is not None:
+        if state.get("dual_uuid") or state["snapshot"].get("started") or state["parts"]:
+            raise UnknownOutcome(
+                f"{error}; dependent validation/reload failed after copying began; lock retained"
+            ) from error
+        ctx.uuid_map(ctx.table, state["old_uuids"])
+        state["validation_rejection"] = str(error)
+        ctx.save()
+        for role in ("stage", "snap", "new"):
+            name = ctx.name(role)
+            if ctx.absent(name):
+                continue
+            ctx.uuid_map(name, state["helpers"][role])
+            cluster = f" ON CLUSTER {_id(ctx.ddl_cluster)}" if ctx.ddl_cluster else ""
+            ctx.ddl(
+                f"reject_drop_{role}",
+                f"DROP TABLE {ctx.qualified(name)}{cluster} SYNC",
+                lambda target=name: ctx.absent(target),
+            )
+    ctx.runtime.record.update(phase="rejected", repeat_safe=True)
+    ctx.save()
+    _progress("Dependent validation rejected before copying; owned helpers removed")
+
+
+def _reload_owned_dictionaries(ctx):
+    if ctx.state.get("dictionaries_reloaded"):
+        return
+    names = tuple(ctx.state.get("dependent_dictionaries", ()))
+    ctx.budget.check("dependent dictionary reload")
+    reload_dictionaries(ctx.client, DictionaryReload(ctx.database, names, ctx.cluster))
+    ctx.budget.check("dependent dictionary reload completion")
+    ctx.state["dictionaries_reloaded"] = True
+    ctx.save()
+
+
 def _preflight(ctx):
     definition = ctx.definition
     if len(ctx.hosts) > 1 and not definition.source.engine.startswith(("Replicated", "Shared")):
@@ -387,12 +460,13 @@ def _preflight(ctx):
         if finding.severity == "warning":
             _progress(f"Warning [{finding.code}]: {finding.message} {finding.details}")
     refusals = [
-        f"{finding.code}: {finding.message}"
+        f"{finding.code}: {finding.message} {finding.details}"
         for finding in findings
         if finding.severity == "refusal"
     ]
     if refusals:
         raise WaitingError("Rebuild read-only preflight refused: " + "; ".join(refusals))
+    ctx.dependents = inspect_dependents(ctx.client, ctx.database, ctx.table)
 
 
 def _initialize(ctx):

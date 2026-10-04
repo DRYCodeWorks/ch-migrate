@@ -166,6 +166,7 @@ def build_bootstrap_sql(
         f"GRANT CURRENT GRANTS(SELECT ON system.processes) TO {project}_migration_role;",
         f"GRANT CURRENT GRANTS(KILL QUERY ON *.*) TO {project}_migration_role;",
         f"GRANT CURRENT GRANTS(SYSTEM FLUSH LOGS ON *.*) TO {project}_migration_role;",
+        f"GRANT CURRENT GRANTS(SYSTEM RELOAD DICTIONARY ON *.*) TO {project}_migration_role;",
         f"GRANT CURRENT GRANTS(SYSTEM FLUSH ASYNC INSERT QUEUE ON *.*) TO {project}_migration_role;",
         f"GRANT CURRENT GRANTS(SYSTEM MERGES ON {db}.*) TO {project}_migration_role;",
         f"GRANT CURRENT GRANTS(SYSTEM SYNC REPLICA ON {db}.*) TO {project}_migration_role;",

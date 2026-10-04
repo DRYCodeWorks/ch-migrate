@@ -44,6 +44,7 @@ GRANT CURRENT GRANTS(SELECT ON system.asynchronous_insert_log) TO {project}_migr
 GRANT CURRENT GRANTS(SELECT ON system.processes) TO {project}_migration_role;
 GRANT CURRENT GRANTS(KILL QUERY ON *.*) TO {project}_migration_role;
 GRANT CURRENT GRANTS(SYSTEM FLUSH LOGS ON *.*) TO {project}_migration_role;
+GRANT CURRENT GRANTS(SYSTEM RELOAD DICTIONARY ON *.*) TO {project}_migration_role;
 GRANT CURRENT GRANTS(SYSTEM FLUSH ASYNC INSERT QUEUE ON *.*) TO {project}_migration_role;
 GRANT CURRENT GRANTS(SYSTEM MERGES ON {db}.*) TO {project}_migration_role;
 GRANT CURRENT GRANTS(SYSTEM SYNC REPLICA ON {db}.*) TO {project}_migration_role;
