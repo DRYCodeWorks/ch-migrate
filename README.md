@@ -299,6 +299,26 @@ barrier for each parameter set; intermediate TTL effects are not collapsed.
 Lightweight DELETE keeps its row-mask semantics; lightweight UPDATE is synchronous
 patch work, not a fabricated `system.mutations` record.
 
+For `ON CLUSTER` statements, the same journal first records a unique distributed
+DDL marker. `up` submits without a server-side synchronous DDL wait, then polls
+`system.distributed_ddl_queue`. Every configured target host must report
+`Finished` **and** exception code zero. A failed host is named with its error;
+a down host remains pending until it returns or the shared `--timeout` expires.
+The tool neither deletes the queue entry nor resubmits the DDL on rerun.
+
+The queue entry is found by its recorded `log_comment`, not by matching SQL text
+(the server can insert UUIDs into that text). Caller log comments are preserved
+in the journal. A lost acknowledgement can reattach to the existing entry;
+missing/expired queue evidence follows the unknown-outcome procedure above.
+Mutation-producing distributed ALTERs must satisfy **both** barriers: DDL execution
+on all hosts and completion of their owned mutations. TTL metadata and explicit
+materialization retain separate queue receipts.
+
+Single-node statements without `ON CLUSTER` do not consult that queue. Ordinary
+Cloud DDL does not need `ON CLUSTER`; Cloud qualification remains separate from
+the local harness. Re-run bootstrap when upgrading a restricted migration user
+to obtain the available cluster and distributed-queue inspection grants.
+
 ### Re-runnable migrations
 
 `up` statically checks pending upgrade statements before Alembic executes any of

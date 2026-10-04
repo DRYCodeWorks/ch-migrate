@@ -125,7 +125,12 @@ class MutationWaiter:
             barrier = max(_order(value) for value in markers)
             baseline = set(receipt["baseline"].get(host, []))
             receipt["ids"][host] = sorted(
-                {row[1] for row in local if row[1] not in baseline and _order(row[1]) <= barrier}
+                markers
+                | {
+                    row[1]
+                    for row in local
+                    if not row[3] and row[1] not in baseline and _order(row[1]) <= barrier
+                }
             )
             checkpoint()
         if not found:

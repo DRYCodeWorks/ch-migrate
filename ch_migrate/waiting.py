@@ -13,12 +13,14 @@ from uuid import uuid4
 from alembic.script import ScriptDirectory
 from clickhouse_connect.driver.exceptions import DatabaseError
 from sqlalchemy import event
+from sqlalchemy.schema import CreateTable
 
 from ch_migrate.classify import classify
 from ch_migrate.hooks import run_hooks
 from ch_migrate.idempotency import classify_idempotency
 from ch_migrate.introspect import ColumnDefinition, Schema, TableDefinition, _parse_order_by
 from ch_migrate.statements import migration_statements
+from ch_migrate.waiting_ddl import DistributedDDLWaiter
 from ch_migrate.waiting_mutations import MutationWaiter
 from ch_migrate.waiting_sql import (
     bind_statement,
@@ -28,6 +30,7 @@ from ch_migrate.waiting_sql import (
     qualified_table,
     query_setting,
     query_settings,
+    remove_query_settings,
     sql_string,
     statement_cluster,
     statement_digest,
@@ -47,6 +50,7 @@ class MigrationWaiter:
         self.budget = WaitBudget(timeout)
         self.journal = WaitingJournal(connection, state, self.budget)
         self.mutations = MutationWaiter(self.client, state, self.budget)
+        self.ddl = DistributedDDLWaiter(self.client, self.budget)
         self.versions = VersionWrites(self)
         self.progress_stream = sys.stderr
         self.revision = None
@@ -137,6 +141,13 @@ class MigrationWaiter:
                 "Read-only inspection: SELECT mutation_id, command, is_done, parts_to_do, latest_fail_reason "
                 f"FROM {source} WHERE database = {sql_string(table[0])} AND table = {sql_string(table[1])};"
             )
+        for name in ("ddl", "work_ddl"):
+            if record.get(name):
+                message += (
+                    "\nRead-only inspection: SELECT entry, host, port, status, exception_code, exception_text "
+                    "FROM system.distributed_ddl_queue WHERE settings['log_comment'] = "
+                    f"{sql_string(record[name]['token'])};"
+                )
         return UnknownOutcome(message)
 
     def steps(self, original, hooks):
@@ -159,6 +170,19 @@ class MigrationWaiter:
                     self.revision = None
 
         return iterate
+
+    def ensure_version_table(self, table) -> None:
+        if not self.state.on_cluster:
+            return
+        scope = "__version_table__"
+        if self.state.table_engine and not self.journal.unfinished_scope(scope):
+            return
+        ddl = str(CreateTable(table, if_not_exists=True).compile(dialect=self.connection.dialect))
+        self._begin(scope, statement_digest(ddl, None))
+        try:
+            self.connection.exec_driver_sql(ddl)
+        finally:
+            self.revision = None
 
     def run_pre_hooks(self, hooks) -> None:
         fingerprint = hashlib.sha256(json.dumps(hooks.pre_migrate).encode()).hexdigest()
@@ -200,7 +224,11 @@ class MigrationWaiter:
                 raise UnknownOutcome(
                     f"Revision {revision} changed with unresolved work; statement not reissued"
                 )
-            if record["phase"] == "accepted" and record["kind"] == "write":
+            if (
+                record["phase"] == "accepted"
+                and record["kind"] == "write"
+                and not record.get("ddl")
+            ):
                 self._complete(key, record)
             if record["phase"] == "done" and record.get("table"):
                 self._completed_targets[tuple(record["table"])] = record.get("after_target")
@@ -240,7 +268,15 @@ class MigrationWaiter:
         key, record, fresh = self.reserve(payload)
         if not fresh and self._resume(key, record):
             return "SELECT 1 WHERE 0", {}
-        target = self.mutations.target(table) if table else None
+        cluster = statement_cluster(sql)
+        if cluster:
+            record["ddl"] = self.ddl.prepare(cluster, record["token"] + "_ddl")
+            record["caller_log_comment"] = query_setting(sql, "log_comment")
+        target = self._target(table, record, allow_missing=True) if table else None
+        if cluster and table and target is None and classify(sql).kind == "mutation":
+            raise WaitingError(
+                f"No reachable mutation target {table} in cluster {cluster}; nothing was submitted"
+            )
         record["before_target"] = target
         kind = self._work_kind(sql, target, sample) if target else None
         if kind:
@@ -255,6 +291,11 @@ class MigrationWaiter:
                 )
             else:
                 statement = mutation_sql(statement, token)
+        if record.get("ddl"):
+            statement, settings = self._ddl_submission(statement, record["ddl"])
+            previous = self._statement_settings(context, settings)
+            if record["caller_log_comment"] is None:
+                record["caller_log_comment"] = previous.get("log_comment")
         self.journal.write(key, record)  # Acknowledged intent MUST precede submission.
         self._pending[id(context)] = (key, record)
         return statement, parameters
@@ -275,7 +316,7 @@ class MigrationWaiter:
         key, record = pending
         record["phase"] = "accepted"
         self.journal.write(key, record)
-        if record["kind"] in ("mutation", "ttl"):
+        if record.get("ddl") or record["kind"] in ("mutation", "ttl"):
             self._wait_work(key, record)
         self._complete(key, record)
 
@@ -291,6 +332,7 @@ class MigrationWaiter:
         if (
             record["kind"] == "write"
             and record["repeat_safe"]
+            and not record.get("ddl")
             and isinstance(context.original_exception, DatabaseError)
             and context.original_exception.code is not None
         ):
@@ -301,8 +343,10 @@ class MigrationWaiter:
         if record["phase"] == "done":
             self._check_completed_target(record)
             return True
-        if record["kind"] == "mutation" or (
-            record["kind"] == "ttl" and record["phase"] == "accepted"
+        if (
+            record.get("ddl")
+            or record["kind"] == "mutation"
+            or (record["kind"] == "ttl" and record["phase"] == "accepted")
         ):
             print(
                 f"Resuming {key.revision} statement {key.position}; not reissuing SQL",
@@ -318,23 +362,83 @@ class MigrationWaiter:
         raise self.unknown_outcome(key, record, error) from error
 
     def _wait_work(self, key: StepKey, record: dict) -> None:
-        if record["kind"] == "ttl" and not record["work_submitted"]:
-            record["work_submitted"] = True
-            self.journal.write(key, record)
+        checkpoint = lambda: self.journal.write(key, record)
+        try:
+            if record.get("ddl"):
+                self.ddl.wait(record["ddl"], checkpoint)
+                record["phase"] = "accepted"
+                checkpoint()
+            if record["kind"] == "ttl":
+                self._materialize_ttl(record, checkpoint)
+            if record["kind"] in ("mutation", "ttl"):
+                self._refresh_distributed_target(record)
+                self.mutations.wait(record["receipt"], checkpoint)
+        except UnknownOutcome as error:
+            raise self.unknown_outcome(key, record, error) from error
+
+    def _materialize_ttl(self, record: dict, checkpoint) -> None:
+        if not record["work_submitted"]:
             cluster = (
                 f" ON CLUSTER {sql_string(record['cluster'])}" if record.get("cluster") else ""
             )
             sql = f"ALTER TABLE {qualified_table(tuple(record['table']))}{cluster} MATERIALIZE TTL"
+            sql = mutation_sql(sql, record["receipt"]["token"])
+            settings = {}
+            if record.get("ddl"):
+                record["work_ddl"] = self.ddl.prepare(record["cluster"], record["token"] + "_ttl")
+                sql, settings = self._ddl_submission(sql, record["work_ddl"])
+            record["work_submitted"] = True
+            checkpoint()
             with self.internal():
-                self.connection.exec_driver_sql(mutation_sql(sql, record["receipt"]["token"]))
-        try:
-            self.mutations.wait(record["receipt"], lambda: self.journal.write(key, record))
-        except UnknownOutcome as error:
-            raise self.unknown_outcome(key, record, error) from error
+                self.connection.exec_driver_sql(sql, execution_options={"settings": settings})
+        if record.get("work_ddl"):
+            self.ddl.wait(record["work_ddl"], checkpoint)
+
+    def _refresh_distributed_target(self, record: dict) -> None:
+        if not record.get("ddl"):
+            return
+        actual = self._target(tuple(record["table"]), record)
+        if actual is None:
+            raise UnknownOutcome("Distributed mutation target disappeared; statement not reissued")
+        receipt = record["receipt"]
+        for host, uuid in receipt["uuids"].items():
+            if actual["uuids"].get(host) != uuid:
+                raise UnknownOutcome(
+                    f"Distributed mutation target was replaced on {host}; statement not reissued"
+                )
+        receipt["uuids"] = actual["uuids"]
+
+    def _target(self, table, record, allow_missing=False):
+        if record.get("ddl"):
+            return self.ddl.tables(table, record["ddl"]["cluster"], allow_missing)
+        return self.mutations.target(table)
+
+    @staticmethod
+    def _ddl_submission(statement: str, receipt: dict) -> tuple[str, dict]:
+        settings = {
+            "distributed_ddl_task_timeout": 0,
+            "distributed_ddl_output_mode": "none",
+            "log_comment": receipt["token"],
+        }
+        return remove_query_settings(statement, set(settings)), settings
+
+    @staticmethod
+    def _statement_settings(context, overrides: dict) -> dict:
+        previous = dict(context.execution_options.get("settings") or {})
+        statement = getattr(context, "invoked_statement", None)
+        if statement is not None:
+            previous.update(statement.get_execution_options().get("settings") or {})
+            context.invoked_statement = statement.execution_options(
+                settings={**previous, **overrides}
+            )
+        context.execution_options = context.execution_options.union(
+            {"settings": {**previous, **overrides}}
+        )
+        return previous
 
     def _complete(self, key: StepKey, record: dict) -> None:
         if record.get("table"):
-            record["after_target"] = self.mutations.target(tuple(record["table"]))
+            record["after_target"] = self._target(tuple(record["table"]), record)
             self._completed_targets[tuple(record["table"])] = record["after_target"]
         record["phase"] = "done"
         self.journal.write(key, record)
@@ -343,7 +447,7 @@ class MigrationWaiter:
         if not record.get("table"):
             return
         expected = self._completed_targets.get(tuple(record["table"]), record.get("after_target"))
-        actual = self.mutations.target(tuple(record["table"]))
+        actual = self._target(tuple(record["table"]), record)
         if (
             (expected is None) != (actual is None)
             or expected is not None
@@ -366,7 +470,11 @@ class MigrationWaiter:
             columns=[ColumnDefinition(*row) for row in rows],
             order_by=_parse_order_by(target["sorting_key"]) if target["sorting_key"] else [],
         )
-        schema = Schema(database=target["database"], tables={target["table"]: table})
+        schema = (
+            None
+            if target.get("ddl_scope")
+            else Schema(database=target["database"], tables={target["table"]: table})
+        )
         ttl = modifies_ttl(sql)
         materialize = self._materializes_ttl(sql, parameters) if ttl else False
         analyzed = (

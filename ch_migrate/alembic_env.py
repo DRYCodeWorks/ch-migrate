@@ -158,6 +158,7 @@ def _run_context(waiter: MigrationWaiter, hooks: HookRegistry) -> None:
     runtime._migrations_fn = waiter.steps(runtime._migrations_fn, hooks)
     with context.begin_transaction():
         if _is_upgrade():
+            waiter.ensure_version_table(runtime._version)
             waiter.versions.resume()
             waiter.run_pre_hooks(hooks)
         else:

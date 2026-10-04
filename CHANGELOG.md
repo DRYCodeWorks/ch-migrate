@@ -14,6 +14,7 @@ Changes are recorded in [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 
 - Default mutation waiting with durable ownership, per-replica completion, same-session progress, an optional invocation timeout, and fail-closed unknown-outcome recovery. Upgrades now run in the owning CLI process.
 - Resumable insert-first version bookkeeping and fresh waiting-journal generations after downgrade, without replaying completed revision writes.
+- Owned `ON CLUSTER` queue waiting, per-host failure/timeout diagnostics, and acknowledgement-loss recovery without re-enqueueing DDL. Mutation-producing DDL must finish both its queue and mutation barriers.
 - Versioned `--json` output and published JSON Schemas for status, history, lint, and diff, with machine-readable errors, graph-resolved applied revisions, explicit waiver reasons, and CI-friendly exit codes.
 - Server-backed statement classification with live type comparisons and a 50-statement corpus. Every corpus ALTER is checked against real mutation records or the server's in-place-change rejection.
 - A SHA-pinned GitHub Actions drift gate that preserves the JSON report on failure; its install, credential, comparison, and exit steps run against the integration fixture for both matching and out-of-band schemas.
