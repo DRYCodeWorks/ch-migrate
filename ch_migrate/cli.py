@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import os
 import re
 import shutil
@@ -265,12 +266,18 @@ def bootstrap(environment: str, dry_run: bool, verbose: bool) -> None:
 @click.argument("environment")
 @click.option("--revision", "-r", default="head", help="Revision to upgrade to (default: head)")
 @click.option(
+    "--timeout",
+    type=click.FloatRange(min=0, min_open=True),
+    default=None,
+    help="Maximum total waiting seconds; default waits without a deadline",
+)
+@click.option(
     "--skip-mv-check",
     is_flag=True,
     help="Skip materialized view declaration validation",
 )
 @click.option("--verbose", is_flag=True, help="Show the full traceback if a migration fails")
-def up(environment: str, revision: str, skip_mv_check: bool, verbose: bool) -> None:
+def up(environment: str, revision: str, skip_mv_check: bool, timeout: float | None, verbose: bool) -> None:
     """Apply pending migrations.
 
     Runs all unapplied migrations to bring the database to the latest version.
@@ -279,9 +286,18 @@ def up(environment: str, revision: str, skip_mv_check: bool, verbose: bool) -> N
     Idempotency and standalone-SET gate errors refuse the run before Alembic.
     Other findings are warnings; --skip-mv-check only skips MV declaration checks.
     """
+    if timeout is not None and not math.isfinite(timeout):
+        raise click.BadParameter("must be finite", param_hint="--timeout")
     _require_current_env()
     _enforce_up_gate(environment, skip_mv_check)
-    sys.exit(run_migrations(environment, ["upgrade", revision], verbose=verbose))
+    from ch_migrate.migration_runner import run_upgrade
+
+    try:
+        run_upgrade(environment, revision, timeout)
+    except Exception as error:
+        if verbose:
+            raise
+        raise click.ClickException(str(error)) from error
 
 
 @main.command()

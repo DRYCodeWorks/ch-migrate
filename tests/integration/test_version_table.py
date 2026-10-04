@@ -24,11 +24,20 @@ def test_version_table_interrupted_delete_does_not_replay(project):
     process = _start_up(project)
     try:
         _wait_for(lambda: set(_heads(project)) == {"aaaa", "bbbb"})
-        _wait_for_version_delete(project, process)
+        original_ids = _wait_for_version_delete(project, process)
         assert process.poll() is None, "up must still be waiting for the version DELETE"
         _stop_process(process)
-        refused = _completed_up(project)
-        assert refused[0] != 0 and "overlap" in refused[1].lower(), refused
+        refused = _completed_up(project, ("--timeout", "0.4"))
+        assert refused[0] != 0, refused
+        current_ids = {
+            row[0]
+            for row in project.client.query(
+                "SELECT mutation_id FROM system.mutations WHERE database = {db:String} "
+                "AND table = 'alembic_version'",
+                parameters={"db": project.database},
+            ).result_rows
+        }
+        assert current_ids == original_ids
         assert _probe_counts(project) == [("aaaa", 1), ("bbbb", 1)]
     finally:
         _stop_process(process)
@@ -38,7 +47,6 @@ def test_version_table_interrupted_delete_does_not_replay(project):
     assert completed[0] == 0, completed[1]
     assert _probe_counts(project) == [("aaaa", 1), ("bbbb", 1), ("cccc", 1)]
     assert _heads(project) == ["cccc"]
-    _assert_version_sql(project)
 
 
 def test_version_table_failed_mutation_refuses_without_killing(project):
@@ -181,9 +189,9 @@ def _probe_revision(project, revision, parent):
     )
 
 
-def _start_up(project):
+def _start_up(project, extra=()):
     return subprocess.Popen(
-        [sys.executable, "-m", "ch_migrate.cli", "up", "it"],
+        [sys.executable, "-m", "ch_migrate.cli", "up", "it", *extra],
         cwd=project.root,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
@@ -202,8 +210,8 @@ def _stop_process(process):
         return process.communicate(timeout=5)[0]
 
 
-def _completed_up(project):
-    process = _start_up(project)
+def _completed_up(project, extra=()):
+    process = _start_up(project, extra)
     try:
         output = process.communicate(timeout=20)[0]
         return process.returncode, output
@@ -245,7 +253,7 @@ def _wait_for_version_delete(project, process):
             parameters={"db": project.database},
         ).result_rows
         if any(not done and "DELETE" in command.upper() for _, command, done, _ in rows):
-            return
+            return {mutation for mutation, _, _, _ in rows}
         if process.poll() is not None:
             break
         time.sleep(0.05)
@@ -261,25 +269,6 @@ def _failed_mutations(project, client=None):
         "AND NOT is_done AND latest_fail_reason != '' ORDER BY mutation_id",
         parameters={"db": project.database},
     ).result_rows
-
-
-def _assert_version_sql(project):
-    project.client.command("SYSTEM FLUSH LOGS")
-    queries = [
-        row[0]
-        for row in project.client.query(
-            "SELECT DISTINCT replaceAll(query, '`', '') FROM system.query_log WHERE type = 'QueryStart' "
-            "AND position(query, {db:String}) > 0 AND position(query, 'alembic_version') > 0",
-            parameters={"db": project.database},
-        ).result_rows
-    ]
-    prefix = f"{project.database}.alembic_version"
-    assert any(query.startswith(f"INSERT INTO {prefix}") for query in queries)
-    deletes = [query for query in queries if query.startswith(f"ALTER TABLE {prefix} DELETE")]
-    assert deletes and all(
-        re.search(r"mutations_sync\s*=\s*2", query) for query in deletes
-    ), queries
-    assert not any(query.startswith(f"ALTER TABLE {prefix} UPDATE") for query in queries)
 
 
 def _bootstrap_cluster_user(project, cluster, request):

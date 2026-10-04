@@ -31,16 +31,7 @@ class VersionTableState:
         return self.cluster or (self.database if self.database_engine == "Replicated" else None)
 
     def new_engine(self):
-        if self.database_engine.startswith("Shared"):
-            return MergeTree(order_by="version_num")
-        if self.database_engine == "Replicated":
-            return ReplicatedMergeTree(order_by="version_num")
-        if self.cluster:
-            path = (
-                f"/clickhouse/ch_migrate/{quote(self.database, safe='')}/{{shard}}/alembic_version"
-            )
-            return ReplicatedMergeTree(order_by="version_num", zk_path=path, replica="{replica}")
-        return MergeTree(order_by="version_num")
+        return migration_state_engine(self, "alembic_version", "version_num")
 
     def warning(self) -> str | None:
         replicated = self.database_engine == "Replicated" or bool(self.cluster)
@@ -71,6 +62,18 @@ class VersionTableDDLCompiler(ChDDLCompiler):
 
 class VersionTableMutationError(RuntimeError):
     """An unfinished version-table mutation has a server-reported failure."""
+
+
+def migration_state_engine(state: VersionTableState, table: str, order_by: str):
+    """Apply one deployment policy to version state and durable migration journals."""
+    if state.database_engine.startswith("Shared"):
+        return MergeTree(order_by=order_by)
+    if state.database_engine == "Replicated":
+        return ReplicatedMergeTree(order_by=order_by)
+    if state.cluster:
+        path = f"/clickhouse/ch_migrate/{quote(state.database, safe='')}/{{shard}}/{table}"
+        return ReplicatedMergeTree(order_by=order_by, zk_path=path, replica="{replica}")
+    return MergeTree(order_by=order_by)
 
 
 def inspect_version_table(client, database: str, cluster: str | None = None) -> VersionTableState:
@@ -117,8 +120,12 @@ def assert_version_mutations_healthy(client, state: VersionTableState) -> None:
         settings=settings,
     ).result_rows
     if failed:
+        from ch_migrate.waiting_sql import sql_string
+
         host, mutation, reason = failed[0]
         raise VersionTableMutationError(
             f"Version-table mutation {mutation} on {host} failed: {reason}. "
-            "Resolve the failed mutation manually before retrying; ch-migrate did not kill it."
+            "ch-migrate did not kill it.\n"
+            f"Operator only on {host}: KILL MUTATION WHERE database = {sql_string(state.database)} "
+            f"AND table = 'alembic_version' AND mutation_id = {sql_string(mutation)}"
         )

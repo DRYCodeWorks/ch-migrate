@@ -170,13 +170,14 @@ New `alembic_version` tables use `ORDER BY version_num`. The runtime inspects
 | Atomic database with `cluster` configured | `ReplicatedMergeTree` created `ON CLUSTER`, with a Keeper path containing the database name and shard macro |
 | Single server | `MergeTree` |
 
-The official Alembic implementation advances a version by **inserting the new
-row, then deleting the old row with `mutations_sync = 2`**. It does not issue an
-asynchronous version UPDATE. If the process stops while the delete is pending,
-both rows remain and Alembic refuses their overlapping history rather than
-repeating the migration. Let the version mutation finish, then retry. A
-server-reported failed version mutation stops the run with its reason; ch-migrate
-never kills that mutation.
+Version advancement remains **insert the new row, then delete the old row**;
+there is no asynchronous version UPDATE. Online `up` journals that bookkeeping
+and polls its owned DELETE rather than holding an HTTP request open with
+`mutations_sync`. If interrupted, both rows can remain. A subsequent `up`
+finishes the proven bookkeeping without running the revision again. Overlapping
+heads without an owned journal receipt are still refused. Failed version
+mutations report their reason and an operator-only KILL statement; ch-migrate
+never kills them itself.
 
 Before reading replicated heads, the tool catches up replicated database
 metadata and inserted version parts. The table barrier uses
@@ -223,6 +224,80 @@ Offline SQL cannot inspect a live database engine: it uses configured `cluster`
 information or the single-server/Cloud default for version-table DDL. Review
 that DDL before using it for a self-hosted Replicated database. Cloud qualification
 is separate from the local suite; the local replicated harness has one shard.
+
+### Migrations that wait
+
+`up` waits for the mutations its statements create before completing a revision.
+It uses the same checked ClickHouse session for submission and polling, so prior
+`SET` statements stay effective. `op.execute`, raw `op.get_bind()` execution, and
+`run_sql` all pass through the cursor boundary. Upgrades run in the CLI process:
+killing that process cannot leave a child Alembic runner advancing revisions.
+
+```bash
+ch-migrate up dev                 # No default waiting timeout
+ch-migrate up dev --timeout 120   # One waiting budget across the invocation
+```
+
+Progress names the table, mutation ID, host, remaining parts and elapsed time.
+A terminal uses a live line; CI gets plain state changes and periodic summaries
+on stderr. Zero remaining parts alone does not count as completion: every
+required replica must report its owned mutation finished. Configure `cluster`
+for self-hosted replicated tables, or use a Replicated database's automatic
+cluster. Missing replicas or missing evidence are never treated as success.
+
+An active foreign mutation ahead of ours is reported and waited before more work
+is submitted. A failed predecessor stops the run. Foreign work queued after our
+completion barrier is not claimed as ours and does not hold our revision open.
+
+Ownership is persisted in `_ch_migrate_journal` **before** SQL submission. The
+journal follows the version table's deployment policy and uses the same session.
+It records revision/statement identities, table UUIDs and progress receipts.
+Run only one migration runner per database, using a CI concurrency key or an
+external lock: this journal is not a distributed lock. Do not delete or restore
+it independently of the database state it describes.
+
+After a timeout, dropped connection or killed process, ClickHouse may still be
+working. Run the same `up` again: it skips proven completed statements and
+reattaches to its known unfinished mutation instead of issuing it again.
+Successful downgrade starts a fresh journal generation so a later upgrade
+actually executes. A changed unresolved statement or replaced table is refused.
+An explicitly rejected repeat-safe metadata statement can be repaired and retried;
+transport errors do not establish rejection.
+
+**Unknown outcome:** if ownership/completion evidence is missing or expired,
+`up` exits nonzero, does not reissue the statement and does not complete the
+migration. The error names the journal key, token and recorded UUIDs and provides
+read-only inspection queries. Operator recovery is deliberately not a retry flag:
+
+1. Stop migration runners and quiesce other writers as needed. Back up the
+   affected journal key and relevant data before making changes.
+2. Establish whether the original statement took effect using independent data,
+   schema and server evidence on every required replica. An absent mutation row
+   is not proof either way.
+3. Reconcile that **specific** statement and journal key in a reviewed manual
+   operation. For a proven applied operation, its completed receipt must carry
+   the actual post-operation UUID map (`after_target.uuids`, or null for a dropped
+   target). For a proven unapplied operation, remove only that key's attempt
+   records after restoring any partial effects, and wait for that journal
+   change on every replica. Preserve the other completed statement receipts.
+4. Recheck the recorded heads and rerun `up`. Never blindly stamp the revision,
+   delete the whole journal, or replay a non-idempotent statement to guess its
+   outcome.
+
+**Failed mutation:** `latest_fail_reason` stops the run and prints a scoped
+`KILL MUTATION` statement for the operator. The tool does not execute it. Fix the
+cause and reattach, or review a cancellation and reconcile its effects; killing
+a mutation is not proof that it completed.
+
+`MODIFY TTL` has a separate metadata/materialization boundary: when materialization
+is enabled, the runtime journals the metadata change with automatic materialization
+disabled, then submits a separately owned `MATERIALIZE TTL`. This avoids confusing
+TTL's comma-separated rules with ALTER actions. Session and per-query
+`materialize_ttl_after_modify = 0` are honored. Parameter batches are executed
+sequentially through the same single-statement path, with a receipt and completion
+barrier for each parameter set; intermediate TTL effects are not collapsed.
+Lightweight DELETE keeps its row-mask semantics; lightweight UPDATE is synchronous
+patch work, not a fabricated `system.mutations` record.
 
 ### Re-runnable migrations
 
@@ -453,7 +528,7 @@ Example: `ch-migrate new dev add_status --table logs`
 
 ### `up`
 
-`ch-migrate up ENV [-r REV] [--skip-mv-check] [--verbose]` applies migrations to `head` by default after the idempotency gate passes, printing one line per migration. `-r/--revision` selects a target. `--skip-mv-check` skips nonblocking materialized-view declaration checks, not the idempotency gate; use it only after reviewing those findings. If a migration fails, `up` names it, the SQL file, the statement and its line, and ClickHouse's error; `--verbose` adds the Python traceback.
+`ch-migrate up ENV [-r REV] [--timeout SECONDS] [--skip-mv-check] [--verbose]` applies migrations to `head` by default after the idempotency gate passes, printing one line per migration. `-r/--revision` selects a target. `--timeout` is a finite positive waiting limit; omitting it waits without a deadline. `--skip-mv-check` skips nonblocking materialized-view declaration checks, not the idempotency gate; use it only after reviewing those findings. If a migration fails, `up` names it, the SQL file, the statement and its line, and ClickHouse's error; `--verbose` adds the Python traceback.
 
 Example: `ch-migrate up dev --revision abc123`
 
@@ -604,7 +679,13 @@ The legacy `CH_<ENV>_PASSWORD` remains supported. Never commit credentials or pa
 
 ### Hooks
 
-Top-level hooks run SQL on the migration connection. `pre_migrate` runs before the migration batch; `post_migrate` runs after each revision. `{db}` is substituted. Hooks execute as SQLAlchemy text, not through the SQL-file splitter; supply one statement per entry. Hook SQL is logged, so do not put secrets in it.
+Top-level hooks run SQL on the migration connection. `pre_migrate` runs before the
+migration batch; `post_migrate` runs after each revision body **before its version
+is completed**, so hook mutations cannot escape the waiting barrier. A resumed
+upgrade reuses its unfinished batch's receipts instead of repeating completed
+hook writes. `{db}` is substituted. Hooks execute as SQLAlchemy text, not through
+the SQL-file splitter; supply one statement per entry. Hook SQL is logged, so do
+not put secrets in it.
 
 ```yaml
 hooks:

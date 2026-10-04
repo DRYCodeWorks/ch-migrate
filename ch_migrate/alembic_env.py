@@ -13,6 +13,7 @@ from alembic import context
 from clickhouse_connect.cc_sqlalchemy.alembic.impl import ClickHouseImpl
 from dotenv import load_dotenv
 from sqlalchemy import URL, Column, MetaData, String, Table, create_engine, pool
+from sqlalchemy.sql.dml import Delete, Insert, Update
 
 from ch_migrate.config import get_env_config
 from ch_migrate.hooks import HookRegistry, run_hooks
@@ -24,6 +25,7 @@ from ch_migrate.version_table import (
     inspect_version_table,
     sync_version_replica,
 )
+from ch_migrate.waiting import MigrationWaiter
 
 ENV_VERSION = 2
 DEFAULT_SESSION_TIMEOUT = 1800
@@ -53,19 +55,37 @@ class ChMigrateImpl(ClickHouseImpl):
             info={"ch_migrate_on_cluster": state.on_cluster},
         )
 
+    def _exec(self, construct, execution_options=None, multiparams=None, params=None):
+        # The official implementation owns these SQLAlchemy version constructs;
+        # all user SQL, including raw bind execution, is covered by cursor events.
+        waiter = self.context_opts.get("ch_migrate_waiter")
+        if (
+            waiter is not None
+            and waiter.revision is not None
+            and isinstance(construct, (Insert, Update, Delete))
+            and self._is_version_table_construct(construct)
+        ):
+            return waiter.versions.execute(construct, self)
+        return super()._exec(
+            construct, execution_options=execution_options, multiparams=multiparams, params=params
+        )
+
 
 def run() -> None:
     """Run the selected environment on one official-dialect session."""
     root = Path.cwd()
     load_dotenv(root / ".env.local")
-    env_config = get_env_config(os.environ.get("CH_ENVIRONMENT", "dev"), root / "config.yaml")
+    environment = context.config.attributes.get(
+        "ch_migrate_environment", os.environ.get("CH_ENVIRONMENT", "dev")
+    )
+    env_config = get_env_config(environment, root / "config.yaml")
     os.environ["CH_DATABASE"] = env_config["database"]
     if env_config.get("cluster"):
         os.environ["CH_CLUSTER"] = env_config["cluster"]
     else:
         os.environ.pop("CH_CLUSTER", None)
     if context.config.config_file_name is not None:
-        fileConfig(context.config.config_file_name)
+        fileConfig(context.config.config_file_name, disable_existing_loggers=False)
     if context.is_offline_mode():
         _run_offline(env_config)
     else:
@@ -99,35 +119,57 @@ def _run_offline(env_config: dict[str, Any]) -> None:
 
 def _run_online(env_config: dict[str, Any]) -> None:
     engine = create_engine(_url(env_config), poolclass=pool.NullPool)
-    hooks = HookRegistry.from_config(env_config.get("hooks"))
-    database = env_config["database"]
     try:
         with engine.connect() as connection:
-            # Establish the session before requiring its existence on every later request.
-            connection.exec_driver_sql("SELECT 1")
-            client = connection.connection.dbapi_connection.client
-            client.set_client_setting("session_check", 1)
-            state = inspect_version_table(client, database, env_config.get("cluster"))
-            assert_version_mutations_healthy(client, state)
-            state = sync_version_replica(client, state)
-            if warning := state.warning():
-                logger.warning(warning)
-            connection.dialect.ddl_compiler = VersionTableDDLCompiler
-            context.configure(
-                connection=connection,
-                target_metadata=None,
-                version_table="alembic_version",
-                version_table_schema=database,
-                on_version_apply=_post_migrate(hooks, database),
-                ch_migrate_version_state=state,
-            )
-            with context.begin_transaction():
-                run_hooks(
-                    connection, hooks.pre_migrate, db=database, phase="pre_migrate", revision="all"
-                )
-                context.run_migrations()
+            _run_connection(connection, env_config)
     finally:
         engine.dispose()
+
+
+def _run_connection(connection, env_config: dict[str, Any]) -> None:
+    # The checked session and listener registration share this failure boundary.
+    connection.exec_driver_sql("SELECT 1")
+    client = connection.connection.dbapi_connection.client
+    client.set_client_setting("session_check", 1)
+    state = inspect_version_table(client, env_config["database"], env_config.get("cluster"))
+    assert_version_mutations_healthy(client, state)
+    state = sync_version_replica(client, state)
+    if warning := state.warning():
+        logger.warning(warning)
+    connection.dialect.ddl_compiler = VersionTableDDLCompiler
+    waiter = MigrationWaiter(connection, state, context.config.attributes.get("ch_migrate_timeout"))
+    try:
+        waiter.install(context.config)
+        context.configure(
+            connection=connection,
+            target_metadata=None,
+            version_table="alembic_version",
+            version_table_schema=state.database,
+            ch_migrate_waiter=waiter,
+            ch_migrate_version_state=state,
+        )
+        _run_context(waiter, HookRegistry.from_config(env_config.get("hooks")))
+    finally:
+        waiter.close()
+
+
+def _run_context(waiter: MigrationWaiter, hooks: HookRegistry) -> None:
+    runtime = context.get_context()
+    runtime._migrations_fn = waiter.steps(runtime._migrations_fn, hooks)
+    with context.begin_transaction():
+        if _is_upgrade():
+            waiter.versions.resume()
+            waiter.run_pre_hooks(hooks)
+        else:
+            run_hooks(
+                waiter.connection,
+                hooks.pre_migrate,
+                db=waiter.state.database,
+                phase="pre_migrate",
+                revision="all",
+            )
+        context.run_migrations()
+        waiter.finish_run()
 
 
 def _url(env_config: dict[str, Any]) -> URL:
@@ -146,19 +188,9 @@ def _url(env_config: dict[str, Any]) -> URL:
     )
 
 
-def _post_migrate(hooks: HookRegistry, database: str):
-    def after_revision(ctx, step, heads, run_args):
-        revision = (
-            step.up_revision
-            if step.is_upgrade
-            else (step.down_revisions[0] if step.down_revisions else "unknown")
-        )
-        run_hooks(
-            ctx.connection,
-            hooks.post_migrate,
-            db=database,
-            phase="post_migrate",
-            revision=revision,
-        )
-
-    return after_revision
+def _is_upgrade() -> bool:
+    explicit = context.config.attributes.get("ch_migrate_command")
+    if explicit is not None:
+        return explicit == "upgrade"
+    command = getattr(context.config.cmd_opts, "cmd", None)
+    return bool(command and command[0].__name__ == "upgrade")
