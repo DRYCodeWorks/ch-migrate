@@ -122,6 +122,12 @@ class WaitingJournal:
         )
         self._sequences[key] = sequence
 
+    def unfinished_scope(self, revision: str) -> bool:
+        if not self.exists():
+            return False
+        generation = self._generation(revision)
+        return any(record["phase"] != "done" for _, record in self.records(revision, generation))
+
     def unfinished_versions(self) -> list[tuple[StepKey, dict]]:
         if not self.exists():
             return []

@@ -131,6 +131,14 @@ def query_settings(statement: str, overrides: dict[str, str]) -> str:
     return _with_settings(body, settings, overrides)
 
 
+def remove_query_settings(statement: str, names: set[str]) -> str:
+    body, settings = _query_parts(statement)
+    retained = [
+        item for item in settings if _identifier(item.split("=", 1)[0].strip()).lower() not in names
+    ]
+    return body + (" SETTINGS " + ", ".join(retained) if retained else "")
+
+
 def query_setting(statement: str, name: str) -> str | None:
     _, settings = _query_parts(statement)
     for setting in reversed(settings):
