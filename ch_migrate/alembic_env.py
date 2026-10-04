@@ -15,6 +15,7 @@ from dotenv import load_dotenv
 from sqlalchemy import URL, Column, MetaData, String, Table, create_engine, pool
 from sqlalchemy.sql.dml import Delete, Insert, Update
 
+import ch_migrate.rebuild  # Registers the guarded online-rebuild operation.
 from ch_migrate.config import get_env_config
 from ch_migrate.hooks import HookRegistry, run_hooks
 from ch_migrate.rebase import _literal_assignment
@@ -147,6 +148,7 @@ def _run_connection(connection, env_config: dict[str, Any]) -> None:
             version_table_schema=state.database,
             ch_migrate_waiter=waiter,
             ch_migrate_version_state=state,
+            ch_migrate_env_config=env_config,
         )
         _run_context(waiter, HookRegistry.from_config(env_config.get("hooks")))
     finally:

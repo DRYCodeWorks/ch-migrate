@@ -22,6 +22,15 @@ class MigrationStatement:
     line: int
     comments: tuple[str, ...]
     direction: MigrationDirection
+    rebuild: RebuildCall | None = None
+
+
+@dataclass(frozen=True)
+class RebuildCall:
+    table: str
+    create_sql_path: str
+    select: str | None = None
+    allow_unacknowledged_async_loss: bool = False
 
 
 def migration_statements(path: Path) -> list[MigrationStatement]:
@@ -47,6 +56,8 @@ def migration_statements(path: Path) -> list[MigrationStatement]:
                 result.extend(_file_statements(call, source, direction))
             elif _call_name(call) == "op.execute":
                 result.extend(_inline_statements(call, source, direction))
+            elif _call_name(call).split(".")[-1] == "rebuild_table":
+                result.extend(_rebuild_statements(call, source, direction))
     return result
 
 
@@ -112,6 +123,49 @@ def _inline_statements(
         attached = comments + item.comments if index == 0 else item.comments
         result.append(MigrationStatement(item.sql, filename, call.lineno, attached, direction))
     return result
+
+
+def _rebuild_statements(
+    call: ast.Call, source: _Source, direction: MigrationDirection
+) -> list[MigrationStatement]:
+    arguments = dict(zip(("table", "create_sql_path"), call.args))
+    arguments.update({item.arg: item.value for item in call.keywords})
+    values = {}
+    for name in ("table", "create_sql_path", "select", "allow_unacknowledged_async_loss"):
+        value = arguments.get(name)
+        if value is None:
+            continue
+        try:
+            values[name] = ast.literal_eval(value)
+        except (ValueError, TypeError):
+            if name == "table" and (literal := _literal_sql(value, source.content)) is not None:
+                values[name] = literal
+            else:
+                raise ValueError(
+                    f"{source.path}:{call.lineno}: rebuild {name} must be statically readable"
+                )
+    if not all(isinstance(values.get(name), str) for name in ("table", "create_sql_path")):
+        raise ValueError(
+            f"{source.path}:{call.lineno}: rebuild requires literal table and SQL path"
+        )
+    if not isinstance(values.get("allow_unacknowledged_async_loss", False), bool):
+        raise ValueError("rebuild async-loss opt-in must be an explicit boolean")
+    rebuild = RebuildCall(**values)
+    sql_path = source.path.parent.parent / "sql" / rebuild.create_sql_path
+    statements = split_statements(sql_path.read_text())
+    if len(statements) != 1:
+        raise ValueError(f"{sql_path}: rebuild requires exactly one replacement CREATE TABLE")
+    statement = statements[0]
+    return [
+        MigrationStatement(
+            statement.sql,
+            sql_path.relative_to(source.root).as_posix(),
+            statement.line,
+            statement.comments,
+            direction,
+            rebuild,
+        )
+    ]
 
 
 def _literal_sql(node: ast.AST, content: str) -> str | None:

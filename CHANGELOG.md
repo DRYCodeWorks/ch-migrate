@@ -13,6 +13,8 @@ Changes are recorded in [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 
 ### Added
 
+- Guarded online `rebuild_table`: same-database snapshot/staging helpers, durable partition checkpoints, all-replica swap barriers, a retained rollback table, and UUID-attributed async rejection reporting.
+- Non-takeover rebuild locks with independent heartbeats. Interrupted owners require explicit operator reconciliation and release before checkpoint resume; heartbeat expiry never authorizes a competing runner.
 - Read-only `plan ENV [--json]`: ordered pending statements, classifications, exact available column bytes versus whole-part ceilings, dependencies, lint gate status, shared rebuild preflight, and a versioned JSON schema.
 - Rebuild preflight checks replicas, physical-transfer definitions, writer profiles and rotated logs; reports per-host capacity and mutation hazards; and requires explicit acknowledgement of unacknowledged async-write loss.
 - Default mutation waiting with durable ownership, per-replica completion, same-session progress, an optional invocation timeout, and fail-closed unknown-outcome recovery. Upgrades now run in the owning CLI process.

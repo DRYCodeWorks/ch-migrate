@@ -258,13 +258,19 @@ and 0 duplicated preload rows.
 **A per-table lock is required.** The first prototype run killed only the `uv` wrapper. Two
 rebuilds of the same table then ran at once and left the tables in a bad state.
 
-Proposal (untested):
-- `CREATE TABLE <db>._chm_rebuild_lock_<t> (owner String, heartbeat DateTime)` acts as the mutex,
-  because CREATE fails if the table already exists.
-- The holder updates its heartbeat.
-- A newcomer takes over only after the heartbeat expires, and only after running the KILL step
-  for the stale owner's query_ids.
-- The lock is released with DROP.
+**Amended decision (Dan, 2026-10-04):**
+- `CREATE TABLE <db>._chm_rebuild_lock_<t>` remains the atomic acquisition operation,
+  with an owner and diagnostic heartbeat. The holder releases its own lock with DROP.
+- An existing lock always refuses a newcomer. Heartbeat expiry is not permission
+  to take over: a paused predecessor can still submit a late `EXCHANGE`.
+- An owned-container counterexample took live rows `[1, 2]` back to `[1]` after the
+  stale predecessor's exchange, while the lock still belonged to the successor.
+- The operator must establish that the previous runner cannot resume, reconcile
+  its in-flight work, and explicitly release the lock. Only then may another runner
+  acquire ownership and resume the recorded checkpoints, using the KILL-before-stage-reset
+  procedure above. There is no automatic takeover or CLI bypass.
+- This amendment changes expired-owner recovery, not normal mutation reattachment
+  or the no-acknowledged-row-loss guarantee.
 
 ## Other changes to the mechanism
 

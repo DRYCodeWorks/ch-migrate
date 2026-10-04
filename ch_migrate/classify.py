@@ -32,6 +32,8 @@ def classify(
     list of SQL verbs. With no live type to compare, MODIFY COLUMN is conservatively
     a mutation *if the type changes*. Unsupported actions remain explicitly other.
     """
+    if isinstance(statement, MigrationStatement) and statement.rebuild is not None:
+        return Classification("rebuild", statement.rebuild.table, "Guarded online table rebuild")
     tokens = _tokens(statement if isinstance(statement, str) else statement.sql)
     if not tokens:
         return Classification("other", None, "No SQL statement")

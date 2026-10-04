@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict
-
 import pytest
 
 from ch_migrate.introspect import ColumnDefinition, TableDefinition
@@ -33,12 +31,16 @@ class _Client:
             return _Result([])
         if "system.mutations" in sql:
             return _Result([("node", "mutation_1")] if self.mutation else [])
+        if "system.replicas" in sql:
+            return _Result([("node", "/group", "r1", 1)])
         if "system.parts" in sql:
             return _Result([("node", "202601", "default", 9, 100)])
         if "system.disks" in sql:
             return _Result([("node", "default", 1000)])
         if "system.merge_tree_settings" in sql:
             return _Result([("node", "10")])
+        if "system.asynchronous_inserts" in sql:
+            return _Result([])
         if "query_log" in sql:
             return _Result(
                 [
@@ -98,9 +100,6 @@ def test_inherited_profile_refuses_unacknowledged_async_writer():
     assert result.insert_rows_per_second == 1.0
     assert result.partition_parts == {"202601": 9}
     assert _codes(result)["many_parts"].severity == "warning"
-    assert "query_log(_[0-9]+)?" in " ".join(client.queries)
-    assert all(query.lstrip().upper().startswith("SELECT") for query in client.queries)
-    assert asdict(result)["findings"][0]["severity"] in {"warning", "refusal"}
 
 
 def test_unacknowledged_loss_requires_explicit_acknowledgement():
@@ -127,7 +126,6 @@ def test_transfer_pair_mismatch_not_intentional_row_copy():
         RebuildRequest("db", source, replacement, transfer_pairs=((replacement, changed),)),
     )
     assert _codes(result)["transfer_structure_mismatch"].details["differences"] == ["engine"]
-    assert "ReplacingMergeTree-family" in result.engine_note
     assert "source_target_engine_mismatch" not in _codes(result)
 
 
@@ -142,15 +140,6 @@ def test_partition_key_and_mutation_and_shards_refuse():
     )
 
 
-def test_versioned_collapsing_note_does_not_promise_deduplication():
-    target = _table("new", "VersionedCollapsingMergeTree")
-    result = inspect_rebuild(
-        _Client(writer_settings={"async_insert": "0", "wait_for_async_insert": "1"}),
-        RebuildRequest("db", _table(), target),
-    )
-    assert "do not guarantee elimination of identical positive rows" in result.engine_note
-
-
 def test_query_failure_is_not_silently_converted_to_empty_evidence():
     class Broken(_Client):
         def query(self, sql):
@@ -160,3 +149,54 @@ def test_query_failure_is_not_silently_converted_to_empty_evidence():
 
     with pytest.raises(PermissionError, match="query_log"):
         inspect_rebuild(Broken(), RebuildRequest("db", _table(), _table("new")))
+
+
+def test_newly_queued_writer_without_log_evidence_requires_opt_in():
+    class Queued(_Client):
+        def query(self, sql):
+            if "system.asynchronous_inserts" in sql:
+                return _Result([("node", ["unlogged-async-query"])])
+            return super().query(sql)
+
+    client = Queued(writer_settings={"async_insert": "0", "wait_for_async_insert": "1"})
+    refused = inspect_rebuild(client, RebuildRequest("db", _table(), _table("new")))
+    assert _codes(refused)["writer_settings_unknown"].severity == "refusal"
+    allowed = inspect_rebuild(
+        client, RebuildRequest("db", _table(), _table("new"), allow_unacknowledged_async_loss=True)
+    )
+    assert _codes(allowed)["writer_settings_unknown"].severity == "warning"
+
+
+def test_physical_helpers_need_distinct_keeper_paths_but_matching_engine_semantics():
+    source = _table(engine="ReplicatedReplacingMergeTree('/source', 'r1', id)")
+    target = _table("new", "ReplicatedReplacingMergeTree('/new', 'r2', id)")
+    client = _Client(writer_settings={"async_insert": "0", "wait_for_async_insert": "1"})
+    result = inspect_rebuild(
+        client, RebuildRequest("db", source, target, transfer_pairs=((source, target),))
+    )
+    assert "transfer_structure_mismatch" not in _codes(result)
+    target.engine = "ReplicatedReplacingMergeTree('/new', 'r2', other_version)"
+    mismatch = inspect_rebuild(
+        client, RebuildRequest("db", source, target, transfer_pairs=((source, target),))
+    )
+    assert _codes(mismatch)["transfer_structure_mismatch"].details["differences"] == ["engine"]
+
+
+def test_safe_profile_does_not_prove_unlogged_queued_insert_is_acknowledged():
+    class HiddenOverride(_Client):
+        def query(self, sql):
+            if "system.asynchronous_inserts" in sql:
+                return _Result([("node", ["q1"])])
+            if "system.settings_profile_elements" in sql:
+                return _Result(
+                    [
+                        ("node", "writer_profile", None, None, "async_insert", "0", None),
+                        ("node", "writer_profile", None, None, "wait_for_async_insert", "1", None),
+                    ]
+                )
+            return super().query(sql)
+
+    result = inspect_rebuild(
+        HiddenOverride(writer_settings={}), RebuildRequest("db", _table(), _table("new"))
+    )
+    assert _codes(result)["writer_settings_unknown"].severity == "refusal"

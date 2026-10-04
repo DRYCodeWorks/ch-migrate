@@ -48,6 +48,7 @@ def inspect_rebuild(client: Any, request: RebuildRequest) -> RebuildAssessment:
     scope = _Scope(client, request.cluster)
     findings = _definition_findings(request)
     findings.extend(_topology_findings(scope, request))
+    findings.extend(_replica_findings(scope, request))
     findings.extend(_mutation_findings(scope, request))
     storage = _parts(scope, request)
     findings.extend(_capacity_findings(scope, request, storage))
@@ -131,7 +132,7 @@ def _definition_findings(request: RebuildRequest) -> list[PreflightFinding]:
 
 def _transfer_differences(source: TableDefinition, destination: TableDefinition) -> list[str]:
     differences = []
-    if _normalized(source.engine) != _normalized(destination.engine):
+    if _engine_signature(source.engine) != _engine_signature(destination.engine):
         differences.append("engine")
     if _normalized(" ".join(source.order_by)) != _normalized(" ".join(destination.order_by)):
         differences.append("sorting_key")
@@ -145,6 +146,21 @@ def _transfer_differences(source: TableDefinition, destination: TableDefinition)
     if physical(source) != physical(destination):
         differences.append("physical_columns")
     return differences
+
+
+def _engine_signature(engine: str) -> tuple:
+    from ch_migrate.idempotency import _action_clauses
+
+    tokens = _tokens(engine)
+    if not tokens:
+        raise ValueError("Cannot inspect an empty physical-transfer engine")
+    arguments = _action_clauses(tokens[2:-1]) if tokens[1:2] == ("(",) else []
+    if arguments == [()]:
+        arguments = []
+    if tokens[0].startswith(("Replicated", "Shared")) and len(arguments) >= 2:
+        if arguments[0][0].startswith("'") and arguments[1][0].startswith("'"):
+            arguments = arguments[2:]  # Each physical helper MUST have its own Keeper path.
+    return tokens[0], tuple(arguments)
 
 
 def _topology_findings(scope: _Scope, request: RebuildRequest) -> list[PreflightFinding]:
@@ -194,6 +210,37 @@ def _topology_findings(scope: _Scope, request: RebuildRequest) -> list[Preflight
                 )
             )
     return findings
+
+
+def _replica_findings(scope: _Scope, request: RebuildRequest) -> list[PreflightFinding]:
+    if not request.source.engine.startswith("Replicated"):
+        return []
+    rows = scope.rows(
+        "SELECT materialize(hostName()), zookeeper_path, replica_name, total_replicas FROM "
+        + scope.table("replicas")
+        + f" WHERE database = {_literal(request.database)} AND table = {_literal(request.source.name)}"
+    )
+    if not rows:
+        raise RuntimeError("Cannot inspect replicated source membership")
+    if len({row[1] for row in rows}) != 1:
+        return [
+            PreflightFinding(
+                "sharded_replica_groups",
+                "refusal",
+                "Source hosts belong to different replication groups.",
+            )
+        ]
+    expected = max(int(row[3]) for row in rows)
+    if len(rows) != expected or len({row[2] for row in rows}) != len(rows):
+        return [
+            PreflightFinding(
+                "incomplete_replica_scope",
+                "refusal",
+                "Configure a cluster covering every source replica before rebuilding.",
+                {"observed_replicas": len(rows), "expected_replicas": expected},
+            )
+        ]
+    return []
 
 
 def _mutation_findings(scope: _Scope, request: RebuildRequest) -> list[PreflightFinding]:
@@ -319,9 +366,32 @@ def _writer_log(scope: _Scope, request: RebuildRequest) -> tuple[float, list[dic
                 "rows": int(written),
                 "finished": event == "QueryFinish",
             }
+    _include_queued_writers(scope, request, writers)
     return sum(row["rows"] for row in writers.values() if row["finished"]) / (
         _WINDOW_MINUTES * 60
     ), list(writers.values())
+
+
+def _include_queued_writers(scope: _Scope, request: RebuildRequest, writers: dict) -> None:
+    rows = scope.rows(
+        "SELECT materialize(hostName()), entries.query_id FROM "
+        + scope.table("asynchronous_inserts")
+        + f" WHERE database = {_literal(request.database)} AND table = {_literal(request.source.name)}"
+    )
+    for host, query_ids in rows:
+        for query_id in query_ids:
+            writer = writers.setdefault(
+                (str(host), str(query_id)),
+                {
+                    "host": str(host),
+                    "user": "<unlogged queued writer>",
+                    "settings": {},
+                    "rows": 0,
+                    "finished": False,
+                },
+            )
+            if not writer["settings"]:
+                writer["queued_without_settings"] = True
 
 
 def _inserts_target(insert: tuple[str, str, list[str]], target: str) -> bool:
@@ -360,13 +430,19 @@ def _writer_findings(
     profiles = _profile_data(scope)
     for writer in writers:
         effective = _effective_settings(writer, profiles)
+        if writer.get("queued_without_settings") and effective != ("1", "0"):
+            effective = None  # Safe profile defaults cannot prove unlogged per-query overrides.
         if effective is None:
             findings.append(
                 PreflightFinding(
                     "writer_settings_unknown",
-                    "refusal",
-                    "Cannot prove this writer's effective async/wait settings; unlogged defaults or conflicting roles may apply.",
-                    {"host": writer["host"], "user": writer["user"]},
+                    "warning" if request.allow_unacknowledged_async_loss else "refusal",
+                    "Cannot prove this writer's async/wait settings; treat it as possible unacknowledged async loss.",
+                    {
+                        "host": writer["host"],
+                        "user": writer["user"],
+                        "acknowledged_loss": request.allow_unacknowledged_async_loss,
+                    },
                 )
             )
         elif effective == ("1", "0"):

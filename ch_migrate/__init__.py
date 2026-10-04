@@ -33,6 +33,10 @@ def __getattr__(name: str) -> Any:
         from ch_migrate.sql import run_sql
 
         return run_sql
+    elif name == "rebuild_table":
+        from ch_migrate.rebuild import rebuild_table
+
+        return rebuild_table
     elif name == "IrreversibleMigration":
         from ch_migrate.downgrade import IrreversibleMigration
 
@@ -56,6 +60,7 @@ __all__ = [
     "__version__",
     "read_sql",
     "run_sql",
+    "rebuild_table",
     "IrreversibleMigration",
     "get_db",
     "get_env_config",

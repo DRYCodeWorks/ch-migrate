@@ -27,13 +27,19 @@ from ch_migrate.introspect import DependencyGraph, Schema, get_dependencies, get
 from ch_migrate.json_output import lint_document
 from ch_migrate.lint import LintConfig, lint_migrations
 from ch_migrate.rebase import build_revision_graph
+from ch_migrate.rebuild_ddl import build_definition
 from ch_migrate.rebuild_preflight import RebuildRequest, inspect_rebuild
+from ch_migrate.rebuild_types import RebuildOptions
 from ch_migrate.statements import (
     MigrationStatement,
     migration_statements,
     pending_revisions,
 )
-from ch_migrate.version_table import assert_version_mutations_healthy, inspect_version_table
+from ch_migrate.version_table import (
+    VersionTableState,
+    assert_version_mutations_healthy,
+    inspect_version_table,
+)
 
 
 @dataclass(frozen=True)
@@ -95,6 +101,8 @@ class _Scope:
     dependencies: DependencyGraph
     env: dict[str, Any]
     findings: list[dict[str, Any]]
+    deployment: VersionTableState
+    revision: str = ""
 
 
 @dataclass(frozen=True)
@@ -108,7 +116,7 @@ class _Rewrite:
 def _build_document(client: Any, request: _PlanInput) -> dict[str, Any]:
     versions = request.root / "migrations" / "versions"
     graph = build_revision_graph(versions)
-    heads, warnings = _read_heads(client, request.env)
+    heads, warnings, deployment = _read_heads(client, request.env)
     pending = pending_revisions(graph, heads)
     report = lint_migrations(
         versions,
@@ -125,6 +133,7 @@ def _build_document(client: Any, request: _PlanInput) -> dict[str, Any]:
         get_dependencies(client, database),
         request.env,
         lint["findings"],
+        deployment,
     )
     ordered = TopologicalSorter(
         {rev: item.down_revisions for rev, item in graph.migrations.items()}
@@ -136,8 +145,9 @@ def _build_document(client: Any, request: _PlanInput) -> dict[str, Any]:
         if revision not in pending:
             continue
         migration = graph.migrations[revision]
+        revision_scope = replace(scope, revision=revision)
         statements = [
-            _plan_statement(statement, scope)
+            _plan_statement(statement, revision_scope)
             for statement in migration_statements(migration.path)
             if statement.direction == "upgrade"
         ]
@@ -158,12 +168,12 @@ def _build_document(client: Any, request: _PlanInput) -> dict[str, Any]:
     }
 
 
-def _read_heads(client: Any, env: dict[str, Any]) -> tuple[set[str], list[str]]:
+def _read_heads(client: Any, env: dict[str, Any]) -> tuple[set[str], list[str], VersionTableState]:
     state = inspect_version_table(client, env["database"], env.get("cluster"))
     assert_version_mutations_healthy(client, state)
     warnings = [state.warning()] if state.warning() else []
     if not state.table_engine:
-        return set(), warnings
+        return set(), warnings, state
     rows = client.query(
         "SELECT count() FROM system.mutations WHERE database = {db:String} "
         "AND table = 'alembic_version' AND is_done = 0",
@@ -179,14 +189,20 @@ def _read_heads(client: Any, env: dict[str, Any]) -> tuple[set[str], list[str]]:
         warnings.append(
             "Read-only plan observes the connected replica; it does not synchronize replicas or freeze concurrent migrations."
         )
-    return {row[0] for row in heads.result_rows}, warnings
+    return {row[0] for row in heads.result_rows}, warnings, state
 
 
 def _plan_statement(statement: MigrationStatement, scope: _Scope) -> dict[str, Any]:
     sql = statement.sql.replace("{db}", scope.env["database"])
     if scope.env.get("cluster"):
         sql = sql.replace("{cluster}", scope.env["cluster"])
-    classification = classify(sql, scope.schema)
+    rebuild_call = statement.rebuild
+    if rebuild_call:
+        rebuild_call = replace(
+            rebuild_call, table=rebuild_call.table.replace("{db}", scope.env["database"])
+        )
+    statement = replace(statement, sql=sql, rebuild=rebuild_call)
+    classification = classify(statement, scope.schema)
     table = _table_definition(scope.schema, classification.table or "")
     downstream = scope.dependencies.affected_by_drop(table.name) if table else []
     size = _rewrite_size(sql, classification, scope)
@@ -194,10 +210,7 @@ def _plan_statement(statement: MigrationStatement, scope: _Scope) -> dict[str, A
     if classification.kind == "rebuild":
         if table is None:
             raise ValueError(f"Cannot inspect rebuild source {classification.table!r}")
-        request = RebuildRequest(
-            scope.env["database"], table, _rebuild_target(table, sql), scope.env.get("cluster")
-        )
-        rebuild = asdict(inspect_rebuild(scope.client, request))
+        rebuild = asdict(_rebuild_assessment(statement, table, scope))
     findings = [
         item
         for item in scope.findings
@@ -217,6 +230,29 @@ def _plan_statement(statement: MigrationStatement, scope: _Scope) -> dict[str, A
         "findings": findings,
         "rebuild": rebuild,
     }
+
+
+def _rebuild_assessment(statement: MigrationStatement, table: Any, scope: _Scope):
+    allow_async_loss = False
+    if statement.rebuild:
+        call = statement.rebuild
+        options = RebuildOptions(
+            scope.env["database"],
+            table.name,
+            scope.revision,
+            0,
+            scope.deployment.on_cluster,
+            call.select,
+            call.allow_unacknowledged_async_loss,
+        )
+        target = build_definition(table, statement.sql, options).target
+        allow_async_loss = call.allow_unacknowledged_async_loss
+    else:
+        target = _rebuild_target(table, statement.sql)
+    request = RebuildRequest(
+        scope.env["database"], table, target, scope.deployment.health_cluster, allow_async_loss
+    )
+    return inspect_rebuild(scope.client, request)
 
 
 def _rewrite_size(sql: str, classification: Classification, scope: _Scope) -> RewriteSize | None:

@@ -711,6 +711,8 @@ def _lint_statement(
     for rule in rules:
         if isinstance(rule, MVDeclarationRule) or rule.get_severity(scope.config) == Severity.OFF:
             continue
+        if statement.rebuild is not None and rule.name in GATE_RULES:
+            continue  # The operation guards its internal steps with durable rebuild state.
         findings = rule.check(
             statement.sql,
             file_path=statement.source,

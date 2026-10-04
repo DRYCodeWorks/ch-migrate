@@ -447,6 +447,119 @@ def upgrade():
     create_dictionary("history/dictionaries/dict_users/001_create.sql")
 ```
 
+## Changing a sorting key or engine
+
+`op.rebuild_table()` builds a replacement while writers keep inserting, then
+swaps it into the original name. Its guarantee is **no acknowledged row is lost,
+and a small number may be duplicated**. Duplicates can come from rows committed
+or flushed between copying-view creation and snapshot completion, in server time.
+ReplacingMergeTree variants may collapse those copies on merge; other engines
+can retain them.
+
+**The exception is unacknowledged async inserts:** rows queued with
+`async_insert = 1, wait_for_async_insert = 0` at the swap may be rejected by
+ClickHouse. Such writers require `allow_unacknowledged_async_loss=True` in the
+migration file. There is no command-line bypass. Writers that wait for
+acknowledgement should retry error **741** (`TABLE_UUID_MISMATCH`) and other
+transient rebuild errors. Writers must not ignore materialized-view errors.
+
+Put one explicit replacement CREATE in `migrations/sql/events-rebuild.sql`.
+It must name the same source table; the operation generates its own helper names,
+UUIDs, and replication paths:
+
+```sql
+CREATE TABLE {db}.events (
+    id UInt64,
+    ts DateTime,
+    k UInt8,
+    payload String
+) ENGINE = MergeTree
+PARTITION BY toYYYYMM(ts)
+ORDER BY (k, ts, id);
+```
+
+Call it from the revision:
+
+```python
+from alembic import op
+
+def upgrade():
+    op.rebuild_table("events", "events-rebuild.sql")
+```
+
+`from ch_migrate import rebuild_table` provides the same operation.
+For a row transformation, `select=` is a projection expression list in target
+column order, not a full SELECT query. It must preserve partition identity.
+The default copies explicit insertable target columns, excluding MATERIALIZED
+and ALIAS columns. Internal steps are guarded by durable state and do not need
+idempotency waivers. `plan` reads the replacement SQL and runs the same preflight.
+
+Before starting, stop mutations and partition DDL against the source for the
+whole rebuild. Ordinary inserts continue. Sharded/Distributed sources,
+partition-key changes, unfinished mutations, and incompatible physical transfers
+are refused. Budget roughly **2–3× the table's disk space**: the snapshot pins old
+parts and the replacement stores a second copy. Helpers stay in the same database.
+Source-to-snapshot definitions match; stage-to-replacement definitions match.
+An intentional engine change happens through row copy, not mismatched ATTACH/MOVE.
+Keeper helper roots are siblings of the original root, not children that could be
+removed with it. Name-dependent path macros are resolved before the swap.
+For Replicated tables in an Atomic database, configure a cluster covering every
+source replica. An incomplete replica scope is refused rather than rebuilt on
+only the connected node. Existing per-replica table UUIDs are retained and checked
+individually.
+
+For a Replicated database, helper CREATE statements set
+`database_replicated_allow_explicit_uuid=1` and
+`database_replicated_allow_replicated_engine_arguments=1` for that query only.
+These [documented settings](https://clickhouse.com/docs/reference/settings/session-settings/database-replicated)
+preserve the journaled UUIDs and isolated Keeper paths; value `2` would replace
+them and is not used. A settings profile that forbids these overrides must be
+reconciled before the rebuild. The tool does not change server/profile defaults.
+
+### Recover an interrupted rebuild
+
+Progress is stored in the database, not on the runner's filesystem. A completed
+partition is skipped; an incomplete copy is cancelled before its stage is reset.
+If the swap already happened, recovery finishes cleanup rather than swapping again.
+
+**An existing lock always refuses another runner—even when its heartbeat expires.**
+ClickHouse cannot fence a paused runner's later `EXCHANGE` using a client-side lease.
+Do not delete a lock merely because it looks stale.
+
+1. Establish that the previous runner has stopped and cannot resume, including
+   any suspended process or automated restart.
+2. Reconcile its running copy/DDL queries, the `_ch_migrate_journal` entry, helper
+   tables, and source/replacement UUIDs on every replica. Do not stamp the revision
+   or delete its journal to suppress an unknown-outcome error.
+3. Explicitly release `_chm_rebuild_lock_<table>` only after that reconciliation.
+   On a single server, for example:
+   `DROP TABLE analytics._chm_rebuild_lock_events SYNC`.
+   For a configured cluster, release on every host with the matching `ON CLUSTER`;
+   for a Replicated database, wait for its replicated DROP to converge.
+4. Run `ch-migrate up ENV` again. It acquires a new lock and resumes the recorded
+   work, killing any recorded orphan copy before resetting the staging partition.
+
+### Retain and remove the rollback table
+
+After the all-replica swap and copying-view barrier, the original table is retained
+as `<table>__chm_old_<revision>`. Keep it for at least **seven days**, or your
+organization's longer recovery window; there is no automatic deletion job.
+Snapshot, staging, copying-view, and successful-run lock helpers are removed.
+
+The retained table is not a continuously updated backup. Before rolling back,
+quiesce writers and reconcile rows accepted after the swap; blindly exchanging it
+back can remove those newer rows from the live table. After verifying the new
+table and completing the retention window, explicitly DROP the retained table,
+using the appropriate replicated/cluster scope.
+
+The completion report includes the duplicate window, old/new UUIDs, rollback
+table, and old-UUID async rejection count, bytes, and query IDs. On ClickHouse 26.3,
+the old UUID is recorded in the error-741 exception text—not a `table_uuid` log
+column. Reporting drains the old storage UUID through the retained rollback
+table before flushing logs and applying flush-time bounds. Flushing only the
+new live name would miss the old queue. Missing inspection privileges or log
+evidence are errors, not invented zero-error results.
+
 ## Drift detection in CI
 
 After applying and verifying migrations in an environment, capture its expected
