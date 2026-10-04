@@ -520,13 +520,73 @@ fresh seeded MergeTree tables: every ALTER must create the predicted mutation,
 create none, or be rejected as an unsupported in-place change. The server proof,
 not the apparent SQL verb, defines the classification.
 
+## Plan pending migrations
+
+Run `ch-migrate plan dev` before `up`. It reads pending upgrade statements in
+apply order, classifies them against the live schema, reports rewrite bytes and
+dependent materialized views/dictionaries, and includes every lint finding.
+It does not import revision modules, execute SQL from migrations, or run
+`SYSTEM SYNC`. Python-generated SQL that cannot be extracted statically is not
+included. The result describes current live state, not a simulation of each
+preceding pending statement.
+
+```bash
+ch-migrate plan dev
+ch-migrate plan dev --json
+```
+
+For example, these two pending statements produce different size labels:
+
+```sql
+ALTER TABLE analytics.events MODIFY COLUMN value UInt32;
+-- ch-migrate: allow-non-idempotent reviewed one-time correction
+ALTER TABLE analytics.events UPDATE value = value + 1 WHERE id = 1;
+```
+
+- The column change reports **exact** compressed/uncompressed column bytes and
+  distinct active parts from `system.parts_columns` when column sizes are available.
+- The UPDATE reports **ceiling: up to** the active table's compressed/uncompressed
+  bytes and part count. An explicit partition ID or a simple equality on
+  `_partition_id`, an unsigned identity partition key, or a supported date-bucket
+  partition expression narrows the ceiling. Other predicates remain table-wide.
+- Compact parts share a data file and report zero per-column byte counters.
+  These use a whole-part **ceiling**, not an exact zero-byte claim.
+- The waiver appears with its reason. It removes the UPDATE's gate blocker, not
+  its size or dependency warnings.
+
+Rebuild-required statements also run shared read-only preflight. It reports
+Distributed/sharded layouts, changed partition keys, unfinished mutations,
+incompatible physical-transfer definitions, and unacknowledged async writers.
+Storage and part counts use the maximum across inspected replicas, not the sum
+of replica copies. Disk-space and partition-part warnings identify each host.
+The insert rate comes from completed initial INSERTs in the last 60 minutes.
+
+Writer inspection includes rotated `query_log_N` tables and inherited
+user/profile/role settings, with a bounded log scan. Missing privileges, absent
+logs, or a scan exceeding its bound are errors, not evidence of safe writers.
+Unknown effective settings refuse a rebuild. A quiet or unflushed log does not
+prove that no writers exist. The shared `RebuildRequest` API accepts
+`allow_unacknowledged_async_loss=True` only for an explicitly reviewed
+migration-file opt-in; `plan` has no command-line bypass.
+
+Only ReplacingMergeTree variants can collapse identical sorting-key copies on
+merge. Other targets may retain duplicates, including Collapsing and
+VersionedCollapsing tables with identical positive rows.
+
+The [plan JSON schema](docs/schemas/plan.schema.json) covers both success and
+error documents. Human and JSON output use the same facts. Exit codes are **0**
+for a successful inspection, including warnings/preflight refusals; **1** when
+the idempotency/standalone-SET gate would refuse `up`; and **2** for an inspection
+error. Preflight refusals remain explicit in each statement's rebuild findings.
+Read-only plans do not synchronize replicas or protect against concurrent changes.
+
 ## Command reference
 
 Every command accepts `--help`. Top-level `ch-migrate --version` reports the installed package version. `ENV` below names an entry in `config.yaml`.
 
 Output lines start with `→` for a step, `✓` for a result, `!` for a warning and `✗` for an error; warnings and errors go to stderr. Colour is dropped when output is not a terminal or `NO_COLOR` is set, and lines are never wrapped, so paths and SQL can be copied or grepped.
 
-`status`, `history`, `lint`, and `diff` accept `--json`. JSON mode writes one document to stdout; diagnostics go to stderr. Every document includes `"schema_version": 1` and `"command"`. From 1.0 this is a public interface: breaking changes require a major version. Errors include an `error` string rather than inventing a successful empty result. The schemas linked below use JSON Schema draft 2020-12.
+`status`, `history`, `plan`, `lint`, and `diff` accept `--json`. JSON mode writes one document to stdout; diagnostics go to stderr. Every document includes `"schema_version": 1` and `"command"`. From 1.0 this is a public interface: breaking changes require a major version. Errors include an `error` string rather than inventing a successful empty result. The schemas linked below use JSON Schema draft 2020-12.
 
 ### `init`
 
@@ -594,9 +654,15 @@ unavailable, `applied` is null, the document includes `error`, and JSON exits 2.
 An unknown database head also makes applied status unknown instead of claiming
 that every local revision is unapplied.
 
+### `plan`
+
+`ch-migrate plan ENV [--json]` inspects pending upgrades without executing them.
+See [Plan pending migrations](#plan-pending-migrations) for byte precision,
+rebuild checks, limitations, exit codes, and an annotated example.
+
 ### `lint`
 
-`ch-migrate lint [ENV] [--json]` analyzes upgrade statements, not downgrade SQL. Without `ENV`, it checks revisions after the gate baseline statically without credentials or a connection. With an environment, it checks only pending revisions in that scope and adds live size and dependency checks. If it cannot determine the pending set, it fails rather than silently checking a different scope. Errors exit nonzero; warnings and waiver INFO lines alone do not.
+`ch-migrate lint [ENV] [--json]` analyzes upgrade statements, not downgrade SQL. Without `ENV`, it checks revisions after the gate baseline statically without credentials or a connection. With an environment, it checks only pending revisions in that scope and adds live dependency checks. Use `plan` for rewrite sizes. If it cannot determine the pending set, it fails rather than silently checking a different scope. Errors exit nonzero; warnings and waiver INFO lines alone do not.
 
 Example: `ch-migrate lint`
 
@@ -723,7 +789,6 @@ Non-gate rule severities can be `error`, `warn`, or `off`. Gate rules must remai
 
 ```yaml
 lint:
-  large_table_threshold: 100000000
   mv_validation_cutoff: "2026-01-01"
   rules:
     destructive_changes: warn
@@ -733,9 +798,19 @@ lint:
 
 Review findings rather than treating a successful command as a guarantee that a migration is safe. DDL and mutations are not transactional.
 
+`large_table_mutation` and `large_table_threshold` are retired. Existing entries
+are ignored with one deprecation warning pointing to `ch-migrate plan`.
+
 ### Bootstrap roles and Cloud notes
 
 Bootstrap creates `{project}_migration_role` for schema/data operations and introspection, including explicit `system.grants`, `system.databases`, `system.tables`, and `system.mutations` access. It grants available cluster, remote-read, and synchronization rights through `CURRENT GRANTS`. Optional users add `{project}_readonly_role` (SELECT/SHOW) and `{project}_dict_role` (dictionary sources). Bootstrap uses explicit grants rather than `GRANT ALL` for Cloud compatibility.
+
+Plan also needs readable `system.parts`, `system.parts_columns`, and, for rebuild
+preflight, disks, MergeTree settings, user/profile/role metadata, and query logs.
+Bootstrap grants these where the admin's current grants permit. Existing
+deployments may need to rerun bootstrap or grant missing access explicitly,
+including readable rotated query logs. A denied inspection fails rather than
+silently omitting evidence.
 
 Use standard table engine names such as `MergeTree` and `ReplacingMergeTree`; ClickHouse Cloud supplies its shared variants. Cloud usually uses HTTPS port `8443`; local HTTP usually uses `8123`.
 

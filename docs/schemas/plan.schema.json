@@ -1,0 +1,423 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "plan.schema.json",
+  "title": "ch-migrate plan schema version 1",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "command"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "command": {
+      "const": "plan"
+    },
+    "error": {
+      "type": "string"
+    },
+    "database": {
+      "type": "string"
+    },
+    "environment": {
+      "type": "string"
+    },
+    "gate_would_refuse": {
+      "type": "boolean"
+    },
+    "warnings": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "rule": {
+            "type": "string"
+          },
+          "severity": {
+            "enum": [
+              "error",
+              "warn",
+              "info",
+              "off"
+            ]
+          },
+          "blocking": {
+            "type": "boolean"
+          },
+          "file": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "line": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1
+          },
+          "message": {
+            "type": "string"
+          },
+          "waived": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "rule",
+          "severity",
+          "blocking",
+          "file",
+          "line",
+          "message",
+          "waived"
+        ]
+      }
+    },
+    "counts": {
+      "type": "object",
+      "properties": {
+        "total": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "error": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "warning": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "info": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "blocking": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "waived": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "total",
+        "error",
+        "warning",
+        "info",
+        "blocking",
+        "waived"
+      ]
+    },
+    "migrations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "revision": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "statements": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "sql": {
+                  "type": "string"
+                },
+                "file": {
+                  "type": "string"
+                },
+                "line": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "classification": {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "enum": [
+                        "metadata",
+                        "mutation",
+                        "rebuild",
+                        "other"
+                      ]
+                    },
+                    "table": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "detail": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "table",
+                    "detail"
+                  ]
+                },
+                "size": {
+                  "anyOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "precision": {
+                          "enum": [
+                            "exact",
+                            "ceiling"
+                          ]
+                        },
+                        "compressed_bytes": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "uncompressed_bytes": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "part_count": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "columns": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "partition_id": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "precision",
+                        "compressed_bytes",
+                        "uncompressed_bytes",
+                        "part_count",
+                        "columns",
+                        "partition_id"
+                      ]
+                    }
+                  ]
+                },
+                "downstream": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      },
+                      "type": {
+                        "enum": [
+                          "materialized_view",
+                          "dictionary"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "name",
+                      "type"
+                    ]
+                  }
+                },
+                "findings": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "rule": {
+                        "type": "string"
+                      },
+                      "severity": {
+                        "enum": [
+                          "error",
+                          "warn",
+                          "info",
+                          "off"
+                        ]
+                      },
+                      "blocking": {
+                        "type": "boolean"
+                      },
+                      "file": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "line": {
+                        "type": [
+                          "integer",
+                          "null"
+                        ],
+                        "minimum": 1
+                      },
+                      "message": {
+                        "type": "string"
+                      },
+                      "waived": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "rule",
+                      "severity",
+                      "blocking",
+                      "file",
+                      "line",
+                      "message",
+                      "waived"
+                    ]
+                  }
+                },
+                "rebuild": {
+                  "anyOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "findings": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "code": {
+                                "type": "string"
+                              },
+                              "severity": {
+                                "enum": [
+                                  "refusal",
+                                  "warning"
+                                ]
+                              },
+                              "message": {
+                                "type": "string"
+                              },
+                              "details": {
+                                "type": "object"
+                              }
+                            },
+                            "required": [
+                              "code",
+                              "severity",
+                              "message",
+                              "details"
+                            ]
+                          }
+                        },
+                        "bytes_on_disk": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "part_count": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "partition_parts": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "integer",
+                            "minimum": 0
+                          }
+                        },
+                        "insert_rows_per_second": {
+                          "type": "number",
+                          "minimum": 0
+                        },
+                        "engine_note": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "findings",
+                        "bytes_on_disk",
+                        "part_count",
+                        "partition_parts",
+                        "insert_rows_per_second",
+                        "engine_note"
+                      ]
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "sql",
+                "file",
+                "line",
+                "classification",
+                "size",
+                "downstream",
+                "findings",
+                "rebuild"
+              ]
+            }
+          }
+        },
+        "required": [
+          "revision",
+          "path",
+          "statements"
+        ]
+      }
+    }
+  },
+  "oneOf": [
+    {
+      "required": [
+        "error"
+      ],
+      "not": {
+        "required": [
+          "migrations"
+        ]
+      }
+    },
+    {
+      "required": [
+        "database",
+        "environment",
+        "gate_would_refuse",
+        "warnings",
+        "findings",
+        "counts",
+        "migrations"
+      ],
+      "not": {
+        "required": [
+          "error"
+        ]
+      }
+    }
+  ]
+}

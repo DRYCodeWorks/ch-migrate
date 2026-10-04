@@ -14,7 +14,6 @@ from ch_migrate.lint import (
     STATIC_RULES,
     DestructiveChangeRule,
     IdempotencyRule,
-    LargeTableMutationRule,
     LintConfig,
     LintReport,
     LintResult,
@@ -32,26 +31,15 @@ from ch_migrate.lint import (
 
 
 class TestLintConfig:
-    def test_defaults(self):
-        config = LintConfig()
-        assert config.large_table_threshold == 100_000_000
-        assert config.rules == {}
-
-    def test_from_config_empty(self):
-        config = LintConfig.from_config({})
-        assert config.large_table_threshold == 100_000_000
-
     def test_from_config_with_values(self):
         config = LintConfig.from_config({
             "lint": {
-                "large_table_threshold": 50_000,
                 "rules": {
                     "destructive_changes": "error",
                     "missing_on_cluster": "off",
                 },
             }
         })
-        assert config.large_table_threshold == 50_000
         assert config.rules["destructive_changes"] == Severity.ERROR
         assert config.rules["missing_on_cluster"] == Severity.OFF
 
@@ -62,6 +50,18 @@ class TestLintConfig:
             }
         })
         assert "destructive_changes" not in config.rules
+
+    def test_retired_size_config_is_ignored_with_one_warning(self, capsys):
+        config = LintConfig.from_config({
+            "lint": {
+                "large_table_threshold": 1,
+                "rules": {"large_table_mutation": "error", "destructive_changes": "warn"},
+            }
+        })
+        assert config.rules == {"destructive_changes": Severity.WARN}
+        warning = capsys.readouterr().err
+        assert len(warning.splitlines()) == 1
+        assert "ch-migrate plan" in warning
 
 
 # ---------------------------------------------------------------------------
@@ -257,51 +257,6 @@ class TestMissingOnClusterRule:
         """)
         results = MissingOnClusterRule().check(sql, config=config)
         assert len(results) == 2
-
-
-# ---------------------------------------------------------------------------
-# LargeTableMutationRule tests
-# ---------------------------------------------------------------------------
-
-
-class TestLargeTableMutationRule:
-    def _make_client(self, row_count: int) -> MagicMock:
-        client = MagicMock()
-        result = MagicMock()
-        result.result_rows = [[row_count]]
-        client.query.return_value = result
-        return client
-
-    def test_flags_large_table(self):
-        client = self._make_client(200_000_000)
-        sql = "ALTER TABLE mydb.users ADD COLUMN phone String"
-        results = LargeTableMutationRule().check(
-            sql, client=client, database="mydb"
-        )
-        assert len(results) == 1
-        assert "200,000,000" in results[0].message
-
-    def test_passes_small_table(self):
-        client = self._make_client(1000)
-        sql = "ALTER TABLE mydb.users ADD COLUMN phone String"
-        results = LargeTableMutationRule().check(
-            sql, client=client, database="mydb"
-        )
-        assert results == []
-
-    def test_respects_custom_threshold(self):
-        client = self._make_client(5000)
-        config = LintConfig(large_table_threshold=1000)
-        sql = "ALTER TABLE mydb.users ADD COLUMN phone String"
-        results = LargeTableMutationRule().check(
-            sql, client=client, database="mydb", config=config
-        )
-        assert len(results) == 1
-
-    def test_skips_without_client(self):
-        sql = "ALTER TABLE mydb.users ADD COLUMN phone String"
-        results = LargeTableMutationRule().check(sql)
-        assert results == []
 
 
 # ---------------------------------------------------------------------------

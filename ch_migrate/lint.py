@@ -9,6 +9,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
+import click
+
 from ch_migrate.alembic_env import has_current_env
 from ch_migrate.baseline import baseline_exemptions, normalize_baseline
 from ch_migrate.idempotency import classify_idempotency, waiver_reason
@@ -67,7 +69,6 @@ class LintReport:
 class LintConfig:
     """Lint configuration loaded from config.yaml."""
 
-    large_table_threshold: int = 100_000_000
     rules: dict[str, Severity] = field(default_factory=dict)
     mv_validation_cutoff: str | None = None
     gate_baseline: tuple[str, ...] = ()
@@ -78,10 +79,16 @@ class LintConfig:
         if not lint_section:
             return cls()
 
-        threshold = lint_section.get("large_table_threshold", 100_000_000)
         rules_raw = lint_section.get("rules", {})
+        if "large_table_threshold" in lint_section or "large_table_mutation" in rules_raw:
+            click.echo(
+                "Deprecated: large_table_mutation/large_table_threshold are ignored; use ch-migrate plan.",
+                err=True,
+            )
         rules = {}
         for name, level in rules_raw.items():
+            if name == "large_table_mutation":
+                continue
             if name in GATE_RULES and level != Severity.ERROR:
                 raise ValueError(
                     f"lint.rules.{name} must remain error; use an in-file waiver "
@@ -95,7 +102,6 @@ class LintConfig:
         cutoff = lint_section.get("mv_validation_cutoff")
 
         return cls(
-            large_table_threshold=threshold,
             rules=rules,
             mv_validation_cutoff=cutoff,
             gate_baseline=normalize_baseline(lint_section.get("gate_baseline")),
@@ -508,66 +514,6 @@ class MissingOnClusterRule(LintRule):
 # ---------------------------------------------------------------------------
 
 
-class LargeTableMutationRule(LintRule):
-    """Flags ALTER on tables above a configurable row threshold."""
-
-    name = "large_table_mutation"
-    default_severity = Severity.WARN
-    requires_db = True
-
-    _RE_ALTER_TABLE = re.compile(
-        r"\bALTER\s+TABLE\s+(?:`?(\w+|\{[^}]+\})`?\.)?`?(\w+)`?",
-        re.IGNORECASE,
-    )
-
-    def check(self, sql: str, **kwargs: Any) -> list[LintResult]:
-        config = kwargs.get("config") or LintConfig()
-        severity = self.get_severity(config)
-        if severity == Severity.OFF:
-            return []
-
-        client = kwargs.get("client")
-        database = kwargs.get("database")
-        if not client or not database:
-            return []
-
-        results: list[LintResult] = []
-        file_path = kwargs.get("file_path")
-        threshold = config.large_table_threshold
-
-        for match in self._RE_ALTER_TABLE.finditer(sql):
-            db = match.group(1)
-            if db is None or db.startswith("{"):
-                db = database
-            table_name = match.group(2)
-            try:
-                result = client.query(
-                    "SELECT count() FROM system.parts "
-                    "WHERE database = {db:String} AND table = {tbl:String} AND active",
-                    parameters={"db": db, "tbl": table_name},
-                )
-                if result.result_rows:
-                    row_count = result.result_rows[0][0]
-                    if row_count > threshold:
-                        line = sql[: match.start()].count("\n") + 1
-                        results.append(
-                            LintResult(
-                                rule=self.name,
-                                message=(
-                                    f"ALTER on '{table_name}' which has {row_count:,} parts "
-                                    f"(threshold: {threshold:,})"
-                                ),
-                                severity=severity,
-                                file=file_path,
-                                line=line,
-                            )
-                        )
-            except Exception:
-                pass
-
-        return results
-
-
 class MVDependencyRule(LintRule):
     """Flags operations on tables that have materialized view dependencies."""
 
@@ -687,7 +633,6 @@ STATIC_RULES: list[LintRule] = [
 ]
 
 RUNTIME_RULES: list[LintRule] = [
-    LargeTableMutationRule(),
     MVDependencyRule(),
 ]
 

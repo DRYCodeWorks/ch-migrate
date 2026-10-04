@@ -9,9 +9,12 @@ Changes are recorded in [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 - `lint ENV` analyzes only pending revisions after the gate baseline; static `lint` checks every revision after it.
 - `up` refuses idempotency gate errors before applying migrations; other lint findings are nonblocking warnings.
 - `upgrade-env` records current script heads as a comment-preserving `lint.gate_baseline`.
+- Retired the incorrect `large_table_mutation` rule and row threshold. Legacy configuration is ignored with a deprecation warning pointing to `plan`.
 
 ### Added
 
+- Read-only `plan ENV [--json]`: ordered pending statements, classifications, exact available column bytes versus whole-part ceilings, dependencies, lint gate status, shared rebuild preflight, and a versioned JSON schema.
+- Rebuild preflight checks replicas, physical-transfer definitions, writer profiles and rotated logs; reports per-host capacity and mutation hazards; and requires explicit acknowledgement of unacknowledged async-write loss.
 - Default mutation waiting with durable ownership, per-replica completion, same-session progress, an optional invocation timeout, and fail-closed unknown-outcome recovery. Upgrades now run in the owning CLI process.
 - Resumable insert-first version bookkeeping and fresh waiting-journal generations after downgrade, without replaying completed revision writes.
 - Owned `ON CLUSTER` queue waiting, per-host failure/timeout diagnostics, and acknowledgement-loss recovery without re-enqueueing DDL. Mutation-producing DDL must finish both its queue and mutation barriers.

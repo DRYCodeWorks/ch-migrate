@@ -788,6 +788,28 @@ def skill(target: str) -> None:
 
 
 @main.command(cls=JsonCommand)
+@click.argument("environment")
+@click.option("--json", "json_output", is_flag=True, help="Emit a versioned JSON document")
+def plan(environment: str, json_output: bool) -> None:
+    """Inspect pending upgrades, rewrite bytes, rebuild risks and lint without executing."""
+    from ch_migrate.plan import build_plan, render_plan
+
+    try:
+        document = build_plan(Path.cwd(), environment)
+    except Exception as error:
+        if json_output:
+            emit_json("plan", {"error": str(error)})
+        else:
+            click.echo(f"Error: {error}", err=True)
+        raise click.exceptions.Exit(2) from error
+    if json_output:
+        emit_json("plan", document)
+    else:
+        render_plan(document)
+    raise click.exceptions.Exit(1 if document["gate_would_refuse"] else 0)
+
+
+@main.command(cls=JsonCommand)
 @click.argument("environment", required=False, default=None)
 @click.option("--json", "json_output", is_flag=True, help="Emit a versioned JSON document")
 def lint(environment: str | None, json_output: bool) -> None:
@@ -796,8 +818,8 @@ def lint(environment: str | None, json_output: bool) -> None:
     Without an environment, checks revisions after the gate baseline statically,
     without credentials or a database connection.
 
-    With an environment, checks only pending revisions and adds live size and
-    dependency checks. Fails if the pending scope cannot be determined.
+    With an environment, checks only pending revisions and adds live dependency
+    checks. Use plan for rewrite sizes. Fails if the pending scope cannot be determined.
 
     \b
     Examples:
