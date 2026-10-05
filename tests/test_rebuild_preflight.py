@@ -41,6 +41,8 @@ class _Client:
             return _Result([("node", "10")])
         if "system.asynchronous_inserts" in sql:
             return _Result([])
+        if "system.processes" in sql:
+            return _Result([])
         if "query_log" in sql:
             return _Result(
                 [
@@ -165,6 +167,65 @@ def test_newly_queued_writer_without_log_evidence_requires_opt_in():
         client, RebuildRequest("db", _table(), _table("new"), allow_unacknowledged_async_loss=True)
     )
     assert _codes(allowed)["writer_settings_unknown"].severity == "warning"
+
+
+@pytest.mark.parametrize("wait", ["0", "1"])
+@pytest.mark.parametrize("logged", [False, True])
+def test_active_queued_writer_uses_per_query_settings_before_log_flush(wait, logged):
+    query_id = "q1" if logged else "waiting"
+
+    class Waiting(_Client):
+        def query(self, sql):
+            if "system.asynchronous_inserts" in sql:
+                return _Result([("node", [query_id])])
+            if "system.processes" in sql:
+                return _Result(
+                    [
+                        (
+                            "node",
+                            query_id,
+                            "writer",
+                            {"async_insert": "1", "wait_for_async_insert": wait},
+                        )
+                    ]
+                )
+            return super().query(sql)
+
+    result = inspect_rebuild(
+        Waiting(
+            writer_settings={} if logged else {"async_insert": "0", "wait_for_async_insert": "1"}
+        ),
+        RebuildRequest("db", _table(), _table("new")),
+    )
+    assert "writer_settings_unknown" not in _codes(result)
+    assert any(finding.severity == "refusal" for finding in result.findings) == (wait == "0")
+    if wait == "0":
+        assert _codes(result)["unacknowledged_async_writer"].severity == "refusal"
+
+
+def test_another_hosts_process_cannot_prove_queued_writer_settings():
+    class WrongHost(_Client):
+        def query(self, sql):
+            if "system.asynchronous_inserts" in sql:
+                return _Result([("node", ["waiting"])])
+            if "system.processes" in sql:
+                return _Result(
+                    [
+                        (
+                            "other",
+                            "waiting",
+                            "writer",
+                            {"async_insert": "1", "wait_for_async_insert": "1"},
+                        )
+                    ]
+                )
+            return super().query(sql)
+
+    result = inspect_rebuild(
+        WrongHost(writer_settings={"async_insert": "0", "wait_for_async_insert": "1"}),
+        RebuildRequest("db", _table(), _table("new")),
+    )
+    assert _codes(result)["writer_settings_unknown"].severity == "refusal"
 
 
 def test_physical_helpers_need_distinct_keeper_paths_but_matching_engine_semantics():

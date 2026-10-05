@@ -378,6 +378,9 @@ def _include_queued_writers(scope: _Scope, request: RebuildRequest, writers: dic
         + scope.table("asynchronous_inserts")
         + f" WHERE database = {_literal(request.database)} AND table = {_literal(request.source.name)}"
     )
+    queued = {(str(host), str(qid)) for host, query_ids in rows for qid in query_ids}
+    known = {key for key, writer in writers.items() if writer["settings"]}
+    active = _queued_settings(scope, queued - known)
     for host, query_ids in rows:
         for query_id in query_ids:
             writer = writers.setdefault(
@@ -390,8 +393,27 @@ def _include_queued_writers(scope: _Scope, request: RebuildRequest, writers: dic
                     "finished": False,
                 },
             )
+            if (str(host), str(query_id)) in active:
+                writer.update(active[str(host), str(query_id)])
             if not writer["settings"]:
                 writer["queued_without_settings"] = True
+
+
+def _queued_settings(scope: _Scope, missing: set[tuple[str, str]]) -> dict:
+    if not missing:
+        return {}
+    ids = ", ".join(_literal(query_id) for _, query_id in sorted(missing))
+    rows = scope.rows(
+        "SELECT materialize(hostName()), query_id, user, Settings FROM "
+        + scope.table("processes")
+        + " WHERE is_initial_query = 1 AND query_kind = 'Insert'"
+        + f" AND query_id IN ({ids})"
+    )
+    return {
+        (str(host), str(query_id)): {"user": str(user), "settings": dict(settings)}
+        for host, query_id, user, settings in rows
+        if (str(host), str(query_id)) in missing
+    }
 
 
 def _inserts_target(insert: tuple[str, str, list[str]], target: str) -> bool:

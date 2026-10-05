@@ -970,6 +970,10 @@ Bootstrap grants these where the admin's current grants permit. Existing
 deployments may need to rerun bootstrap or grant missing access explicitly,
 including readable rotated query logs. A denied inspection fails rather than
 silently omitting evidence.
+Queued async inserts whose logged settings are missing are matched to active
+`system.processes` entries by host and query ID. If neither source proves the
+writer's acknowledgement settings, preflight still refuses without the
+unacknowledged-loss opt-in.
 
 Use standard table engine names such as `MergeTree` and `ReplacingMergeTree`; ClickHouse Cloud supplies its shared variants. Cloud usually uses HTTPS port `8443`; local HTTP usually uses `8123`.
 
@@ -1020,6 +1024,37 @@ Cluster fixtures use the same image-tag override, remove their own containers,
 anonymous volumes, and network, and never operate on external servers. Cluster
 tests skip when `CH_MIGRATE_IT_URL` is set. The integration CI job runs cluster
 tests on Python 3.12 only, and single-server tests on 3.10 and 3.14.
+
+### Continuous-writer rebuild acceptance
+
+Run all five local variants five times, stopping on the first failure:
+
+```bash
+for run in 1 2 3 4 5; do
+  echo "Continuous-insert run $run"
+  env -u CH_MIGRATE_IT_URL uv run --locked pytest -q -s \
+    -m integration -k continuous_insert || exit 1
+done
+```
+
+The variants cover synchronous writes, process termination and operator-confirmed
+resume, writes through node 1 checked on both replicas, and async writes with
+`wait_for_async_insert` set to either `1` or `0`. Each writer spans three
+partitions and continues after the swap. Real HTTP barriers hold snapshot and
+exchange requests; they do not replace ClickHouse operations.
+
+Each `CONTINUOUS_INSERT` output line reports sent IDs, duplicate IDs, lost IDs,
+and error-741 retries. Acknowledged writes must have no lost IDs. Duplicate
+attribution uses server query intervals for synchronous inserts and actual
+`asynchronous_insert_log` flush timestamps for async inserts. The fire-and-forget
+variant first proves refusal without opt-in, then requires the missing IDs to
+match the rebuild's old-UUID FlushError report exactly. The recovery variant
+proves an expired lock still refuses takeover and that resume skips the already
+moved partition after operator reconciliation.
+
+These tests use only owned containers, not `CH_MIGRATE_IT_URL`. CI includes
+them through the existing integration markers; the replicated variant runs in
+the cluster job.
 
 ## License
 

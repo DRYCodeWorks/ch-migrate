@@ -10,8 +10,11 @@ Changes are recorded in [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 - `up` refuses idempotency gate errors before applying migrations; other lint findings are nonblocking warnings.
 - `upgrade-env` records current script heads as a comment-preserving `lint.gate_baseline`.
 - Retired the incorrect `large_table_mutation` rule and row threshold. Legacy configuration is ignored with a deprecation warning pointing to `plan`.
+- Rebuild preflight reads active queued writers' per-query settings when query-log evidence has not flushed. Host/query identity and unknown-writer refusals remain enforced.
 
 ### Added
+
+- Continuous-writer rebuild acceptance for synchronous, interrupted, replicated, and both async acknowledgement modes, with server-time duplicate attribution, real error-741 retries, and exact reported-loss accounting.
 
 - SQL-first `new --table T --rebuild`, using portable live DDL or a commented offline placeholder and an irreversible guarded revision. Rebuild plans provide shell-quoted suggestions in human output and optional JSON.
 - `--exchange` remains available but warns that its copy cannot preserve concurrent writes.
