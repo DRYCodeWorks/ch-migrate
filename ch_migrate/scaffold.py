@@ -1,4 +1,4 @@
-"""EXCHANGE TABLES migration scaffold generation."""
+"""SQL-first guarded rebuilds and the deprecated EXCHANGE scaffold."""
 
 from __future__ import annotations
 
@@ -18,16 +18,24 @@ def fetch_current_ddl(env_config: dict[str, Any], table_name: str) -> str | None
     Returns:
         DDL string or None if connection fails or table doesn't exist.
     """
+    from clickhouse_connect.driver.binding import quote_identifier
+
     from ch_migrate.connection import get_client
 
+    client = None
     try:
         client = get_client(env_config)
         db = env_config["database"]
-        result = client.query(f"SHOW CREATE TABLE {db}.{table_name}")
+        result = client.query(
+            f"SHOW CREATE TABLE {quote_identifier(db)}.{quote_identifier(table_name)}"
+        )
         if result.result_rows:
             return result.result_rows[0][0]
     except Exception:
         return None
+    finally:
+        if client is not None:
+            client.close()
     return None
 
 
@@ -64,6 +72,28 @@ def find_dependent_dictionaries(
         return [row[0] for row in result.result_rows]
     except Exception:
         return []
+
+
+def generate_rebuild_sql(table_name: str, current_ddl: str | None = None) -> str:
+    """Start a portable replacement CREATE, or an explicitly commented offline placeholder."""
+    from ch_migrate.rebuild_ddl import _quote
+
+    header = (
+        f"-- Guarded online rebuild of {table_name}.\n"
+        "-- Edit ORDER BY, the engine or other desired schema details here; keep the table name.\n"
+        "-- The rebuild copies and swaps while writers keep running.\n"
+        "-- Duplicate copies are possible inside the recorded short rebuild window.\n"
+        "-- Reverse this change with another forward rebuild migration.\n"
+        "-- {db} is replaced with the selected environment's database.\n\n"
+    )
+    if current_ddl is None:
+        return header + (
+            "-- Live DDL was unavailable. Replace these comments with one complete CREATE TABLE.\n"
+            f"-- Start from SHOW CREATE TABLE {{db}}.{_quote(table_name)}.\n"
+            f"-- CREATE TABLE {{db}}.{_quote(table_name)} (your column definitions)\n"
+            "-- ENGINE = your_engine ORDER BY your_sorting_key;\n"
+        )
+    return header + _portable_rebuild_ddl(current_ddl, table_name).rstrip().rstrip(";") + ";\n"
 
 
 def _make_shadow_ddl(ddl: str, table_name: str) -> str:
@@ -251,3 +281,25 @@ def rewrite_migration_file(
         dict_names=dict_names,
     )
     migration_path.write_text(new_content)
+
+
+def _portable_rebuild_ddl(ddl: str, table_name: str) -> str:
+    from ch_migrate.rebuild_ddl import _header, _ident, _quote, _replace, _tokens, _upper
+
+    tokens = _tokens(ddl)
+    if len(tokens) < 4 or tuple(_upper(token) for token in tokens[:2]) != ("CREATE", "TABLE"):
+        raise ValueError("Live DDL is not a CREATE TABLE")
+    start = 2
+    changes = []
+    if tuple(_upper(token) for token in tokens[2:5]) == ("IF", "NOT", "EXISTS"):
+        changes.append((tokens[2].start, tokens[4].end, ""))
+        start = 5
+    end = start + 2 if tokens[start + 1].text == "." else start
+    if _ident(tokens[end]) != table_name:
+        raise ValueError("Live DDL names a different table")
+    _, uuid_span, cluster_span = _header(tokens, end + 1)
+    changes.append((tokens[start].start, tokens[end].end, f"{{db}}.{_quote(table_name)}"))
+    for span in (uuid_span, cluster_span):
+        if span:
+            changes.append((*span, ""))
+    return _replace(ddl, changes)

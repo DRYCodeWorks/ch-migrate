@@ -18,6 +18,9 @@ from ch_migrate.rebase import _MISSING, _literal_assignment
 
 OBJECT_DIRS = {"table": "tables", "view": "views", "dictionary": "dictionaries"}
 OTHER_DIR = "other"
+REBUILD_REASON = (
+    "Reverse a rebuild with another forward rebuild migration; automatic downgrade is unsupported."
+)
 
 
 @dataclass(frozen=True)
@@ -30,6 +33,11 @@ class NewOptions:
     exchange: bool = False
     python_migration: bool = False
     irreversible_reason: str | None = None
+    rebuild: bool = False
+
+    @property
+    def irreversible(self) -> str | None:
+        return REBUILD_REASON if self.rebuild else self.irreversible_reason
 
     def named_objects(self) -> list[tuple[str, str]]:
         return [
@@ -100,7 +108,7 @@ def write_sql_files(sql_root: Path, header: RevisionHeader, options: NewOptions)
 
     upgrade = rel_dir / f"{stem}.up.sql"
     (sql_root / upgrade).write_text(_sql_file_text(header, "upgrade"))
-    if options.irreversible_reason is not None:
+    if options.irreversible is not None:
         return SqlFiles(upgrade=str(upgrade), downgrade=None)
 
     downgrade = rel_dir / f"{stem}.down.sql"
@@ -108,9 +116,16 @@ def write_sql_files(sql_root: Path, header: RevisionHeader, options: NewOptions)
     return SqlFiles(upgrade=str(upgrade), downgrade=str(downgrade))
 
 
-def render_revision(header: RevisionHeader, files: SqlFiles, irreversible: str | None) -> str:
-    """The revision file for a SQL-first migration."""
-    imports = "IrreversibleMigration, run_sql" if irreversible else "run_sql"
+def render_revision(header: RevisionHeader, files: SqlFiles, options: NewOptions) -> str:
+    """The revision file for a SQL-first migration or guarded rebuild."""
+    irreversible = options.irreversible
+    operation = "rebuild_table" if options.rebuild else "run_sql"
+    imports = f"IrreversibleMigration, {operation}" if irreversible else operation
+    upgrade_call = (
+        f"rebuild_table({options.table_name!r}, {files.upgrade!r})"
+        if options.rebuild
+        else f"run_sql({files.upgrade!r})"
+    )
     marker = ""
     if irreversible:
         marker = (
@@ -131,7 +146,7 @@ def render_revision(header: RevisionHeader, files: SqlFiles, irreversible: str |
         f"depends_on = {header.depends_on!r}\n"
         f"{marker}\n\n"
         "def upgrade() -> None:\n"
-        f"    run_sql({files.upgrade!r})\n\n\n"
+        f"    {upgrade_call}\n\n\n"
         "def downgrade() -> None:\n"
         f"{downgrade_body}\n"
     )

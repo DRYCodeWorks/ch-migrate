@@ -141,6 +141,10 @@
                 "sql": {
                   "type": "string"
                 },
+                "suggested_command": {
+                  "type": "string",
+                  "minLength": 1
+                },
                 "file": {
                   "type": "string"
                 },

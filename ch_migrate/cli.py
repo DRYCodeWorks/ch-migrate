@@ -17,7 +17,7 @@ import click
 from dotenv import load_dotenv
 
 from ch_migrate import ui
-from ch_migrate.authoring import NewOptions
+from ch_migrate.authoring import NewOptions, SqlFiles
 from ch_migrate.config import get_env_config
 from ch_migrate.json_output import (
     JsonCommand,
@@ -461,6 +461,9 @@ def _check_mv_declarations() -> None:
     "--exchange", is_flag=True, help="Generate EXCHANGE TABLES scaffold (requires --table)"
 )
 @click.option(
+    "--rebuild", is_flag=True, help="Generate a guarded online rebuild (requires --table)"
+)
+@click.option(
     "--python", "python_migration", is_flag=True, help="Keep the Python migration template"
 )
 @click.option(
@@ -476,6 +479,7 @@ def new(
     view_name: str | None,
     dict_name: str | None,
     exchange: bool,
+    rebuild: bool,
     python_migration: bool,
     irreversible_reason: str | None,
 ) -> None:
@@ -483,19 +487,29 @@ def new(
 
     Name an object with --table, --view or --dict to group its SQL history.
     Use --irreversible REASON when a change cannot restore dropped data.
-    --python keeps the Python template; --exchange still requires --table.
+    --rebuild writes a guarded replacement CREATE; --exchange is deprecated.
     """
     options = NewOptions(
-        table_name, view_name, dict_name, exchange, python_migration, irreversible_reason
+        table_name=table_name,
+        view_name=view_name,
+        dict_name=dict_name,
+        exchange=exchange,
+        python_migration=python_migration,
+        irreversible_reason=irreversible_reason,
+        rebuild=rebuild,
     )
     _check_new_options(options)
+    if exchange:
+        ui.warn("Deprecated: --exchange uses legacy copy-and-swap and can lose rows written during the copy. Use --rebuild for guarded online rebuilding.")
     result = run_alembic(environment, ["revision", "-m", name])
     if result.returncode != 0:
         ui.fail(f"Could not create the revision: {alembic_failure(result)}")
     migration_path = _find_migration_file(result.stdout)
     if migration_path is None:
         ui.fail("Could not find the revision file Alembic generated.")
-    if exchange:
+    if rebuild:
+        _create_rebuild_scaffold(environment, migration_path, options)
+    elif exchange:
         revision = _extract_revision_from_output(result.stdout) or ""
         _create_exchange_scaffold(environment, table_name or "", revision, result.stdout)
     elif python_migration:
@@ -512,6 +526,12 @@ def _check_new_options(options: NewOptions) -> None:
         problems.append("--exchange requires --table")
     if options.exchange and options.python_migration:
         problems.append("--exchange cannot be combined with --python")
+    if options.rebuild and not options.table_name:
+        problems.append("--rebuild requires --table")
+    if options.rebuild and (
+        options.exchange or options.python_migration or options.irreversible_reason is not None
+    ):
+        problems.append("--rebuild cannot be combined with --exchange, --python or --irreversible")
     if options.irreversible_reason is not None:
         if options.exchange or options.python_migration:
             problems.append("--irreversible cannot be combined with --python or --exchange")
@@ -523,12 +543,12 @@ def _check_new_options(options: NewOptions) -> None:
         sys.exit(1)
 
 
-def _create_sql_first_migration(migration_path: Path, options: NewOptions) -> None:
+def _create_sql_first_migration(migration_path: Path, options: NewOptions) -> SqlFiles:
     from ch_migrate.authoring import read_revision_header, render_revision, write_sql_files
 
     header = read_revision_header(migration_path)
     files = write_sql_files(Path.cwd() / "migrations" / "sql", header, options)
-    migration_path.write_text(render_revision(header, files, options.irreversible_reason))
+    migration_path.write_text(render_revision(header, files, options))
     ui.success(f"Created migration {header.revision[:8]}  {header.message}")
     ui.detail(f"migrations/sql/{files.upgrade}")
     if files.downgrade:
@@ -537,6 +557,37 @@ def _create_sql_first_migration(migration_path: Path, options: NewOptions) -> No
     else:
         ui.hint("Write the SQL in this file; the revision needs no edits.")
         ui.hint("It is marked irreversible, so `ch-migrate down` will refuse to revert it.")
+    return files
+
+
+def _create_rebuild_scaffold(environment: str, migration_path: Path, options: NewOptions) -> None:
+    from botocore.exceptions import BotoCoreError, ClientError
+
+    from ch_migrate.scaffold import fetch_current_ddl, generate_rebuild_sql
+    from ch_migrate.secrets import SSMJsonKeyError, SSMSecretNotFoundError
+
+    table = options.table_name or ""
+    current_ddl = None
+    try:
+        current_ddl = fetch_current_ddl(
+            get_env_config(environment, Path.cwd() / "config.yaml"), table
+        )
+    except (
+        OSError,
+        ValueError,
+        BotoCoreError,
+        ClientError,
+        SSMJsonKeyError,
+        SSMSecretNotFoundError,
+    ):
+        pass  # Offline authoring produces a commented, non-executable placeholder.
+    content = generate_rebuild_sql(table, current_ddl)
+    files = _create_sql_first_migration(migration_path, options)
+    (Path.cwd() / "migrations" / "sql" / files.upgrade).write_text(content)
+    if current_ddl:
+        ui.hint(f"Fetched current DDL for {table}; edit its ORDER BY or engine and keep the table name.")
+    else:
+        ui.warn("Live DDL unavailable: replace the commented placeholder before running up.")
 
 
 def _create_python_migration(migration_path: Path, options: NewOptions) -> None:

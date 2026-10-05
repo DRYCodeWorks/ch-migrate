@@ -13,6 +13,9 @@ Changes are recorded in [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 
 ### Added
 
+- SQL-first `new --table T --rebuild`, using portable live DDL or a commented offline placeholder and an irreversible guarded revision. Rebuild plans provide shell-quoted suggestions in human output and optional JSON.
+- `--exchange` remains available but warns that its copy cannot preserve concurrent writes.
+
 - Rebuild dependent checks against the replacement schema, safe cleanup on pre-copy validation rejection, and post-swap dictionary reloads. Source/TO materialized views and inner-engine views keep their existing definitions.
 - Guarded online `rebuild_table`: same-database snapshot/staging helpers, durable partition checkpoints, all-replica swap barriers, a retained rollback table, and UUID-attributed async rejection reporting.
 - Non-takeover rebuild locks with independent heartbeats. Interrupted owners require explicit operator reconciliation and release before checkpoint resume; heartbeat expiry never authorizes a competing runner.

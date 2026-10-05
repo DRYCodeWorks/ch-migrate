@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shlex
 from dataclasses import asdict, dataclass, replace
 from graphlib import TopologicalSorter
 from pathlib import Path
@@ -101,6 +102,7 @@ class _Scope:
     dependencies: DependencyGraph
     env: dict[str, Any]
     findings: list[dict[str, Any]]
+    environment: str
     deployment: VersionTableState
     revision: str = ""
 
@@ -133,6 +135,7 @@ def _build_document(client: Any, request: _PlanInput) -> dict[str, Any]:
         get_dependencies(client, database),
         request.env,
         lint["findings"],
+        request.environment,
         deployment,
     )
     ordered = TopologicalSorter(
@@ -229,7 +232,18 @@ def _plan_statement(statement: MigrationStatement, scope: _Scope) -> dict[str, A
         ],
         "findings": findings,
         "rebuild": rebuild,
+        **(
+            {"suggested_command": _suggest_rebuild(scope.environment, table.name)}
+            if classification.kind == "rebuild"
+            else {}
+        ),
     }
+
+
+def _suggest_rebuild(environment: str, table: str) -> str:
+    return shlex.join(
+        ["ch-migrate", "new", environment, f"rebuild_{table}", "--table", table, "--rebuild"]
+    )
 
 
 def _rebuild_assessment(statement: MigrationStatement, table: Any, scope: _Scope):
@@ -410,6 +424,8 @@ def _render_statement(console: Console, statement: dict[str, Any]) -> None:
         console.print(f"  Downstream {node['type']}: {node['name']}")
     if statement["rebuild"]:
         _render_rebuild(console, statement["rebuild"])
+    if command := statement.get("suggested_command"):
+        console.print("  Suggested: " + command)
     for finding in statement["findings"]:
         _render_finding(console, finding)
 

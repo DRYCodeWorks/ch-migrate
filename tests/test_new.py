@@ -7,7 +7,7 @@ import pytest
 from click.testing import CliRunner
 
 from ch_migrate import IrreversibleMigration
-from ch_migrate.authoring import SqlFiles, read_revision_header, render_revision
+from ch_migrate.authoring import NewOptions, SqlFiles, read_revision_header, render_revision
 from ch_migrate.cli import main
 from ch_migrate.lint import lint_migrations
 from ch_migrate.mv_validate import validate_mv_migrations
@@ -146,9 +146,84 @@ def test_rewrite_preserves_header_and_merge_metadata(tmp_path):
         "branch_labels = ('topic',)\ndepends_on = ('dependency',)\n"
     )
     path.write_text(original)
-    result = render_revision(read_revision_header(path), SqlFiles("up.sql", "down.sql"), None)
+    result = render_revision(
+        read_revision_header(path), SqlFiles("up.sql", "down.sql"), NewOptions()
+    )
     assert ast.get_docstring(ast.parse(result)) == ast.get_docstring(ast.parse(original))
     assert _assignments(result) == _assignments(original)
+
+
+def test_new_rebuild_fetches_portable_ddl_and_marks_irreversible(root, monkeypatch):
+    from ch_migrate.sql import split_statements
+    from ch_migrate.statements import migration_statements
+
+    ddl = (
+        "CREATE TABLE `demo_dev`.`logs` UUID 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' "
+        "ON CLUSTER `dev_cluster` (id UInt64, value String DEFAULT 'demo_dev.logs') "
+        "ENGINE = MergeTree ORDER BY id"
+    )
+    monkeypatch.setattr("ch_migrate.scaffold.fetch_current_ddl", lambda *_: ddl)
+    _new("reorder", ["--table", "logs", "--rebuild"])
+    [revision] = list((root / "migrations" / "versions").glob("*.py"))
+    [upgrade] = list((root / "migrations" / "sql").rglob("*.up.sql"))
+    assert upgrade.parent == root / "migrations" / "sql" / "history" / "tables" / "logs"
+    assert list((root / "migrations" / "sql").rglob("*.down.sql")) == []
+    sql = split_statements(upgrade.read_text())[0].sql
+    assert sql.startswith("CREATE TABLE {db}.`logs`")
+    assert "UUID" not in sql and "ON CLUSTER" not in sql
+    assert "DEFAULT 'demo_dev.logs'" in sql
+    statement = migration_statements(revision)[0]
+    assert statement.rebuild.table == "logs"
+    assert statement.rebuild.create_sql_path == str(
+        upgrade.relative_to(root / "migrations" / "sql")
+    )
+    namespace = {}
+    exec(compile(revision.read_text(), str(revision), "exec"), namespace)
+    with pytest.raises(IrreversibleMigration):
+        namespace["downgrade"]()
+
+
+def test_new_rebuild_offline_placeholder_cannot_execute(root, monkeypatch):
+    from ch_migrate.sql import split_statements
+    from ch_migrate.statements import migration_statements
+
+    monkeypatch.setattr("ch_migrate.scaffold.fetch_current_ddl", lambda *_: None)
+    result = CliRunner().invoke(main, ["new", "dev", "offline", "--table", "logs", "--rebuild"])
+    assert result.exit_code == 0, result.output
+    [upgrade] = list((root / "migrations" / "sql").rglob("*.up.sql"))
+    assert split_statements(upgrade.read_text()) == []
+    assert "SHOW CREATE TABLE" in upgrade.read_text()
+    [revision] = list((root / "migrations" / "versions").glob("*.py"))
+    with pytest.raises(ValueError, match="exactly one"):
+        migration_statements(revision)
+    assert _assignments(revision.read_text())["irreversible"]
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        ["--rebuild"],
+        ["--rebuild", "--view", "logs"],
+        ["--rebuild", "--table", "logs", "--exchange"],
+        ["--rebuild", "--table", "logs", "--python"],
+        ["--rebuild", "--table", "logs", "--irreversible", "reason"],
+    ],
+)
+def test_new_rebuild_conflicts_leave_no_artifacts(root, options):
+    result = CliRunner().invoke(main, ["new", "dev", "invalid", *options])
+    assert result.exit_code != 0
+    assert list((root / "migrations" / "versions").glob("*.py")) == []
+    assert list((root / "migrations" / "sql").rglob("*.sql")) == []
+
+
+def test_new_rebuild_replacement_keeps_exchange_deprecation(root, monkeypatch):
+    monkeypatch.setattr("ch_migrate.scaffold.fetch_current_ddl", lambda *_: None)
+    monkeypatch.setattr("ch_migrate.scaffold.find_dependent_dictionaries", lambda *_: [])
+    result = CliRunner().invoke(main, ["new", "dev", "legacy", "--table", "logs", "--exchange"])
+    assert result.exit_code == 0, result.output
+    assert "Deprecated" in result.stderr and "--rebuild" in result.stderr
+    assert "lose rows" in result.stderr
+    assert len(list((root / "migrations" / "versions").glob("*.py"))) == 1
 
 
 def _new(name, options):

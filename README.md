@@ -421,7 +421,7 @@ def downgrade():
 
 ### Exchange and dictionary patterns
 
-`new --exchange --table NAME` generates the existing shadow-table, copy, exchange, and drop scaffold. Coordinate or pause writers: this copy-and-swap pattern alone does not preserve inserts arriving during the copy. It is not an online-rebuild guarantee. Review the generated SQL and column mapping before applying it. The scaffold is marked irreversible because it drops the old table.
+`new --exchange --table NAME` is deprecated. It still generates the legacy shadow-table, copy, exchange, and drop scaffold, and prints a warning pointing to `--rebuild`. Rows written during the legacy copy can be lost: coordinate or pause writers if you deliberately retain that workflow. For online changes, use the guarded `--rebuild` workflow below. The legacy scaffold remains irreversible because it drops the old table.
 
 The generated copy and exchange statements require explicit, reasoned waivers
 before `up` accepts them. The generator does not waive them automatically.
@@ -463,9 +463,16 @@ migration file. There is no command-line bypass. Writers that wait for
 acknowledgement should retry error **741** (`TABLE_UUID_MISMATCH`) and other
 transient rebuild errors. Writers must not ignore materialized-view errors.
 
-Put one explicit replacement CREATE in `migrations/sql/events-rebuild.sql`.
-It must name the same source table; the operation generates its own helper names,
-UUIDs, and replication paths:
+Generate the rebuild from the environment's current DDL:
+
+```bash
+ch-migrate new dev reorder_events --table events --rebuild
+```
+
+The command writes an `.up.sql` file under `migrations/sql/history/tables/events/`
+and an irreversible revision that calls `rebuild_table`. The command prints the
+exact paths; you do not edit Python. Edit only the replacement CREATE in the SQL
+file, keeping the source table's name. For example:
 
 ```sql
 CREATE TABLE {db}.events (
@@ -478,16 +485,16 @@ PARTITION BY toYYYYMM(ts)
 ORDER BY (k, ts, id);
 ```
 
-Call it from the revision:
+Inspect and apply it:
 
-```python
-from alembic import op
-
-def upgrade():
-    op.rebuild_table("events", "events-rebuild.sql")
+```bash
+ch-migrate plan dev
+ch-migrate up dev
 ```
 
-`from ch_migrate import rebuild_table` provides the same operation.
+The operation generates its own helper names, UUIDs and replication paths. `down` refuses this revision; reverse it with another forward rebuild migration. If live DDL cannot be fetched, `new` writes a **commented placeholder**, not an executable empty table. Supply one complete CREATE TABLE before running `up`.
+
+Advanced Python migrations can call `op.rebuild_table("events", "events-rebuild.sql")` or import `rebuild_table` from `ch_migrate`.
 For a row transformation, `select=` is a projection expression list in target
 column order, not a full SELECT query. It must preserve partition identity.
 The default copies explicit insertable target columns, excluding MATERIALIZED
@@ -720,6 +727,11 @@ Only ReplacingMergeTree variants can collapse identical sorting-key copies on
 merge. Other targets may retain duplicates, including Collapsing and
 VersionedCollapsing tables with identical positive rows.
 
+Rebuild-classified statements include an exact suggested
+`ch-migrate new ENV rebuild_TABLE --table TABLE --rebuild` command. Human output
+shows the command; JSON adds the optional `suggested_command` field without
+changing schema version 1.
+
 The [plan JSON schema](docs/schemas/plan.schema.json) covers both success and
 error documents. Human and JSON output use the same facts. Exit codes are **0**
 for a successful inspection, including warnings/preflight refusals; **1** when
@@ -749,7 +761,7 @@ Example: `ch-migrate bootstrap dev --dry-run`
 
 ### `new`
 
-`ch-migrate new ENV NAME [--table T | --view V | --dict D] [--irreversible REASON | --python | --exchange]` creates SQL-first migrations by default. Object-option aliases are `-t`, `-v`, and `-d`. `--python` keeps the Python template. `--exchange` requires `--table`. The three authoring-mode options are mutually exclusive, and conflicts fail before a revision is written.
+`ch-migrate new ENV NAME [--table T | --view V | --dict D] [--irreversible REASON | --python | --exchange | --rebuild]` creates SQL-first migrations by default. Object-option aliases are `-t`, `-v`, and `-d`. `--python` keeps the Python template. `--rebuild` and deprecated `--exchange` require `--table`; each conflicts with the other authoring-mode options. Conflicts fail before a revision is written.
 
 Example: `ch-migrate new dev add_status --table logs`
 
