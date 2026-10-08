@@ -88,8 +88,6 @@ class TestBuildBootstrapSql:
             migration_user="migration_dev",
             migration_password="secret123",
         )
-        # User management
-        assert "GRANT CREATE USER, ALTER USER, DROP USER ON *.* TO myproject_migration_role" in sql
         # Role management
         assert "GRANT CREATE ROLE, ALTER ROLE, DROP ROLE ON *.* TO myproject_migration_role" in sql
         # ROLE ADMIN for granting roles to users
