@@ -54,6 +54,14 @@ class TestGenerateExchangeSql:
         result = generate_exchange_sql("users")
         assert "{db}.users_shadow" in result
 
+    def test_live_ddl_engine_macros_survive_read_sql_formatting(self):
+        ddl = (
+            "CREATE TABLE mydb.users (id UInt64) "
+            "ENGINE = SharedMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}') ORDER BY id"
+        )
+        rendered = generate_exchange_sql("users", ddl).format(db="mydb")
+        assert "SharedMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}')" in rendered
+
 
 class TestGenerateExchangeMigration:
     def test_generates_valid_migration(self):

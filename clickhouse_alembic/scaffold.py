@@ -107,7 +107,9 @@ def generate_exchange_sql(
         SQL file content for the shadow table creation.
     """
     if current_ddl:
-        shadow_ddl = _make_shadow_ddl(current_ddl, table_name)
+        # read_sql() runs str.format on this file; keep engine macros such as {uuid} and
+        # {replica} (Replicated/Shared engines, ClickHouse Cloud) literal.
+        shadow_ddl = _make_shadow_ddl(current_ddl, table_name).replace("{", "{{").replace("}", "}}")
         return (
             f"-- Shadow table for EXCHANGE TABLES migration\n"
             f"-- Modify this schema with your desired changes.\n"
