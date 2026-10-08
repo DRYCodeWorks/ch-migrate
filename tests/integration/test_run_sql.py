@@ -63,7 +63,7 @@ def test_run_sql_offline_preserves_literals(project, monkeypatch):
 
 def test_run_sql_stops_on_first_failure(project):
     (project.sql_dir / "case.sql").write_text(
-        "CREATE TABLE IF NOT EXISTS {db}.logs (id UInt64) ENGINE = Memory;\n"
+        "CREATE TABLE IF NOT EXISTS {db}.logs (id UInt64) ENGINE = MergeTree ORDER BY id;\n"
         "INSERT INTO {db}.missing VALUES (1);\n"
         "INSERT INTO {db}.logs VALUES (1);\n"
     )
@@ -87,7 +87,7 @@ def _revision(project):
 
 def _literal_sql():
     return (
-        "CREATE TABLE IF NOT EXISTS {db}.logs (id UInt64, value String) ENGINE = Memory;\n"
+        "CREATE TABLE IF NOT EXISTS {db}.logs (id UInt64, value String) ENGINE = MergeTree ORDER BY id;\n"
         "INSERT INTO {db}.logs VALUES (1, '{\"a\":1}'), (2, ':abc'), (3, 'a%b'), "
         "(4, formatDateTime(now(), '%Y'));\n"
         "INSERT /* see :ref */ INTO {db}.logs VALUES (5, 'comment');\n"

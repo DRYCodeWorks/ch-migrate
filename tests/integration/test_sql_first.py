@@ -32,7 +32,10 @@ def test_sql_first_generated_revision_applies_and_reverts(project):
 
 
 def test_sql_first_exchange_still_generates_legacy_scaffold(project):
-    project.client.command(f"CREATE TABLE {project.database}.logs (id UInt64) ENGINE = Memory")
+    # MergeTree, not Memory: Memory rows stay on the writing replica of a multi-replica server.
+    project.client.command(
+        f"CREATE TABLE {project.database}.logs (id UInt64) ENGINE = MergeTree ORDER BY id"
+    )
     project.client.command(f"INSERT INTO {project.database}.logs VALUES (7)")
     created = project.run("new", "it", "rebuild_logs", "--table", "logs", "--exchange")
     assert created.exit_code == 0, created.output

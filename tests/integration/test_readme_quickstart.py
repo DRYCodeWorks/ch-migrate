@@ -54,7 +54,8 @@ def _configure(root, server, request):
     (root / "config.yaml").write_text(yaml.safe_dump(config))
     (root / ".env.local").write_text(
         f"CH_DEV_ADMIN_PASSWORD={server.password}\n"
-        f"CH_DEV_MIGRATION_PASSWORD={secrets.token_hex(24)}\n"
+        # ClickHouse Cloud's password policy needs an uppercase letter and a special character.
+        f"CH_DEV_MIGRATION_PASSWORD=Chm!{secrets.token_hex(24)}\n"
     )
     client = server.connect()
     request.addfinalizer(client.close)
