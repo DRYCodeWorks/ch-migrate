@@ -80,7 +80,9 @@ class MigrationProject:
 def clickhouse_server(request):
     url = os.environ.get("CH_MIGRATE_IT_URL")
     if url:
-        return _server_from_url(url)
+        server = _server_from_url(url)
+        _wait_for_query(server)
+        return server
     if not shutil.which("docker"):
         pytest.skip("Docker is unavailable and CH_MIGRATE_IT_URL is not set")
     available = subprocess.run(["docker", "info"], capture_output=True)
@@ -174,6 +176,20 @@ def _wait_for_ping(server):
             pass
         time.sleep(0.2)
     pytest.fail("Integration container did not become ready within 60 seconds", pytrace=False)
+
+
+def _wait_for_query(server):
+    """Wait for an external server; an idle-scaled ClickHouse Cloud service needs time to wake."""
+    deadline = time.monotonic() + 300
+    while time.monotonic() < deadline:
+        try:
+            client = server.connect()
+            client.command("SELECT 1")
+            client.close()
+            return
+        except Exception:  # noqa: BLE001 - any failure before the deadline means "not awake yet"
+            time.sleep(2)
+    pytest.fail("CH_MIGRATE_IT_URL server did not answer within 300 seconds", pytrace=False)
 
 
 def _configure_project(root, server):
