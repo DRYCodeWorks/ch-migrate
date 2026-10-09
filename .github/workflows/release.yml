@@ -8,8 +8,9 @@ name: release
 # PyPI publisher for project ch-migrate-cli: owner DRYCodeWorks, repository
 # ch-migrate, workflow release.yml, no environment.
 #
-# To release: set __version__ in ch_migrate/__init__.py, commit,
-# then `git tag vX.Y.Z && git push origin vX.Y.Z`.
+# To release: set __version__ in ch_migrate/__init__.py, commit, merge to main,
+# then `git tag vX.Y.Z && git push origin vX.Y.Z`. Tags on commits that are
+# not on main are refused before anything builds.
 
 on:
   push:
@@ -19,7 +20,22 @@ permissions:
   contents: read
 
 jobs:
+  on-main:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: The tagged commit is on main
+        run: |
+          if ! git merge-base --is-ancestor "${GITHUB_SHA}" origin/main; then
+            echo "::error::${GITHUB_REF_NAME} (${GITHUB_SHA}) is not on main. Merge to main first, then tag."
+            exit 1
+          fi
+
   ci:
+    needs: on-main
     uses: ./.github/workflows/ci.yml
 
   build:
