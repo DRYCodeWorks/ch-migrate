@@ -90,11 +90,11 @@ def _report_irreversible_range(
             f"{_plural(above, 'migration')} above {newest_blocked[:8]}.",
             stderr=True,
         )
-    ui.hint(
-        "To revert an irreversible migration, write its downgrade and remove its "
-        "irreversible marker in a reviewed change.",
-        stderr=True,
-    )
+    if len(blocked) == 1:
+        fix = f"To revert {newest_blocked[:8]}, write its downgrade and remove its irreversible marker"
+    else:
+        fix = "To revert them, write their downgrades and remove their irreversible markers"
+    ui.hint(f"{fix} in a reviewed change.", stderr=True)
 
 
 def _plural(count: int, noun: str) -> str:
