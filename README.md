@@ -15,7 +15,7 @@ pip install ch-migrate-cli
 ch-migrate --version
 ```
 
-The command is `ch-migrate`, the PyPI package is `ch-migrate-cli` (PyPI treats `ch-migrate` as the same name as the existing, unrelated `chmigrate`), and migrations import from `ch_migrate`. Versions up to 0.4.1 were published as `clickhouse-alembic` with the import package `clickhouse_alembic`; that import still works with a deprecation warning until 1.0, so existing migration files keep running. Replace `clickhouse_alembic` with `ch_migrate` in them when convenient, and run `ch-migrate upgrade-env` to refresh `migrations/env.py`.
+The command is `ch-migrate`, the PyPI package is `ch-migrate-cli` (PyPI treats `ch-migrate` as the same name as the existing, unrelated `chmigrate`), and migrations import from `ch_migrate`. Versions up to 0.4.1 were published as `clickhouse-alembic` with the import package `clickhouse_alembic`; that import still works with a deprecation warning until 1.0, so existing migration files keep running. Replace `clickhouse_alembic` with `ch_migrate` in them when convenient. For `migrations/env.py`, run `ch-migrate upgrade-env` only if you never edited it; if you did (for example to add connection settings), change its `clickhouse_alembic` imports to `ch_migrate` by hand instead, because `upgrade-env` replaces the whole file.
 
 To switch an existing install, remove the old package first, because both install the `ch-migrate` command and the `clickhouse_alembic` folder: `uv tool uninstall clickhouse-alembic && uv tool install ch-migrate-cli`, or `pip uninstall clickhouse-alembic && pip install ch-migrate-cli`. In a project that lists `clickhouse-alembic` as a dependency, replace it with `ch-migrate-cli`.
 
@@ -242,7 +242,7 @@ Example: `ch-migrate down dev --revision base`
 
 ### `status`
 
-`ch-migrate status ENV` shows connection information, applied/pending counts, and head status, and names the `up` command when migrations are pending. No command-specific options. Exits 1 if it cannot reach the database.
+`ch-migrate status ENV` shows connection information, applied/pending counts, and head status, and names the `up` command when migrations are pending. No command-specific options. Status is a report: it exits 0 when the database is unreachable (with a warning) or migrations are pending, and exits 1 only when the configuration or `migrations/versions/` is missing, so CI can run it as a non-blocking check.
 
 Example: `ch-migrate status dev`
 
@@ -292,7 +292,7 @@ Example: `ch-migrate rebase dev --onto abc123 --dry-run`
 
 ### `upgrade-env`
 
-`ch-migrate upgrade-env` replaces `migrations/env.py` with the installed version and backs up the old file as `env.py.bak`. No command-specific options. Review and reapply local customizations from the backup.
+`ch-migrate upgrade-env` replaces `migrations/env.py` with the installed version and backs up the old file as `env.py.bak`. No command-specific options. It does not merge: any local customizations (connection settings, session pins, hooks) are dropped from the new file. Reapply them from the backup, or skip `upgrade-env` and edit a customized `env.py` by hand.
 
 Example: `ch-migrate upgrade-env`
 

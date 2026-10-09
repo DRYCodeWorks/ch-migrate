@@ -250,14 +250,17 @@ def status(environment: str) -> None:
     """Show migration status.
 
     Displays environment info, applied/pending counts, and head status.
-    Exits 1 if the database cannot be reached.
+    Status is a report: it exits 0 even when the database cannot be reached or
+    migrations are pending, and exits 1 only when the config or migrations/versions/
+    is missing. CI jobs use it as a non-blocking reporter.
     """
     from ch_migrate.display import render_status
 
     state = _load_migration_state(environment)
     render_status(environment, state.env_config, state.graph, state.applied, db_error=state.db_error)
     if state.db_error:
-        ui.fail(f"Could not reach the database: {state.db_error.strip().splitlines()[0]}")
+        ui.warn(f"Could not reach the database: {state.db_error.strip().splitlines()[0]}")
+        return
     pending = len(set(state.graph.migrations) - (state.applied or set()))
     if pending:
         noun = "migration" if pending == 1 else "migrations"
