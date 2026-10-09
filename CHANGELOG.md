@@ -2,6 +2,13 @@
 
 Changes are recorded in [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format.
 
+## [0.5.1]
+
+### Fixed
+
+- `status` exits 0 again when it cannot reach the database, as it did up to 0.4.1, and prints the connection error as a warning. 0.5.0 made it exit 1, which turned CI jobs that run `status` as a non-blocking reporter into failures whenever the database was briefly unreachable. It still exits 1 when the configuration or `migrations/versions/` is missing.
+- Upgrade notes: run `ch-migrate upgrade-env` only for an `env.py` you never edited. It replaces the whole file, so a customized `env.py` (connection settings, session pins) loses those changes; change its `clickhouse_alembic` imports to `ch_migrate` by hand instead. The 0.5.0 notes said to run `upgrade-env` unconditionally.
+
 ## [0.5.0]
 
 0.5.x is the last release line that supports Python 3.9. 0.6 requires Python 3.10 or later, because it moves to the official clickhouse-connect dialect.
