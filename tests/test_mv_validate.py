@@ -895,7 +895,7 @@ class TestCLIIntegration:
         runner = CliRunner()
         result = runner.invoke(main, ["up", "dev"], catch_exceptions=False)
         assert result.exit_code != 0
-        assert "MV declaration validation failed" in result.output or "MV declaration validation failed" in (result.output + (result.output if hasattr(result, 'stderr') else ''))
+        assert "create_mv000_create_mv.py:" in result.output  # the offending file is named
 
     def test_up_skip_mv_check_bypasses(self, tmp_path: Path, monkeypatch):
         from click.testing import CliRunner
@@ -923,9 +923,9 @@ class TestCLIIntegration:
         result = runner.invoke(
             main, ["up", "dev", "--skip-mv-check"], catch_exceptions=False
         )
-        # Should NOT contain MV validation error
+        # The validation finding must not be reported
         output = result.output
-        assert "MV declaration validation failed" not in output
+        assert "create_mv000_create_mv.py:" not in output
 
 
 class TestLintIntegration:

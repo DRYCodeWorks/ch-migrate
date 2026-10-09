@@ -7,14 +7,21 @@ import re
 import shutil
 import subprocess
 import sys
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 import click
 from dotenv import load_dotenv
 
+from clickhouse_alembic import ui
 from clickhouse_alembic.authoring import NewOptions
 from clickhouse_alembic.config import get_env_config
+from clickhouse_alembic.runner import alembic_failure, run_alembic, run_migrations
+
+if TYPE_CHECKING:
+    from clickhouse_alembic.rebase import RevisionGraph
 
 # Load .env.local if it exists in the current directory
 _env_local = Path.cwd() / ".env.local"
@@ -35,64 +42,6 @@ def render_template(template_path: Path, **kwargs: str) -> str:
     return content
 
 
-def _run_alembic(
-    environment: str, args: list[str], *, exit_on_complete: bool = True
-) -> subprocess.CompletedProcess[str] | None:
-    """Run alembic with environment configuration.
-
-    Args:
-        environment: Environment name from config.yaml
-        args: Arguments to pass to alembic
-        exit_on_complete: If True, exit after running. If False, return the result.
-
-    Returns:
-        CompletedProcess if exit_on_complete=False, otherwise exits.
-    """
-    config_path = Path.cwd() / "config.yaml"
-
-    try:
-        env_config = get_env_config(environment, config_path)
-    except Exception as e:
-        click.echo(f"Error loading config: {e}", err=True)
-        if exit_on_complete:
-            sys.exit(1)
-        return None
-
-    # Set environment variables for alembic
-    env = os.environ.copy()
-    env["CH_ENVIRONMENT"] = environment
-    env["CH_DATABASE"] = env_config["database"]
-    env["CH_HOST"] = env_config["host"]
-    env["CH_PORT"] = str(env_config.get("port", 8443))
-    env["CH_USER"] = env_config.get("migration_user") or env_config.get("user", "")
-    env["CH_PASSWORD"] = env_config.get("password", "")
-    env["CH_SECURE"] = "1" if env_config.get("secure", True) else "0"
-
-    # Use sys.executable to run alembic from the same Python environment
-    # as ch-migrate, avoiding issues with pyenv shims intercepting the call
-    result = subprocess.run(
-        [sys.executable, "-m", "alembic"] + args,
-        env=env,
-        cwd=Path.cwd(),
-        capture_output=True,
-        text=True,
-    )
-
-    # Show output from alembic
-    if result.stdout:
-        click.echo(result.stdout)
-    if result.stderr:
-        click.echo(result.stderr, err=True)
-
-    if result.returncode != 0:
-        click.echo(f"Alembic command failed with exit code {result.returncode}", err=True)
-
-    if exit_on_complete:
-        sys.exit(result.returncode)
-
-    return result
-
-
 def _refuse_irreversible_downgrade(environment: str, target: str) -> None:
     from clickhouse_alembic.connection import get_current_heads
     from clickhouse_alembic.downgrade import irreversible_reason, revisions_to_revert
@@ -102,23 +51,23 @@ def _refuse_irreversible_downgrade(environment: str, target: str) -> None:
         env_config = get_env_config(environment, Path.cwd() / "config.yaml")
         heads = get_current_heads(env_config)
     except Exception:
-        return  # Alembic reports configuration and connection errors itself.
+        return  # `up`/`down` report configuration and connection errors themselves.
     graph = build_revision_graph(Path.cwd() / "migrations" / "versions")
     revisions = revisions_to_revert(graph, heads, target)
     if revisions is None:
-        click.echo("Note: downgrade range is unknown; relying on migration backstops.", err=True)
+        ui.warn("The downgrade range is unknown; relying on each migration's own refusal.")
         return
     irreversible = [(rev, irreversible_reason(graph, rev)) for rev in revisions]
     irreversible = [(rev, reason) for rev, reason in irreversible if reason is not None]
     if not irreversible:
         return
-    click.echo("Downgrade refused; nothing was run. Irreversible migrations:", err=True)
+    ui.error("Downgrade refused; nothing was run. These migrations are irreversible:")
     for rev, reason in irreversible:
-        click.echo(f"  {rev}: {reason}", err=True)
-    click.echo(
-        "To revert past these revisions, write their downgrades and remove the "
-        "irreversible markers in a reviewed change.",
-        err=True,
+        ui.detail(f"{rev[:8]}  {reason}", stderr=True)
+    ui.hint(
+        "To revert past them, write their downgrades and remove the irreversible "
+        "markers in a reviewed change.",
+        stderr=True,
     )
     sys.exit(1)
 
@@ -157,8 +106,7 @@ def init(path: str, name: str | None) -> None:
     # Normalize project name (replace spaces/hyphens with underscores for database names)
     safe_name = name.replace("-", "_").replace(" ", "_").lower()
 
-    click.echo(f"Initializing ClickHouse migration project: {name}")
-    click.echo(f"  Path: {project_path}")
+    ui.step(f"Creating ClickHouse migration project {name} in {project_path}")
 
     # Create directories
     project_path.mkdir(parents=True, exist_ok=True)
@@ -183,34 +131,32 @@ def init(path: str, name: str | None) -> None:
         output_path = project_path / output_name
 
         if output_path.exists():
-            click.echo(f"  Skipping {output_name} (already exists)")
+            ui.detail(f"Skipped {output_name} (already exists)")
             continue
 
         content = render_template(template_path, project_name=safe_name)
         output_path.write_text(content)
-        click.echo(f"  Created {output_name}")
+        ui.detail(f"Created {output_name}")
 
     # Copy env.py from package
     env_py_src = Path(__file__).parent / "env.py"
     env_py_dst = project_path / "migrations" / "env.py"
     if not env_py_dst.exists():
         shutil.copy(env_py_src, env_py_dst)
-        click.echo("  Created migrations/env.py")
+        ui.detail("Created migrations/env.py")
 
     # Create .gitignore
     gitignore_path = project_path / ".gitignore"
     if not gitignore_path.exists():
         gitignore_path.write_text(".env.local\n__pycache__/\n*.pyc\n")
-        click.echo("  Created .gitignore")
+        ui.detail("Created .gitignore")
 
-    click.echo("")
-    click.echo("Project initialized! Next steps:")
-    click.echo("")
-    click.echo("  1. Edit config.yaml with your ClickHouse hosts")
-    click.echo("  2. Copy .env.local.example to .env.local and add passwords")
-    click.echo("  3. Run: ch-migrate bootstrap dev")
-    click.echo("  4. Create your first migration: ch-migrate new dev create_users --table users")
-    click.echo("     then write its SQL in the .up.sql and .down.sql files it creates")
+    ui.success("Project created. Next steps:")
+    ui.hint("  1. Point config.yaml at your ClickHouse servers.")
+    ui.hint("  2. Copy .env.local.example to .env.local and add the passwords.")
+    ui.hint("  3. Run `ch-migrate bootstrap dev`.")
+    ui.hint("  4. Run `ch-migrate new dev create_users --table users`, then write the SQL")
+    ui.hint("     in the .up.sql and .down.sql files it creates.")
 
 
 @main.command()
@@ -230,8 +176,7 @@ def bootstrap(environment: str, dry_run: bool, verbose: bool) -> None:
     try:
         run_bootstrap(environment, dry_run=dry_run, verbose=verbose)
     except Exception as e:
-        click.echo(f"Error: {e}", err=True)
-        sys.exit(1)
+        ui.fail(f"Bootstrap failed: {e}")
 
 
 @main.command()
@@ -242,7 +187,8 @@ def bootstrap(environment: str, dry_run: bool, verbose: bool) -> None:
     is_flag=True,
     help="Skip materialized view declaration validation",
 )
-def up(environment: str, revision: str, skip_mv_check: bool) -> None:
+@click.option("--verbose", is_flag=True, help="Show the full traceback if a migration fails")
+def up(environment: str, revision: str, skip_mv_check: bool, verbose: bool) -> None:
     """Apply pending migrations.
 
     Runs all unapplied migrations to bring the database to the latest version.
@@ -252,61 +198,21 @@ def up(environment: str, revision: str, skip_mv_check: bool) -> None:
     MV_DECLARATIONS and companion grants. Use --skip-mv-check to bypass.
     """
     if not skip_mv_check:
-        versions_dir = Path.cwd() / "migrations" / "versions"
-        if versions_dir.exists():
-            from clickhouse_alembic.config import load_config
-            from clickhouse_alembic.lint import LintConfig
-            from clickhouse_alembic.mv_validate import validate_mv_migrations
-
-            cutoff = None
-            config_path = Path.cwd() / "config.yaml"
-            if config_path.exists():
-                try:
-                    raw_config = load_config(config_path)
-                    lint_config = LintConfig.from_config(raw_config)
-                    cutoff = lint_config.mv_validation_cutoff
-                except Exception as e:
-                    click.echo(
-                        f"Warning: Could not load lint config: {e}",
-                        err=True,
-                    )
-
-            mv_errors = validate_mv_migrations(versions_dir, cutoff_date=cutoff)
-            if mv_errors:
-                click.echo(
-                    click.style(
-                        "MV declaration validation failed:", fg="red", bold=True
-                    ),
-                    err=True,
-                )
-                for error in mv_errors:
-                    prefix = f"  [{error.file}]"
-                    if error.mv_name:
-                        prefix += f" ({error.mv_name})"
-                    click.echo(
-                        click.style(f"{prefix}: {error.message}", fg="red"),
-                        err=True,
-                    )
-                click.echo(err=True)
-                click.echo(
-                    "Fix the issues above, or use --skip-mv-check to bypass.",
-                    err=True,
-                )
-                sys.exit(1)
-
-    _run_alembic(environment, ["upgrade", revision])
+        _check_mv_declarations()
+    sys.exit(run_migrations(environment, ["upgrade", revision], verbose=verbose))
 
 
 @main.command()
 @click.argument("environment")
 @click.option("--revision", "-r", default="-1", help="Revision to downgrade to (default: -1)")
-def down(environment: str, revision: str) -> None:
+@click.option("--verbose", is_flag=True, help="Show the full traceback if a migration fails")
+def down(environment: str, revision: str, verbose: bool) -> None:
     """Rollback migrations.
 
     By default, rolls back the last migration. Use --revision to specify a target.
     """
     _refuse_irreversible_downgrade(environment, revision)
-    _run_alembic(environment, ["downgrade", revision])
+    sys.exit(run_migrations(environment, ["downgrade", revision], verbose=verbose))
 
 
 @main.command()
@@ -315,42 +221,18 @@ def status(environment: str) -> None:
     """Show migration status.
 
     Displays environment info, applied/pending counts, and head status.
+    Exits 1 if the database cannot be reached.
     """
-    from clickhouse_alembic.connection import get_current_heads
     from clickhouse_alembic.display import render_status
-    from clickhouse_alembic.rebase import build_revision_graph
 
-    config_path = Path.cwd() / "config.yaml"
-    try:
-        env_config = get_env_config(environment, config_path)
-    except Exception as e:
-        click.echo(f"Error loading config: {e}", err=True)
-        sys.exit(1)
-
-    versions_dir = Path.cwd() / "migrations" / "versions"
-    if not versions_dir.exists():
-        click.echo("Error: migrations/versions/ not found", err=True)
-        sys.exit(1)
-
-    graph = build_revision_graph(versions_dir)
-
-    db_error = None
-    applied: set[str] | None = None
-    try:
-        db_heads = get_current_heads(env_config)
-        applied = set()
-        for head in db_heads:
-            if head in graph.migrations:
-                applied.update(graph.walk_to_root(head))
-            else:
-                click.echo(
-                    f"Warning: DB head {head[:12]} not found in local migration files",
-                    err=True,
-                )
-    except Exception as e:
-        db_error = str(e)
-
-    render_status(environment, env_config, graph, applied, db_error=db_error)
+    state = _load_migration_state(environment)
+    render_status(environment, state.env_config, state.graph, state.applied, db_error=state.db_error)
+    if state.db_error:
+        ui.fail(f"Could not reach the database: {state.db_error.strip().splitlines()[0]}")
+    pending = len(set(state.graph.migrations) - (state.applied or set()))
+    if pending:
+        noun = "migration" if pending == 1 else "migrations"
+        ui.hint(f"Run `ch-migrate up {environment}` to apply {pending} pending {noun}.")
 
 
 @main.command()
@@ -360,51 +242,82 @@ def history(environment: str) -> None:
 
     Displays a tree of all migrations, color-coded by applied status.
     """
-    from clickhouse_alembic.connection import get_current_heads
     from clickhouse_alembic.display import render_history
+
+    state = _load_migration_state(environment)
+    render_history(state.graph, state.applied, db_error=state.db_error)
+
+
+@dataclass(frozen=True)
+class _MigrationState:
+    env_config: dict[str, Any]
+    graph: RevisionGraph
+    applied: set[str] | None  # None when the database could not be read
+    db_error: str | None
+
+
+def _load_migration_state(environment: str) -> _MigrationState:
+    """Local revision graph plus what the database says is applied."""
+    from clickhouse_alembic.connection import get_current_heads
     from clickhouse_alembic.rebase import build_revision_graph
 
-    config_path = Path.cwd() / "config.yaml"
+    env_config = _env_config_or_fail(environment)
+    graph = build_revision_graph(_versions_dir_or_fail())
     try:
-        env_config = get_env_config(environment, config_path)
+        heads = get_current_heads(env_config)
     except Exception as e:
-        click.echo(f"Error loading config: {e}", err=True)
-        sys.exit(1)
+        return _MigrationState(env_config, graph, None, str(e))
+    applied: set[str] = set()
+    unknown = [head for head in heads if head not in graph.migrations]
+    for head in heads:
+        if head in graph.migrations:
+            applied.update(graph.walk_to_root(head))
+    for head in unknown:
+        ui.warn(f"The database is at {head[:12]}, which is not in your local migration files.")
+    if unknown:
+        ui.warn("Applied status may be incomplete; pull the missing revisions.")
+    return _MigrationState(env_config, graph, applied, None)
+
+
+def _env_config_or_fail(environment: str) -> dict[str, Any]:
+    try:
+        return get_env_config(environment, Path.cwd() / "config.yaml")
+    except Exception as e:
+        ui.fail(f"Could not load config: {e}")
+
+
+def _versions_dir_or_fail() -> Path:
+    versions_dir = Path.cwd() / "migrations" / "versions"
+    if not versions_dir.exists():
+        ui.fail("migrations/versions/ not found.", "Run `ch-migrate init` to create a project.")
+    return versions_dir
+
+
+def _check_mv_declarations() -> None:
+    """Refuse `up` when a materialized-view migration lacks its declarations."""
+    from clickhouse_alembic.config import load_config
+    from clickhouse_alembic.lint import LintConfig
+    from clickhouse_alembic.mv_validate import validate_mv_migrations
 
     versions_dir = Path.cwd() / "migrations" / "versions"
     if not versions_dir.exists():
-        click.echo("Error: migrations/versions/ not found", err=True)
-        sys.exit(1)
-
-    graph = build_revision_graph(versions_dir)
-
-    db_error = None
-    applied: set[str] | None = None
-    try:
-        db_heads = get_current_heads(env_config)
-        applied = set()
-        unresolved_heads: list[str] = []
-        for head in db_heads:
-            if head in graph.migrations:
-                applied.update(graph.walk_to_root(head))
-            else:
-                unresolved_heads.append(head)
-
-        if unresolved_heads:
-            for head in unresolved_heads:
-                click.echo(
-                    f"Warning: DB head {head[:12]} not found in local migration files",
-                    err=True,
-                )
-            click.echo(
-                "Applied status may be incomplete — local files may be out of sync with the database.",
-                err=True,
-            )
-            click.echo()
-    except Exception as e:
-        db_error = str(e)
-
-    render_history(graph, applied, db_error=db_error)
+        return
+    cutoff = None
+    config_path = Path.cwd() / "config.yaml"
+    if config_path.exists():
+        try:
+            cutoff = LintConfig.from_config(load_config(config_path)).mv_validation_cutoff
+        except Exception as e:
+            ui.warn(f"Could not load lint config: {e}")
+    mv_errors = validate_mv_migrations(versions_dir, cutoff_date=cutoff)
+    if not mv_errors:
+        return
+    ui.error("Materialized view declarations are incomplete; nothing was run.")
+    for error in mv_errors:
+        where = f"{error.file} ({error.mv_name})" if error.mv_name else error.file
+        ui.detail(f"{where}: {error.message}", stderr=True)
+    ui.hint("Fix these, or pass `--skip-mv-check` to run anyway.", stderr=True)
+    sys.exit(1)
 
 
 @main.command()
@@ -449,13 +362,12 @@ def new(
         table_name, view_name, dict_name, exchange, python_migration, irreversible_reason
     )
     _check_new_options(options)
-    result = _run_alembic(environment, ["revision", "-m", name], exit_on_complete=False)
-    if result is None or result.returncode != 0:
-        sys.exit(1 if result is None else result.returncode)
+    result = run_alembic(environment, ["revision", "-m", name])
+    if result.returncode != 0:
+        ui.fail(f"Could not create the revision: {alembic_failure(result)}")
     migration_path = _find_migration_file(result.stdout)
     if migration_path is None:
-        click.echo("Error: could not find the revision file Alembic generated", err=True)
-        sys.exit(1)
+        ui.fail("Could not find the revision file Alembic generated.")
     if exchange:
         revision = _extract_revision_from_output(result.stdout) or ""
         _create_exchange_scaffold(environment, table_name or "", revision, result.stdout)
@@ -478,9 +390,9 @@ def _check_new_options(options: NewOptions) -> None:
             problems.append("--irreversible cannot be combined with --python or --exchange")
         if not options.irreversible_reason.strip():
             problems.append("--irreversible needs a non-empty reason")
+    for problem in problems:
+        ui.error(problem)
     if problems:
-        for problem in problems:
-            click.echo(f"Error: {problem}", err=True)
         sys.exit(1)
 
 
@@ -490,24 +402,29 @@ def _create_sql_first_migration(migration_path: Path, options: NewOptions) -> No
     header = read_revision_header(migration_path)
     files = write_sql_files(Path.cwd() / "migrations" / "sql", header, options)
     migration_path.write_text(render_revision(header, files, options.irreversible_reason))
-    click.echo(f"  Created migrations/sql/{files.upgrade}")
+    ui.success(f"Created migration {header.revision[:8]}  {header.message}")
+    ui.detail(f"migrations/sql/{files.upgrade}")
     if files.downgrade:
-        click.echo(f"  Created migrations/sql/{files.downgrade}")
+        ui.detail(f"migrations/sql/{files.downgrade}")
+        ui.hint("Write the SQL in these files; the revision needs no edits.")
     else:
-        click.echo("  Marked irreversible: `ch-migrate down` will refuse to revert it")
-    click.echo("  Write the SQL in these files; the revision needs no edits.")
+        ui.hint("Write the SQL in this file; the revision needs no edits.")
+        ui.hint("It is marked irreversible, so `ch-migrate down` will refuse to revert it.")
 
 
 def _create_python_migration(migration_path: Path, options: NewOptions) -> None:
     from clickhouse_alembic.authoring import read_revision_header
 
+    header = read_revision_header(migration_path)
+    ui.success(f"Created migration {header.revision[:8]}  {header.message}")
+    ui.detail(str(migration_path.relative_to(Path.cwd())))
     named = options.named_objects()
     if named:
         object_type, object_name = named[0]
-        revision = read_revision_header(migration_path).revision
-        sql_path = _create_sql_file(object_name, object_type, revision)
+        sql_path = _create_sql_file(object_name, object_type, header.revision)
         if sql_path:
-            click.echo(f"  Created {sql_path.relative_to(Path.cwd())}")
+            ui.detail(str(sql_path.relative_to(Path.cwd())))
+    ui.hint("Write upgrade() and downgrade() in the revision file.")
 
 
 def _extract_revision_from_output(stdout: str) -> str | None:
@@ -586,28 +503,30 @@ def _create_exchange_scaffold(
         env_config = get_env_config(environment, config_path)
         current_ddl = fetch_current_ddl(env_config, table_name)
         if current_ddl:
-            click.echo(f"  Fetched current DDL for {table_name}")
+            ui.detail(f"Fetched the current DDL for {table_name}")
         dict_names = find_dependent_dictionaries(env_config, table_name)
         if dict_names:
-            click.echo(f"  Detected dependent dictionaries: {', '.join(dict_names)}")
+            ui.detail(f"Found dependent dictionaries: {', '.join(dict_names)}")
     except Exception:
-        click.echo("  Note: Could not connect to DB; using placeholder DDL", err=True)
+        ui.warn("Could not connect to the database; the scaffold uses placeholder DDL.")
 
     # Create SQL history file with shadow table DDL
     sql_content = generate_exchange_sql(table_name, current_ddl)
     sql_path = _create_sql_file(table_name, "table", revision)
     if sql_path:
         sql_path.write_text(sql_content)
-        click.echo(f"  Created {sql_path.relative_to(Path.cwd())}")
 
         # Rewrite the migration .py with EXCHANGE pattern
         migration_path = _find_migration_file(alembic_stdout)
         if migration_path:
             rel_sql = str(sql_path.relative_to(Path.cwd() / "migrations" / "sql"))
             rewrite_migration_file(migration_path, table_name, rel_sql, dict_names or None)
-            click.echo(f"  Rewrote {migration_path.name} with EXCHANGE TABLES pattern")
+            ui.success(f"Created EXCHANGE TABLES migration {revision[:8]} for {table_name}")
+            ui.detail(str(migration_path.relative_to(Path.cwd())))
+            ui.detail(str(sql_path.relative_to(Path.cwd())))
+            ui.hint("Edit the shadow table's CREATE statement in the SQL file.")
         else:
-            click.echo("Warning: Could not locate migration file to rewrite", err=True)
+            ui.warn("Could not locate the migration file to rewrite.")
 
 
 def _find_migration_file(alembic_stdout: str) -> Path | None:
@@ -640,10 +559,7 @@ def rebase(environment: str, onto: str | None, dry_run: bool) -> None:
     """
     from clickhouse_alembic.rebase import apply_rebase, plan_rebase
 
-    versions_dir = Path.cwd() / "migrations" / "versions"
-    if not versions_dir.exists():
-        click.echo("Error: migrations/versions/ not found", err=True)
-        sys.exit(1)
+    versions_dir = _versions_dir_or_fail()
 
     # Check for uncommitted changes to migration files
     result = subprocess.run(
@@ -653,63 +569,49 @@ def rebase(environment: str, onto: str | None, dry_run: bool) -> None:
         cwd=Path.cwd(),
     )
     if result.returncode == 0 and result.stdout.strip():
-        click.echo("Error: uncommitted changes in migration files. Commit or stash first.", err=True)
-        sys.exit(1)
+        ui.fail("Migration files have uncommitted changes.", "Commit or stash them first.")
 
-    # Determine the target revision
     if onto is None:
-        alembic_result = _run_alembic(
-            environment, ["current"], exit_on_complete=False
-        )
-        if alembic_result is None or alembic_result.returncode != 0:
-            click.echo(
-                "Error: could not determine current revision. "
-                "Use --onto to specify the target revision explicitly.",
-                err=True,
-            )
-            sys.exit(1)
+        onto = _deployed_head(environment)
 
-        # Parse current revision from alembic output
-        # Format: "abc123 (head)" or "abc123"
-        current_match = re.search(r"(\w{4,})", alembic_result.stdout)
-        if not current_match:
-            click.echo(
-                "Error: could not parse current revision from alembic output. "
-                "Use --onto to specify the target revision explicitly.",
-                err=True,
-            )
-            sys.exit(1)
-        onto = current_match.group(1)
-
-    # Plan the rebase
     try:
         changes = plan_rebase(versions_dir, onto)
     except ValueError as e:
-        click.echo(str(e))
+        ui.hint(str(e))
         sys.exit(0)
 
     if not changes:
-        click.echo("All branches already point to the target revision.")
+        ui.success("All branches already point to the target revision.")
         sys.exit(0)
 
-    # Show planned changes
-    click.echo(f"Rebasing onto {onto}:\n")
+    ui.step(f"Rebasing onto {onto}:")
     for change in changes:
-        filename = change.migration.path.name
-        click.echo(f"  {filename}")
-        click.echo(f"    down_revision: {change.old_down_revision} -> {change.new_down_revision}")
-    click.echo()
+        ui.detail(change.migration.path.name)
+        ui.detail(f"  down_revision: {change.old_down_revision} -> {change.new_down_revision}")
 
     if dry_run:
-        click.echo("Dry run — no changes made.")
+        ui.hint("Dry run; no changes made.")
         sys.exit(0)
 
     if not click.confirm("Apply these changes?"):
-        click.echo("Aborted.")
+        ui.hint("Aborted.")
         sys.exit(0)
 
     apply_rebase(changes)
-    click.echo("Rebase complete.")
+    ui.success("Rebase complete.")
+
+
+def _deployed_head(environment: str) -> str:
+    """The revision `alembic current` reports for this environment."""
+    explicit = "Use `--onto REVISION` to name the target explicitly."
+    result = run_alembic(environment, ["current"])
+    if result.returncode != 0:
+        ui.fail(f"Could not read the current revision: {alembic_failure(result)}", explicit)
+    # Format: "abc123 (head)" or "abc123"
+    current = re.search(r"(\w{4,})", result.stdout)
+    if current is None:
+        ui.fail("Could not parse the current revision from Alembic's output.", explicit)
+    return current.group(1)
 
 
 @main.command()
@@ -735,8 +637,7 @@ def skill(target: str) -> None:
     skill_src = Path(__file__).parent / "skills" / "ch-migrate" / "SKILL.md"
 
     if not skill_src.exists():
-        click.echo(f"Error: Skill file not found at {skill_src}", err=True)
-        sys.exit(1)
+        ui.fail(f"Skill file not found at {skill_src}")
 
     # Determine destination
     if target == "user":
@@ -750,13 +651,13 @@ def skill(target: str) -> None:
     skill_dir.mkdir(parents=True, exist_ok=True)
 
     if skill_dst.exists():
-        click.echo(f"Skill already exists at {skill_dst}")
+        ui.warn(f"A skill already exists at {skill_dst}")
         if not click.confirm("Overwrite?"):
-            click.echo("Aborted.")
+            ui.hint("Aborted.")
             return
 
     shutil.copy(skill_src, skill_dst)
-    click.echo(f"Installed skill to {skill_dst}")
+    ui.success(f"Installed the skill to {skill_dst}")
 
 
 @main.command()
@@ -781,10 +682,7 @@ def lint(environment: str | None) -> None:
     from clickhouse_alembic.rebase import build_revision_graph
     from clickhouse_alembic.statements import pending_revisions
 
-    versions_dir = Path.cwd() / "migrations" / "versions"
-    if not versions_dir.exists():
-        click.echo("Error: migrations/versions/ not found", err=True)
-        sys.exit(1)
+    versions_dir = _versions_dir_or_fail()
 
     config_path = Path.cwd() / "config.yaml"
     lint_config = LintConfig()
@@ -811,9 +709,7 @@ def lint(environment: str | None) -> None:
             )
             client = get_client(env_config)
         except Exception as e:
-            raise click.ClickException(
-                f"Could not resolve pending revisions for {environment}: {e}"
-            ) from e
+            ui.fail(f"Could not work out the pending revisions for {environment}: {e}")
 
     try:
         report = lint_migrations(
@@ -824,7 +720,7 @@ def lint(environment: str | None) -> None:
             revisions=revisions,
         )
     except (OSError, SyntaxError, ValueError) as e:
-        raise click.ClickException(str(e)) from e
+        ui.fail(str(e))
     finally:
         if client is not None:
             client.close()
@@ -855,42 +751,31 @@ def deps(environment: str, validate_sql: str | None) -> None:
     from clickhouse_alembic.deps import build_dependency_graph, validate_migration
     from clickhouse_alembic.display import render_dependency_tree
 
-    config_path = Path.cwd() / "config.yaml"
-    try:
-        env_config = get_env_config(environment, config_path)
-    except Exception as e:
-        click.echo(f"Error loading config: {e}", err=True)
-        sys.exit(1)
-
+    env_config = _env_config_or_fail(environment)
     database = env_config["database"]
 
     try:
         client = get_client(env_config)
     except Exception as e:
-        click.echo(f"Error connecting to {environment}: {e}", err=True)
-        sys.exit(1)
+        ui.fail(f"Could not connect to {environment}: {e}")
 
-    click.echo(f"Building dependency graph for {environment} ({database})...")
+    ui.step(f"Reading dependencies in {environment} ({database})")
 
     try:
         graph = build_dependency_graph(client, database)
     except Exception as e:
-        click.echo(f"Error building dependency graph: {e}", err=True)
-        sys.exit(1)
+        ui.fail(f"Could not build the dependency graph: {e}")
 
     render_dependency_tree(graph)
 
     if validate_sql:
         sql_content = Path(validate_sql).read_text()
         warnings = validate_migration(sql_content, graph)
+        for w in warnings:
+            (ui.error if w.severity == "error" else ui.warn)(w.message)
         if warnings:
-            click.echo()
-            for w in warnings:
-                style = "red" if w.severity == "error" else "yellow"
-                click.echo(click.style(f"  [{w.severity.upper()}] {w.message}", fg=style))
             sys.exit(1)
-        else:
-            click.echo(click.style("\n  Migration validation passed.", fg="green"))
+        ui.success(f"Validation passed: {validate_sql} keeps every dependency intact.")
 
 
 @main.command(name="diff")
@@ -915,15 +800,14 @@ def diff_cmd(environment: str, snapshot_dir: str | None) -> None:
     from clickhouse_alembic.connection import get_client
     from clickhouse_alembic.diff import DiffStatus, compare_schemas
     from clickhouse_alembic.display import render_diff_report
-    from clickhouse_alembic.introspect import Schema, get_live_schema, parse_create_statement
+    from clickhouse_alembic.introspect import (
+        VERSION_TABLE,
+        Schema,
+        get_live_schema,
+        parse_create_statement,
+    )
 
-    config_path = Path.cwd() / "config.yaml"
-    try:
-        env_config = get_env_config(environment, config_path)
-    except Exception as e:
-        click.echo(f"Error loading config: {e}", err=True)
-        sys.exit(1)
-
+    env_config = _env_config_or_fail(environment)
     database = env_config["database"]
 
     # Resolve snapshot directory
@@ -931,16 +815,12 @@ def diff_cmd(environment: str, snapshot_dir: str | None) -> None:
         snap_path = Path(snapshot_dir)
     else:
         snapshots_base = Path.cwd() / "migrations" / "sql" / "snapshots"
-        if not snapshots_base.exists():
-            click.echo("Error: No snapshots found. Run 'ch-migrate snapshot' first.", err=True)
-            sys.exit(1)
-        dirs = sorted(snapshots_base.iterdir())
+        dirs = sorted(snapshots_base.iterdir()) if snapshots_base.exists() else []
         if not dirs:
-            click.echo("Error: No snapshots found. Run 'ch-migrate snapshot' first.", err=True)
-            sys.exit(1)
+            ui.fail("No snapshots found.", f"Run `ch-migrate snapshot {environment}` first.")
         snap_path = dirs[-1]
 
-    click.echo(f"Comparing snapshot {snap_path.name} against live {environment} ({database})...")
+    ui.step(f"Comparing snapshot {snap_path.name} with {environment} ({database})")
 
     # Load local schema from snapshot files
     local_schema = Schema(database=database)
@@ -962,8 +842,10 @@ def diff_cmd(environment: str, snapshot_dir: str | None) -> None:
         if not type_path.exists():
             continue
         for sql_file in sorted(type_path.glob("*.sql")):
-            ddl = sql_file.read_text()
             name = sql_file.stem
+            if name == VERSION_TABLE:
+                continue  # older snapshots captured Alembic's own table
+            ddl = sql_file.read_text()
             parsed = parse_create_statement(ddl)
             if parsed:
                 schema_attrs[obj_type][name] = parsed
@@ -988,8 +870,7 @@ def diff_cmd(environment: str, snapshot_dir: str | None) -> None:
         client = get_client(env_config)
         live_schema = get_live_schema(client, database)
     except Exception as e:
-        click.echo(f"Error connecting to {environment}: {e}", err=True)
-        sys.exit(1)
+        ui.fail(f"Could not read the live schema from {environment}: {e}")
 
     # Compare
     diffs = compare_schemas(local_schema, live_schema)
@@ -1013,24 +894,20 @@ def upgrade_env() -> None:
     env_py_dst = Path.cwd() / "migrations" / "env.py"
 
     if not env_py_dst.parent.exists():
-        click.echo("Error: migrations/ directory not found. Run 'ch-migrate init' first.", err=True)
-        sys.exit(1)
+        ui.fail("migrations/ not found.", "Run `ch-migrate init` first.")
 
     if not env_py_src.exists():
-        click.echo("Error: package env.py not found.", err=True)
-        sys.exit(1)
+        ui.fail("The package's env.py is missing; reinstall clickhouse-alembic.")
 
     # Back up existing env.py if present
     if env_py_dst.exists():
         backup = env_py_dst.with_suffix(".py.bak")
         shutil.copy(env_py_dst, backup)
-        click.echo(f"  Backed up existing env.py to {backup.name}")
+        ui.detail(f"Backed up the existing env.py to migrations/{backup.name}")
 
     shutil.copy(env_py_src, env_py_dst)
-    click.echo(f"  Updated migrations/env.py")
-    click.echo("")
-    click.echo("env.py has been upgraded. If you have custom modifications,")
-    click.echo("compare with env.py.bak and reapply them.")
+    ui.success("Updated migrations/env.py")
+    ui.hint("If you had custom changes, compare with env.py.bak and reapply them.")
 
 
 @main.command()
@@ -1066,28 +943,20 @@ def snapshot(environment: str, exclude: tuple[str, ...], include_filter: tuple[s
     from clickhouse_alembic.display import render_snapshot_progress
     from clickhouse_alembic.introspect import Schema, get_live_schema
 
-    config_path = Path.cwd() / "config.yaml"
-    try:
-        env_config = get_env_config(environment, config_path)
-    except Exception as e:
-        click.echo(f"Error loading config: {e}", err=True)
-        sys.exit(1)
-
+    env_config = _env_config_or_fail(environment)
     database = env_config["database"]
 
     try:
         client = get_client(env_config)
     except Exception as e:
-        click.echo(f"Error connecting to {environment}: {e}", err=True)
-        sys.exit(1)
+        ui.fail(f"Could not connect to {environment}: {e}")
 
-    click.echo(f"Capturing schema from {environment} ({database})...")
+    ui.step(f"Capturing the schema of {environment} ({database})")
 
     try:
         schema = get_live_schema(client, database)
     except Exception as e:
-        click.echo(f"Error introspecting database: {e}", err=True)
-        sys.exit(1)
+        ui.fail(f"Could not read the schema: {e}")
 
     # Build output directory
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -1134,8 +1003,7 @@ def snapshot(environment: str, exclude: tuple[str, ...], include_filter: tuple[s
         counts[type_name] = count
 
     if sum(counts.values()) == 0:
-        click.echo("No objects matched the filter criteria.", err=True)
-        sys.exit(1)
+        ui.fail("No objects matched the filters.")
 
     render_snapshot_progress(
         str(snapshot_dir.relative_to(Path.cwd())),

@@ -18,6 +18,7 @@ import sys
 from pathlib import Path
 from typing import Optional
 
+from clickhouse_alembic import ui
 from clickhouse_alembic.config import get_env_config
 from clickhouse_alembic.secrets import get_secret
 
@@ -227,7 +228,6 @@ def run_bootstrap(
     if config_path is None:
         config_path = Path.cwd() / "config.yaml"
 
-    print(f"==> Loading environment: {env_name}")
     env_config = get_env_config(env_name, config_path)
 
     # Get SSM paths if configured
@@ -303,15 +303,13 @@ def run_bootstrap(
     )
 
     if dry_run:
-        print("==> Dry run - SQL that would be executed:")
-        print("-" * 60)
+        ui.step(f"Dry run for {env_name}: the SQL bootstrap would run")
         # Mask passwords in output
         masked_sql = sql
         for pw in [migration_password, dict_reader_password, mcp_password]:
             if pw:
                 masked_sql = masked_sql.replace(pw, "********")
         print(masked_sql)
-        print("-" * 60)
         return
 
     host = env_config["host"]
@@ -319,13 +317,12 @@ def run_bootstrap(
     secure = env_config.get("secure", True)
     port = env_config.get("port", 8443 if secure else 8123)
 
-    print(f"==> Connecting as admin: {admin_user}@{host}")
-    print(f"==> Target database: {env_config['database']}")
-    print(f"==> Migration user: {migration_user}")
+    ui.step(f"Bootstrapping {env_name}: database {env_config['database']} on {host}, as {admin_user}")
+    ui.detail(f"Migration user: {migration_user}")
     if dict_reader_name:
-        print(f"==> Dict reader: {dict_reader_name}")
+        ui.detail(f"Dict reader: {dict_reader_name}")
     if mcp_user_name:
-        print(f"==> MCP user: {mcp_user_name}")
+        ui.detail(f"MCP user: {mcp_user_name}")
 
     import clickhouse_connect
 
@@ -354,12 +351,11 @@ def run_bootstrap(
                 masked = statement
                 for pw in passwords_to_mask:
                     masked = masked.replace(pw, "********")
-                print(f"  {masked};")
+                ui.detail(f"{masked};")
             client.command(actual_sql)
 
-    print("==> Bootstrap complete!")
-    print(f"\nYou can now run migrations:")
-    print(f"  ch-migrate up {env_name}")
+    ui.success(f"Bootstrap complete for {env_name}.")
+    ui.hint(f"Next: `ch-migrate new {env_name} NAME --table TABLE`, or `ch-migrate up {env_name}`.")
 
 
 def main() -> None:

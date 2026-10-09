@@ -33,6 +33,15 @@ class Statement:
     comments: tuple[str, ...] = ()
 
 
+class SqlStatementError(RuntimeError):
+    """A statement in a SQL migration file failed.
+
+    The message names the file, the statement and its line, then the first line
+    of the database's own error, so `ch-migrate up` can show it without a traceback.
+    """
+
+
+
 def run_sql(path: str, **values: Any) -> None:
     """Run every statement in a SQL file under migrations/sql/, one at a time.
 
@@ -54,8 +63,14 @@ def run_sql(path: str, **values: Any) -> None:
             op.execute(statement.sql.replace(":", r"\:"))
     else:
         connection = op.get_bind()
-        for statement in statements:
-            connection.exec_driver_sql(statement.sql.replace("%", "%%"))
+        for index, statement in enumerate(statements, start=1):
+            try:
+                connection.exec_driver_sql(statement.sql.replace("%", "%%"))
+            except Exception as exc:
+                where = f"statement {index} of {len(statements)}, line {statement.line}"
+                raise SqlStatementError(
+                    f"migrations/sql/{path} ({where}): {_database_reason(exc)}"
+                ) from exc
 
 
 def load_statements(path: str, **values: Any) -> list[Statement]:
@@ -102,6 +117,18 @@ def split_statements(sql: str) -> list[Statement]:
         line += sql.count("\n", start, end + 1)
         start = end + 1
     return statements
+
+
+def clean_database_error(message: str) -> str:
+    """Drop the driver's "Orig exception:" wrapper and the trailing server version."""
+    message = re.sub(r"^Orig exception:\s*", "", message.strip())
+    return re.sub(r"\s*\(version \d[^()]*(?:\([^()]*\))?\)\s*$", "", message)
+
+
+def _database_reason(exc: Exception) -> str:
+    """First line of a driver error, without the wrapper and server-version noise."""
+    lines = str(exc).strip().splitlines()
+    return clean_database_error(lines[0]) if lines else type(exc).__name__
 
 
 def _statement_ends(sql: str) -> Iterator[int]:

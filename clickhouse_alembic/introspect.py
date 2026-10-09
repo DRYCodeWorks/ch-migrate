@@ -8,6 +8,10 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Literal
 
+# Alembic's bookkeeping table: not part of the user's schema, so snapshot, diff
+# and deps leave it out.
+VERSION_TABLE = "alembic_version"
+
 
 # ---------------------------------------------------------------------------
 # Data models
@@ -565,7 +569,7 @@ def list_objects(
         return [row[0] for row in result.result_rows]
 
     engine_filter = {
-        "table": "engine NOT IN ('View', 'MaterializedView')",
+        "table": f"engine NOT IN ('View', 'MaterializedView') AND name != '{VERSION_TABLE}'",
         "view": "engine = 'View'",
         "materialized_view": "engine = 'MaterializedView'",
     }.get(obj_type, "1=1")

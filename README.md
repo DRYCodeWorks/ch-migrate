@@ -206,6 +206,8 @@ def upgrade():
 
 Every command accepts `--help`. Top-level `ch-migrate --version` reports the installed package version. `ENV` below names an entry in `config.yaml`.
 
+Output lines start with `→` for a step, `✓` for a result, `!` for a warning and `✗` for an error; warnings and errors go to stderr. Colour is dropped when output is not a terminal or `NO_COLOR` is set, and lines are never wrapped, so paths and SQL can be copied or grepped.
+
 ### `init`
 
 `ch-migrate init [PATH] [-n NAME]` initializes the current directory by default. `-n/--name` sets the project name; otherwise it uses the directory name.
@@ -226,19 +228,19 @@ Example: `ch-migrate new dev add_status --table logs`
 
 ### `up`
 
-`ch-migrate up ENV [-r REV] [--skip-mv-check]` applies migrations to `head` by default. `-r/--revision` selects a target. `--skip-mv-check` bypasses materialized-view declaration validation; use it only after reviewing those findings.
+`ch-migrate up ENV [-r REV] [--skip-mv-check] [--verbose]` applies migrations to `head` by default, printing one line per migration. `-r/--revision` selects a target. `--skip-mv-check` bypasses materialized-view declaration validation; use it only after reviewing those findings. If a migration fails, `up` names it, the SQL file, the statement and its line, and ClickHouse's error; `--verbose` adds the Python traceback.
 
 Example: `ch-migrate up dev --revision abc123`
 
 ### `down`
 
-`ch-migrate down ENV [-r REV]` reverts one revision by default (`-1`). `-r/--revision` accepts another target. Known ranges containing irreversible revisions are refused.
+`ch-migrate down ENV [-r REV] [--verbose]` reverts one revision by default (`-1`). `-r/--revision` accepts another target. Known ranges containing irreversible revisions are refused. Failures are reported as for `up`.
 
 Example: `ch-migrate down dev --revision base`
 
 ### `status`
 
-`ch-migrate status ENV` shows connection information, applied/pending counts, and head status. No command-specific options.
+`ch-migrate status ENV` shows connection information, applied/pending counts, and head status, and names the `up` command when migrations are pending. No command-specific options. Exits 1 if it cannot reach the database.
 
 Example: `ch-migrate status dev`
 

@@ -10,6 +10,7 @@ from rich.table import Table
 from rich.text import Text
 from rich.tree import Tree
 
+from clickhouse_alembic import ui
 from clickhouse_alembic.rebase import RevisionGraph
 
 
@@ -67,13 +68,13 @@ def render_history(
         db_error: Error message if DB connection failed.
         console: Optional Console for testability.
     """
-    console = console or Console()
+    console = console or ui.out
 
     if db_error:
         console.print(
-            f"[yellow]Warning: Could not connect to database: {_short_error(db_error)}[/yellow]"
+            Text(f"! Could not read applied migrations: {_short_error(db_error)}", style="yellow")
         )
-        console.print("[dim]Showing file-based history only (status unknown)[/dim]")
+        console.print("[dim]Showing local files only; applied status is unknown.[/dim]")
         console.print()
 
     heads = set(graph.heads())
@@ -143,7 +144,7 @@ def render_status(
         db_error: Error message if DB connection failed.
         console: Optional Console for testability.
     """
-    console = console or Console()
+    console = console or ui.out
 
     env_table = Table(show_header=False, box=None, padding=(0, 2))
     env_table.add_column(style="bold")
@@ -158,10 +159,12 @@ def render_status(
     status_text = Text()
 
     if db_error:
-        status_text.append(f"\nDatabase unreachable: {_short_error(db_error)}\n", style="yellow")
-        status_text.append(f"\nMigrations on disk: ", style="bold")
+        # The full error is printed below the panel, where it can wrap.
+        status_text.append("\nApplied:      ", style="bold")
+        status_text.append("unknown (database unreachable)", style="yellow")
+        status_text.append("\nOn disk:      ", style="bold")
         status_text.append(f"{len(all_revisions)}")
-        status_text.append(f"\nHeads: ", style="bold")
+        status_text.append("\nLocal heads:  ", style="bold")
         status_text.append(", ".join(h[:8] for h in heads) or "none")
     else:
         applied = applied_revisions or set()
@@ -199,7 +202,9 @@ def render_status(
     panel = Panel(
         Group(env_table, status_text),
         title=f"[bold]{env_name}[/bold] migration status",
+        title_align="left",
         border_style="blue",
+        expand=False,
     )
     console.print(panel)
 
@@ -210,53 +215,39 @@ def render_lint_report(
     runtime: bool = False,
     console: Console | None = None,
 ) -> None:
-    """Render lint results as a Rich table.
+    """Render lint results, one finding per line, then a count.
 
     Args:
         report: LintReport with results.
         runtime: Whether runtime rules were included.
         console: Optional Console for testability.
     """
-    console = console or Console()
+    console = console or ui.out
 
     if not report.results:
         mode = "static + runtime" if runtime else "static"
-        console.print(f"[green]No lint issues found ({mode} analysis).[/green]")
+        console.print(Text.assemble(("✓ ", "green"), f"No lint findings ({mode} checks)."))
         return
 
-    table = Table(title="Lint Results", show_lines=False)
-    table.add_column("Severity", width=8)
-    table.add_column("Rule", width=22)
-    table.add_column("File", width=30)
-    table.add_column("Line", width=5, justify="right")
-    table.add_column("Message")
-
+    # One finding per line, file:line first, so terminals and editors can jump to it.
     for r in report.results:
-        if r.severity.value == "error":
-            sev_style = "bold red"
-            sev_text = "ERROR"
-        else:
-            sev_style = "yellow"
-            sev_text = "WARN"
-
-        table.add_row(
-            Text(sev_text, style=sev_style),
-            r.rule,
-            r.file or "",
-            str(r.line) if r.line else "",
-            r.message,
-        )
-
-    console.print(table)
-    console.print()
+        is_error = r.severity.value == "error"
+        line = Text("✗ " if is_error else "! ", style="bold red" if is_error else "yellow")
+        location = f"{r.file}:{r.line}" if r.file and r.line else (r.file or "")
+        line.append(location, style="bold")
+        line.append(f"  {r.message}  ")
+        line.append(f"[{r.rule}]", style="dim")
+        console.print(line)
 
     summary_parts = []
     if report.error_count:
-        summary_parts.append(f"[bold red]{report.error_count} error(s)[/bold red]")
+        noun = "error" if report.error_count == 1 else "errors"
+        summary_parts.append(f"[bold red]{report.error_count} {noun}[/bold red]")
     if report.warning_count:
-        summary_parts.append(f"[yellow]{report.warning_count} warning(s)[/yellow]")
+        noun = "warning" if report.warning_count == 1 else "warnings"
+        summary_parts.append(f"[yellow]{report.warning_count} {noun}[/yellow]")
 
-    console.print(f"  {', '.join(summary_parts)}")
+    console.print(", ".join(summary_parts))
 
 
 def render_snapshot_progress(
@@ -273,7 +264,7 @@ def render_snapshot_progress(
         excluded: Number of objects excluded by filter.
         console: Optional Console for testability.
     """
-    console = console or Console()
+    console = console or ui.out
 
     table = Table(show_header=False, box=None, padding=(0, 2))
     table.add_column(style="bold")
@@ -288,14 +279,16 @@ def render_snapshot_progress(
     status_text = Text()
     status_text.append(f"\nSnapshot saved to ", style="dim")
     status_text.append(output_dir, style="bold")
-    status_text.append(f"\n{total} objects captured", style="green")
+    status_text.append(f"\n{_count(total, 'object')} captured", style="green")
     if excluded:
         status_text.append(f", {excluded} excluded", style="dim")
 
     panel = Panel(
         Group(table, status_text),
         title="[bold]Schema Snapshot[/bold]",
+        title_align="left",
         border_style="blue",
+        expand=False,
     )
     console.print(panel)
 
@@ -313,7 +306,7 @@ def render_diff_report(
     """
     from clickhouse_alembic.diff import DiffStatus
 
-    console = console or Console()
+    console = console or ui.out
 
     in_sync = [d for d in diffs if d.status == DiffStatus.IN_SYNC]
     modified = [d for d in diffs if d.status == DiffStatus.MODIFIED]
@@ -323,7 +316,7 @@ def render_diff_report(
     has_drift = bool(modified or local_only or remote_only)
 
     if not has_drift:
-        console.print(f"[green]All {len(in_sync)} objects in sync.[/green]")
+        console.print(f"[green]✓ All {_count(len(in_sync), 'object')} in sync.[/green]")
         return
 
     table = Table(title="Schema Diff", show_lines=False)
@@ -400,7 +393,7 @@ def render_dependency_tree(
         graph: A DependencyGraph from introspect.
         console: Optional Console for testability.
     """
-    console = console or Console()
+    console = console or ui.out
 
     if not graph.nodes:
         console.print("[dim]No objects found in database.[/dim]")
@@ -461,6 +454,14 @@ def render_dependency_tree(
     parts = []
     for obj_type, count in sorted(type_counts.items()):
         _, prefix = _OBJ_TYPE_STYLES.get(obj_type, ("", "?"))
-        parts.append(f"{count} {obj_type.replace('_', ' ')}s [{prefix}]")
+        parts.append(f"{_count(count, obj_type.replace('_', ' '))} \\[{prefix}]")
 
-    console.print(f"  {', '.join(parts)} — {len(graph.edges)} edges", soft_wrap=True)
+    edges = _count(len(graph.edges), "edge")
+    console.print(f"  {', '.join(parts)} — {edges}", soft_wrap=True)
+
+
+def _count(count: int, noun: str) -> str:
+    """`1 table`, `2 tables`, `2 dictionaries`."""
+    if count == 1:
+        return f"{count} {noun}"
+    return f"{count} {noun[:-1]}ies" if noun.endswith("y") else f"{count} {noun}s"

@@ -136,7 +136,6 @@ class TestRenderHistory:
         output = _get_output(console)
 
         assert "Connection refused" in output
-        assert "status unknown" in output
         # Dim dash markers when DB unreachable
         assert "\u2500" in output
 
@@ -254,9 +253,10 @@ class TestRenderStatus:
         render_status("dev", env_config, graph, None, db_error="timeout", console=console)
         output = _get_output(console)
 
-        assert "timeout" in output
-        assert "Migrations on disk" in output
+        # Applied state is unknown, but the local count and head still show.
+        assert "unknown" in output
         assert "2" in output
+        assert "bbb222" in output
 
     def test_status_uses_migration_user_over_user(self, tmp_path):
         graph = build_revision_graph(tmp_path)
