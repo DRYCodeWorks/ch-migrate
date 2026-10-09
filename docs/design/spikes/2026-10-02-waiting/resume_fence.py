@@ -3,8 +3,8 @@
 import time
 from pathlib import Path
 
-from clickhouse_alembic.config import get_env_config
-from clickhouse_alembic.connection import get_client
+from ch_migrate.config import get_env_config
+from ch_migrate.connection import get_client
 
 config = get_env_config("it", Path("config.yaml"))
 client = get_client(config)

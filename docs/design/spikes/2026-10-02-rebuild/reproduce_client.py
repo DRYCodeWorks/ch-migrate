@@ -6,7 +6,7 @@ from pathlib import Path
 
 import clickhouse_connect
 
-from clickhouse_alembic.config import get_env_config
+from ch_migrate.config import get_env_config
 
 
 def main():

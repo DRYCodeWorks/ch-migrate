@@ -14,7 +14,7 @@ from pathlib import Path
 import clickhouse_connect
 import pytest
 
-from clickhouse_alembic.sql import split_statements
+from ch_migrate.sql import split_statements
 
 SPIKE = Path(__file__).parents[2] / "docs/design/spikes/2026-10-02-rebuild"
 pytestmark = pytest.mark.integration

@@ -6,7 +6,7 @@ import time
 from pathlib import Path
 from urllib.parse import urlencode
 
-from clickhouse_alembic.config import get_env_config
+from ch_migrate.config import get_env_config
 
 config = get_env_config("it", Path("config.yaml"))
 token = sys.argv[1]
