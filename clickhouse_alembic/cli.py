@@ -57,19 +57,48 @@ def _refuse_irreversible_downgrade(environment: str, target: str) -> None:
     if revisions is None:
         ui.warn("The downgrade range is unknown; relying on each migration's own refusal.")
         return
-    irreversible = [(rev, irreversible_reason(graph, rev)) for rev in revisions]
-    irreversible = [(rev, reason) for rev, reason in irreversible if reason is not None]
-    if not irreversible:
-        return
-    ui.error("Downgrade refused; nothing was run. These migrations are irreversible:")
-    for rev, reason in irreversible:
-        ui.detail(f"{rev[:8]}  {reason}", stderr=True)
+    reasons = {rev: irreversible_reason(graph, rev) for rev in revisions}
+    if any(reason is not None for reason in reasons.values()):
+        _report_irreversible_range(environment, graph, reasons)
+        sys.exit(1)
+
+
+def _report_irreversible_range(
+    environment: str, graph: RevisionGraph, reasons: dict[str, str | None]
+) -> None:
+    """Show every migration the downgrade would revert, newest first, marking which can't be.
+
+    Listing the whole range keeps it clear that only the marked migrations are
+    irreversible, not everything the downgrade touches.
+    """
+    blocked = [rev for rev, reason in reasons.items() if reason is not None]
+    if len(reasons) == 1:
+        summary = "The migration it would revert is irreversible:"
+    else:
+        verb = "is" if len(blocked) == 1 else "are"
+        summary = f"Of the {len(reasons)} migrations it would revert, {len(blocked)} {verb} irreversible:"
+    ui.error(f"Downgrade refused; nothing was run. {summary}")
+    for rev, reason in reasons.items():
+        name = graph.migrations[rev].description or ""
+        marker, status = ("✗", f"irreversible: {reason}") if reason is not None else (" ", "reversible")
+        ui.detail(f"{marker} {rev[:8]}  {name}  ({status})", stderr=True)
+    newest_blocked = blocked[0]
+    above = list(reasons).index(newest_blocked)
+    if above:
+        ui.hint(
+            f"Run `ch-migrate down {environment} -r {newest_blocked[:8]}` to revert only the "
+            f"{_plural(above, 'migration')} above {newest_blocked[:8]}.",
+            stderr=True,
+        )
     ui.hint(
-        "To revert past them, write their downgrades and remove the irreversible "
-        "markers in a reviewed change.",
+        "To revert an irreversible migration, write its downgrade and remove its "
+        "irreversible marker in a reviewed change.",
         stderr=True,
     )
-    sys.exit(1)
+
+
+def _plural(count: int, noun: str) -> str:
+    return f"{count} {noun}" if count == 1 else f"{count} {noun}s"
 
 
 @click.group()

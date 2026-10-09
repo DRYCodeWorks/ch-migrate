@@ -66,6 +66,10 @@ def test_irreversible_range_refuses_before_reversible_child(irreversible_project
     refused = project.run("down", "it", "-r", "base")
     assert refused.exit_code == 1, refused.output
     assert "bbbb" in refused.output
+    # The whole range is listed, so it is clear only bbbb blocks the downgrade.
+    assert "Of the 3 migrations it would revert, 1 is irreversible" in refused.output
+    assert "cccc" in refused.output and "(reversible)" in refused.output
+    assert "ch-migrate down it -r bbbb" in refused.output
     assert _heads(project) == [("cccc",)]
     assert project.client.command(f"SHOW CREATE TABLE {project.database}.logs") == before
 
