@@ -1,7 +1,6 @@
 """Authoring produces runnable revisions and rejects conflicts before writing."""
 
 import ast
-import configparser
 import re
 
 import pytest
@@ -18,11 +17,6 @@ from clickhouse_alembic.mv_validate import validate_mv_migrations
 def root(tmp_path, monkeypatch):
     result = CliRunner().invoke(main, ["init", str(tmp_path), "--name", "demo"])
     assert result.exit_code == 0, result.output
-    ini = configparser.ConfigParser(interpolation=None)
-    ini.read(tmp_path / "alembic.ini")
-    ini.remove_section("post_write_hooks")
-    with (tmp_path / "alembic.ini").open("w") as stream:
-        ini.write(stream)
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("CH_DEV_MIGRATION_PASSWORD", "test-only")
     return tmp_path

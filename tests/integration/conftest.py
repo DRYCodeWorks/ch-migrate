@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import configparser
 import os
 import secrets
 import shutil
@@ -193,11 +192,6 @@ def _wait_for_query(server):
 
 
 def _configure_project(root, server):
-    ini = configparser.ConfigParser(interpolation=None)
-    ini.read(root / "alembic.ini")
-    ini.remove_section("post_write_hooks")
-    with (root / "alembic.ini").open("w") as stream:
-        ini.write(stream)
     config = {
         "project": {"name": "integration"},
         "environments": {
