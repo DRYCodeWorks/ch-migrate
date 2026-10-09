@@ -32,9 +32,9 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/DRYCodeWorks/clickhouse-migrate"
-Repository = "https://github.com/DRYCodeWorks/clickhouse-migrate"
-Issues = "https://github.com/DRYCodeWorks/clickhouse-migrate/issues"
+Homepage = "https://github.com/DRYCodeWorks/ch-migrate"
+Repository = "https://github.com/DRYCodeWorks/ch-migrate"
+Issues = "https://github.com/DRYCodeWorks/ch-migrate/issues"
 Guide = "https://www.drycodeworks.com/articles/dev-guides/clickhouse-migrations-with-alembic"
 
 [project.scripts]

@@ -6,7 +6,7 @@ name: release
 #
 # No token: PyPI trusts this workflow through Trusted Publishing (OIDC).
 # PyPI publisher for project ch-migrate-cli: owner DRYCodeWorks, repository
-# clickhouse-migrate, workflow release.yml, no environment.
+# ch-migrate, workflow release.yml, no environment.
 #
 # To release: set __version__ in ch_migrate/__init__.py, commit,
 # then `git tag vX.Y.Z && git push origin vX.Y.Z`.
