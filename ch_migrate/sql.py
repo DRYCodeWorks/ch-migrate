@@ -126,7 +126,16 @@ def clean_database_error(message: str) -> str:
 
 
 def _database_reason(exc: Exception) -> str:
-    """First line of a driver error, without the wrapper and server-version noise."""
+    """Preserve operator instructions from wait failures; trim driver noise only."""
+    from ch_migrate.waiting_types import WaitingError
+
+    current: BaseException | None = exc
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen:
+        if isinstance(current, WaitingError):
+            return str(current)
+        seen.add(id(current))
+        current = getattr(current, "orig", None) or current.__cause__
     lines = str(exc).strip().splitlines()
     return clean_database_error(lines[0]) if lines else type(exc).__name__
 
