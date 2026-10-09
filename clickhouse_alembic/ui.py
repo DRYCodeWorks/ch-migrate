@@ -64,7 +64,9 @@ def fail(message: str, *hints: str) -> NoReturn:
 
 
 def _marked(marker: str, marker_style: str, message: str) -> Text:
-    text = Text(marker, style=marker_style)
+    # Text(marker, style=...) would make the style the base for the whole line.
+    text = Text()
+    text.append(marker, style=marker_style)
     text.append_text(_inline(message))
     return text
 
