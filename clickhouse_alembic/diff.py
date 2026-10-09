@@ -56,14 +56,14 @@ def _compare_columns(
                 field_name=f"column '{name}'",
                 local_value=local_col.type,
                 remote_value=None,
-                message=f"column '{name}' exists locally but not in DB",
+                message=f"column '{name}' {local_col.type} is in the snapshot but not in the database",
             ))
         elif remote_col and not local_col:
             diffs.append(FieldDiff(
                 field_name=f"column '{name}'",
                 local_value=None,
                 remote_value=remote_col.type,
-                message=f"column '{name}' exists in DB but not locally",
+                message=f"column '{name}' {remote_col.type} is in the database but not in the snapshot",
             ))
         elif local_col and remote_col:
             if local_col.type != remote_col.type:

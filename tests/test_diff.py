@@ -93,7 +93,7 @@ class TestCompareSchemas:
         diffs = compare_schemas(local, live)
         modified = [d for d in diffs if d.status == DiffStatus.MODIFIED]
         assert len(modified) == 1
-        assert any("email" in fd.message and "DB but not locally" in fd.message for fd in modified[0].field_diffs)
+        assert any("email" in fd.message and "in the database but not in the snapshot" in fd.message for fd in modified[0].field_diffs)
 
     def test_detects_removed_column(self):
         local = Schema(database="db")
@@ -108,7 +108,7 @@ class TestCompareSchemas:
         diffs = compare_schemas(local, live)
         modified = [d for d in diffs if d.status == DiffStatus.MODIFIED]
         assert len(modified) == 1
-        assert any("phone" in fd.message and "locally but not in DB" in fd.message for fd in modified[0].field_diffs)
+        assert any("phone" in fd.message and "in the snapshot but not in the database" in fd.message for fd in modified[0].field_diffs)
 
     def test_detects_column_type_change(self):
         local = Schema(database="db")
@@ -351,6 +351,7 @@ class TestDiffDisplay:
         render_diff_report(diffs, console=console)
 
         text = output.getvalue()
-        assert "MODIFIED" in text
-        assert "REMOTE ONLY" in text
-        assert "LOCAL ONLY" in text
+        # Every drifted object is named, with what drifted.
+        assert "users" in text and "engine differs" in text
+        assert "new_table" in text and "in the database but not in the snapshot" in text
+        assert "old_view" in text and "in the snapshot but not in the database" in text

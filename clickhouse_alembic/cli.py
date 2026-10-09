@@ -905,8 +905,12 @@ def diff_cmd(environment: str, snapshot_dir: str | None) -> None:
     diffs = compare_schemas(local_schema, live_schema)
     render_diff_report(diffs)
 
-    has_drift = any(d.status != DiffStatus.IN_SYNC for d in diffs)
-    sys.exit(1 if has_drift else 0)
+    if any(d.status != DiffStatus.IN_SYNC for d in diffs):
+        ui.hint(
+            f"Write a migration for it, or run `ch-migrate snapshot {environment}` "
+            "to accept the live schema."
+        )
+        sys.exit(1)
 
 
 @main.command(name="upgrade-env")

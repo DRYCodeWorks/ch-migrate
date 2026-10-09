@@ -232,7 +232,9 @@ def render_lint_report(
     # One finding per line, file:line first, so terminals and editors can jump to it.
     for r in report.results:
         is_error = r.severity.value == "error"
-        line = Text("✗ " if is_error else "! ", style="bold red" if is_error else "yellow")
+        # Text(marker, style=...) would make that style the base for the whole line.
+        line = Text()
+        line.append("✗ " if is_error else "! ", style="bold red" if is_error else "yellow")
         location = f"{r.file}:{r.line}" if r.file and r.line else (r.file or "")
         line.append(location, style="bold")
         line.append(f"  {r.message}  ")
@@ -298,7 +300,7 @@ def render_diff_report(
     *,
     console: Console | None = None,
 ) -> None:
-    """Render schema diff results as a Rich table.
+    """Render schema drift, one line per finding, then a count.
 
     Args:
         diffs: List of SchemaDiff objects from compare_schemas().
@@ -313,57 +315,28 @@ def render_diff_report(
     local_only = [d for d in diffs if d.status == DiffStatus.LOCAL_ONLY]
     remote_only = [d for d in diffs if d.status == DiffStatus.REMOTE_ONLY]
 
-    has_drift = bool(modified or local_only or remote_only)
-
-    if not has_drift:
-        console.print(f"[green]✓ All {_count(len(in_sync), 'object')} in sync.[/green]")
+    if not (modified or local_only or remote_only):
+        console.print(Text.assemble(("✓ ", "green"), f"All {_count(len(in_sync), 'object')} in sync."))
         return
 
-    table = Table(title="Schema Diff", show_lines=False)
-    table.add_column("Status", width=12)
-    table.add_column("Type", width=20)
-    table.add_column("Name", width=30)
-    table.add_column("Details")
-
-    for d in local_only:
-        table.add_row(
-            Text("LOCAL ONLY", style="yellow"),
-            d.obj_type,
-            d.name,
-            "Exists in snapshot but not in DB",
-        )
-
-    for d in remote_only:
-        table.add_row(
-            Text("REMOTE ONLY", style="cyan"),
-            d.obj_type,
-            d.name,
-            "Exists in DB but not in snapshot",
-        )
-
     for d in modified:
-        details = "; ".join(fd.message for fd in d.field_diffs)
-        table.add_row(
-            Text("MODIFIED", style="bold red"),
-            d.obj_type,
-            d.name,
-            details,
-        )
-
-    console.print(table)
-    console.print()
+        for field in d.field_diffs:
+            console.print(_drift_line(d, f": {field.message}"))
+    for d in remote_only:
+        console.print(_drift_line(d, " is in the database but not in the snapshot"))
+    for d in local_only:
+        console.print(_drift_line(d, " is in the snapshot but not in the database"))
 
     parts = []
     if modified:
         parts.append(f"[bold red]{len(modified)} modified[/bold red]")
-    if local_only:
-        parts.append(f"[yellow]{len(local_only)} local only[/yellow]")
     if remote_only:
-        parts.append(f"[cyan]{len(remote_only)} remote only[/cyan]")
+        parts.append(f"[bold red]{len(remote_only)} only in the database[/bold red]")
+    if local_only:
+        parts.append(f"[bold red]{len(local_only)} only in the snapshot[/bold red]")
     if in_sync:
         parts.append(f"[green]{len(in_sync)} in sync[/green]")
-
-    console.print(f"  {', '.join(parts)}")
+    console.print(", ".join(parts))
 
 
 _OBJ_TYPE_STYLES = {
@@ -465,3 +438,13 @@ def _count(count: int, noun: str) -> str:
     if count == 1:
         return f"{count} {noun}"
     return f"{count} {noun[:-1]}ies" if noun.endswith("y") else f"{count} {noun}s"
+
+
+def _drift_line(diff: Any, text: str) -> Text:
+    """`✗ events (table): column 'country' ...`, with the object name in bold."""
+    line = Text()
+    line.append("✗ ", style="bold red")
+    line.append(diff.name, style="bold")
+    line.append(f" ({diff.obj_type.replace('_', ' ')})", style="dim")
+    line.append(text)
+    return line

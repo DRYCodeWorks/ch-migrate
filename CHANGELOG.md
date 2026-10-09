@@ -26,6 +26,7 @@ Changes are recorded in [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 - `lint` prints one finding per line as `file:line  message  [rule]`, instead of a table that wrapped long messages.
 - `status` exits 1 when it cannot reach the database, and suggests `ch-migrate up` when migrations are pending. Its panel, and the `snapshot` panel, are sized to their content.
 - `snapshot`, `diff` and `deps` leave out Alembic's `alembic_version` table. `diff` also ignores it in snapshots taken by earlier versions.
+- `diff` prints one line per drift finding, such as `✗ events (table): column 'country' LowCardinality(String) is in the database but not in the snapshot`, instead of a table. It suggests writing a migration or taking a new snapshot.
 
 ### Fixed
 
