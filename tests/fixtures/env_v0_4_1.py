@@ -164,13 +164,18 @@ def run_migrations_online() -> None:
         on_version_apply fires AFTER each migration step completes,
         so we use it for post-migrate hooks only.
         """
-        revision = step.up_revision if step.is_upgrade else (
-            step.down_revisions[0] if step.down_revisions else "unknown"
+        revision = (
+            step.up_revision
+            if step.is_upgrade
+            else (step.down_revisions[0] if step.down_revisions else "unknown")
         )
         if hook_registry.post_migrate:
             run_hooks(
-                ctx.connection, hook_registry.post_migrate,
-                db=db, phase="post_migrate", revision=revision,
+                ctx.connection,
+                hook_registry.post_migrate,
+                db=db,
+                phase="post_migrate",
+                revision=revision,
             )
 
     with connectable.connect() as connection:
@@ -192,8 +197,11 @@ def run_migrations_online() -> None:
             # Fire pre-migrate hooks before the migration run
             if hook_registry.pre_migrate:
                 run_hooks(
-                    connection, hook_registry.pre_migrate,
-                    db=db, phase="pre_migrate", revision="all",
+                    connection,
+                    hook_registry.pre_migrate,
+                    db=db,
+                    phase="pre_migrate",
+                    revision="all",
                 )
 
             context.run_migrations()

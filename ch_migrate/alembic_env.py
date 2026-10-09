@@ -8,14 +8,14 @@ from logging.config import fileConfig
 from pathlib import Path
 from typing import Any
 
-import clickhouse_connect.cc_sqlalchemy.alembic  # Registers the official implementation.
+import clickhouse_connect.cc_sqlalchemy.alembic  # noqa: F401 - registers official dialect
 from alembic import context
 from clickhouse_connect.cc_sqlalchemy.alembic.impl import ClickHouseImpl
 from dotenv import load_dotenv
 from sqlalchemy import URL, Column, MetaData, String, Table, create_engine, pool
 from sqlalchemy.sql.dml import Delete, Insert, Update
 
-import ch_migrate.rebuild  # Registers the guarded online-rebuild operation.
+import ch_migrate.rebuild  # noqa: F401 - registers guarded Alembic operation
 from ch_migrate.config import get_env_config
 from ch_migrate.hooks import HookRegistry, run_hooks
 from ch_migrate.rebase import _literal_assignment

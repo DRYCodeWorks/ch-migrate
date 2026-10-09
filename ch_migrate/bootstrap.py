@@ -346,7 +346,9 @@ def run_bootstrap(
     secure = env_config.get("secure", True)
     port = env_config.get("port", 8443 if secure else 8123)
 
-    ui.step(f"Bootstrapping {env_name}: database {env_config['database']} on {host}, as {admin_user}")
+    ui.step(
+        f"Bootstrapping {env_name}: database {env_config['database']} on {host}, as {admin_user}"
+    )
     ui.detail(f"Migration user: {migration_user}")
     if dict_reader_name:
         ui.detail(f"Dict reader: {dict_reader_name}")

@@ -362,7 +362,9 @@ class MigrationWaiter:
         raise self.unknown_outcome(key, record, error) from error
 
     def _wait_work(self, key: StepKey, record: dict) -> None:
-        checkpoint = lambda: self.journal.write(key, record)
+        def checkpoint() -> None:
+            self.journal.write(key, record)
+
         try:
             if record.get("ddl"):
                 self.ddl.wait(record["ddl"], checkpoint)

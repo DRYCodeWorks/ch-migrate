@@ -39,9 +39,7 @@ def fetch_current_ddl(env_config: dict[str, Any], table_name: str) -> str | None
     return None
 
 
-def find_dependent_dictionaries(
-    env_config: dict[str, Any], table_name: str
-) -> list[str]:
+def find_dependent_dictionaries(env_config: dict[str, Any], table_name: str) -> list[str]:
     """Find dictionaries that use this table as a source.
 
     Queries system.dictionaries to find any dictionary whose source
@@ -121,9 +119,7 @@ def _make_shadow_ddl(ddl: str, table_name: str) -> str:
     return shadow
 
 
-def generate_exchange_sql(
-    table_name: str, current_ddl: str | None = None
-) -> str:
+def generate_exchange_sql(table_name: str, current_ddl: str | None = None) -> str:
     """Generate the SQL file content for an EXCHANGE TABLES migration.
 
     This creates the shadow table DDL that the user should modify with

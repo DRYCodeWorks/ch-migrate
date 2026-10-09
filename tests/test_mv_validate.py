@@ -5,11 +5,7 @@ from __future__ import annotations
 import textwrap
 from pathlib import Path
 
-import pytest
-
 from ch_migrate.mv_validate import (
-    MVDeclaration,
-    MVValidationError,
     _find_grant_inserts,
     _find_grant_selects,
     _find_permissive_row_policies,
@@ -18,7 +14,6 @@ from ch_migrate.mv_validate import (
     _sql_has_create_mv,
     validate_mv_migrations,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -85,23 +80,27 @@ def _write_migration(
         parts.append("")
         parts.append(extra_python)
 
-    parts.extend([
-        "",
-        "def upgrade() -> None:",
-        "    db = get_db()",
-    ])
+    parts.extend(
+        [
+            "",
+            "def upgrade() -> None:",
+            "    db = get_db()",
+        ]
+    )
 
     if sql:
         parts.append(f'    op.execute(f"""{sql}""")')
     else:
         parts.append("    pass")
 
-    parts.extend([
-        "",
-        "def downgrade() -> None:",
-        "    pass",
-        "",
-    ])
+    parts.extend(
+        [
+            "",
+            "def downgrade() -> None:",
+            "    pass",
+            "",
+        ]
+    )
 
     content = "\n".join(parts)
     file_path = versions_dir / f"{rev_id}_{name}.py"
@@ -116,9 +115,7 @@ def _write_migration(
 
 class TestCreateMVDetection:
     def test_detects_create_mv(self):
-        assert _sql_has_create_mv(
-            "CREATE MATERIALIZED VIEW mydb.mv TO mydb.dest AS SELECT 1"
-        )
+        assert _sql_has_create_mv("CREATE MATERIALIZED VIEW mydb.mv TO mydb.dest AS SELECT 1")
 
     def test_detects_create_mv_if_not_exists(self):
         assert _sql_has_create_mv(
@@ -126,9 +123,7 @@ class TestCreateMVDetection:
         )
 
     def test_case_insensitive(self):
-        assert _sql_has_create_mv(
-            "create materialized view mydb.mv TO mydb.dest AS SELECT 1"
-        )
+        assert _sql_has_create_mv("create materialized view mydb.mv TO mydb.dest AS SELECT 1")
 
     def test_ignores_regular_view(self):
         assert not _sql_has_create_mv("CREATE VIEW mydb.v AS SELECT 1")
@@ -142,9 +137,7 @@ class TestCreateMVDetection:
         assert not _sql_has_create_mv("")
 
     def test_ignores_drop_mv(self):
-        assert not _sql_has_create_mv(
-            "DROP MATERIALIZED VIEW IF EXISTS mydb.mv"
-        )
+        assert not _sql_has_create_mv("DROP MATERIALIZED VIEW IF EXISTS mydb.mv")
 
 
 class TestGrantInsertDetection:
@@ -153,16 +146,16 @@ class TestGrantInsertDetection:
         assert ("my_table", "my_user") in grants
 
     def test_finds_db_placeholder(self):
-        grants = _find_grant_inserts(
-            "GRANT INSERT ON {db}.my_table TO my_user"
-        )
+        grants = _find_grant_inserts("GRANT INSERT ON {db}.my_table TO my_user")
         assert ("my_table", "my_user") in grants
 
     def test_finds_multiple(self):
-        sql = textwrap.dedent("""\
+        sql = textwrap.dedent(
+            """\
             GRANT INSERT ON {db}.table_a TO user_a;
             GRANT INSERT ON {db}.table_b TO user_b;
-        """)
+        """
+        )
         grants = _find_grant_inserts(sql)
         assert ("table_a", "user_a") in grants
         assert ("table_b", "user_b") in grants
@@ -172,9 +165,7 @@ class TestGrantInsertDetection:
         assert ("mytable", "myuser") in grants
 
     def test_comma_separated_users(self):
-        grants = _find_grant_inserts(
-            "GRANT INSERT ON {db}.my_table TO user_a, user_b;"
-        )
+        grants = _find_grant_inserts("GRANT INSERT ON {db}.my_table TO user_a, user_b;")
         assert ("my_table", "user_a") in grants
         assert ("my_table", "user_b") in grants
 
@@ -189,17 +180,13 @@ class TestGrantSelectDetection:
         assert ("my_table", "reader") in grants
 
     def test_finds_column_grant(self):
-        grants = _find_grant_selects(
-            "GRANT SELECT(col1, col2) ON {db}.my_table TO reader"
-        )
+        grants = _find_grant_selects("GRANT SELECT(col1, col2) ON {db}.my_table TO reader")
         assert ("my_table", "reader") in grants
 
 
 class TestRowPolicyDetection:
     def test_finds_basic_policy(self):
-        policies = _find_row_policies(
-            "CREATE ROW POLICY my_deny ON {db}.my_table USING 0 TO ALL"
-        )
+        policies = _find_row_policies("CREATE ROW POLICY my_deny ON {db}.my_table USING 0 TO ALL")
         assert ("my_deny", "my_table") in policies
 
     def test_finds_if_not_exists(self):
@@ -837,7 +824,8 @@ class TestSQLFileReferences:
 
         versions.mkdir(parents=True, exist_ok=True)
         rev_id = "abc123456789"
-        content = textwrap.dedent(f"""\
+        content = textwrap.dedent(
+            f"""\
             \"\"\"create my_mv
 
             Revision ID: {rev_id}
@@ -859,7 +847,8 @@ class TestSQLFileReferences:
 
             def downgrade() -> None:
                 pass
-        """)
+        """
+        )
         (versions / f"{rev_id}_create_my_mv.py").write_text(content)
 
         errors = validate_mv_migrations(versions)
@@ -872,16 +861,21 @@ class TestCLIIntegration:
 
     def test_up_does_not_block_on_mv_warnings(self, tmp_path: Path, monkeypatch):
         from click.testing import CliRunner
+
         from ch_migrate.cli import main
 
         # Create minimal project structure
-        (tmp_path / "config.yaml").write_text(textwrap.dedent("""\
+        (tmp_path / "config.yaml").write_text(
+            textwrap.dedent(
+                """\
             environments:
               dev:
                 host: localhost
                 database: testdb
                 migration_user: test
-        """))
+        """
+            )
+        )
         (tmp_path / ".env.local").write_text("CH_DEV_MIGRATION_PASSWORD=pass\n")
 
         versions = tmp_path / "migrations" / "versions"
@@ -907,15 +901,20 @@ class TestCLIIntegration:
 
     def test_up_skip_mv_check_bypasses(self, tmp_path: Path, monkeypatch):
         from click.testing import CliRunner
+
         from ch_migrate.cli import main
 
-        (tmp_path / "config.yaml").write_text(textwrap.dedent("""\
+        (tmp_path / "config.yaml").write_text(
+            textwrap.dedent(
+                """\
             environments:
               dev:
                 host: localhost
                 database: testdb
                 migration_user: test
-        """))
+        """
+            )
+        )
         (tmp_path / ".env.local").write_text("CH_DEV_MIGRATION_PASSWORD=pass\n")
 
         versions = tmp_path / "migrations" / "versions"
@@ -928,9 +927,7 @@ class TestCLIIntegration:
         monkeypatch.chdir(tmp_path)
         runner = CliRunner()
         # With --skip-mv-check, validation is bypassed before the env-version guard.
-        result = runner.invoke(
-            main, ["up", "dev", "--skip-mv-check"], catch_exceptions=False
-        )
+        result = runner.invoke(main, ["up", "dev", "--skip-mv-check"], catch_exceptions=False)
         # The validation finding must not be reported
         output = result.output
         assert "create_mv000_create_mv.py:" not in output
@@ -942,7 +939,7 @@ class TestLintIntegration:
     """Test MVDeclarationRule via lint_migrations."""
 
     def test_lint_catches_missing_declarations(self, tmp_path: Path):
-        from ch_migrate.lint import LintConfig, Severity, lint_migrations
+        from ch_migrate.lint import Severity, lint_migrations
 
         versions = tmp_path / "versions"
         _write_migration(

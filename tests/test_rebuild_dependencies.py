@@ -122,7 +122,6 @@ def test_inspection_includes_source_mv_inner_engine_and_target_mv(monkeypatch):
 
 
 def test_validation_refuses_missing_source_projection_with_named_error():
-    client = _Client({"source": {"id": "UInt64"}})
     definition = SimpleNamespace(database="analytics", table="events")
     inventory = DependentInventory(
         (DependentQuery("broken", "SELECT obsolete FROM events", "materialized_view"),), (), ()

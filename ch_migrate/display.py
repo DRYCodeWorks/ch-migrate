@@ -283,7 +283,7 @@ def render_snapshot_progress(
             total += count
 
     status_text = Text()
-    status_text.append(f"\nSnapshot saved to ", style="dim")
+    status_text.append("\nSnapshot saved to ", style="dim")
     status_text.append(output_dir, style="bold")
     status_text.append(f"\n{_count(total, 'object')} captured", style="green")
     if excluded:
@@ -320,7 +320,9 @@ def render_diff_report(
     remote_only = [d for d in diffs if d.status == DiffStatus.REMOTE_ONLY]
 
     if not (modified or local_only or remote_only):
-        console.print(Text.assemble(("✓ ", "green"), f"All {_count(len(in_sync), 'object')} in sync."))
+        console.print(
+            Text.assemble(("✓ ", "green"), f"All {_count(len(in_sync), 'object')} in sync.")
+        )
         return
 
     for d in modified:

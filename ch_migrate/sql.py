@@ -41,7 +41,6 @@ class SqlStatementError(RuntimeError):
     """
 
 
-
 def run_sql(path: str, **values: Any) -> None:
     """Run every statement in a SQL file under migrations/sql/, one at a time.
 

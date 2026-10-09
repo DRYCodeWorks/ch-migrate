@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import MagicMock, call
-
-import pytest
+from unittest.mock import MagicMock
 
 from ch_migrate.hooks import HookRegistry, run_hooks
 
@@ -22,38 +20,46 @@ class TestHookRegistry:
         assert not registry.has_hooks
 
     def test_from_post_migrate_only(self):
-        registry = HookRegistry.from_config({
-            "post_migrate": [
-                "SYSTEM RELOAD DICTIONARY {db}.dict_regions ON CLUSTER default",
-            ]
-        })
+        registry = HookRegistry.from_config(
+            {
+                "post_migrate": [
+                    "SYSTEM RELOAD DICTIONARY {db}.dict_regions ON CLUSTER default",
+                ]
+            }
+        )
         assert registry.pre_migrate == []
         assert len(registry.post_migrate) == 1
         assert registry.has_hooks
 
     def test_from_pre_and_post(self):
-        registry = HookRegistry.from_config({
-            "pre_migrate": ["SELECT 1"],
-            "post_migrate": [
-                "SYSTEM RELOAD DICTIONARY {db}.dict_a ON CLUSTER default",
-                "SELECT count() FROM {db}.users",
-            ],
-        })
+        registry = HookRegistry.from_config(
+            {
+                "pre_migrate": ["SELECT 1"],
+                "post_migrate": [
+                    "SYSTEM RELOAD DICTIONARY {db}.dict_a ON CLUSTER default",
+                    "SELECT count() FROM {db}.users",
+                ],
+            }
+        )
         assert len(registry.pre_migrate) == 1
         assert len(registry.post_migrate) == 2
         assert registry.has_hooks
 
     def test_coerces_single_string_to_list(self):
-        registry = HookRegistry.from_config({
-            "post_migrate": "SYSTEM RELOAD DICTIONARY {db}.dict_a ON CLUSTER default",
-        })
+        registry = HookRegistry.from_config(
+            {
+                "post_migrate": "SYSTEM RELOAD DICTIONARY {db}.dict_a ON CLUSTER default",
+            }
+        )
         assert len(registry.post_migrate) == 1
 
     def test_handles_none_values(self):
-        registry = HookRegistry.from_config({
-            "pre_migrate": None,
-            "post_migrate": None,
-        })
+        registry = HookRegistry.from_config(
+            {
+                "pre_migrate": None,
+                "post_migrate": None,
+            }
+        )
         assert registry.pre_migrate == []
         assert registry.post_migrate == []
 
@@ -72,9 +78,7 @@ class TestRunHooks:
         assert connection.commit.call_count == 2
 
         # Verify the SQL was resolved
-        executed_sql = [
-            str(c.args[0]) for c in connection.execute.call_args_list
-        ]
+        executed_sql = [str(c.args[0]) for c in connection.execute.call_args_list]
         assert "SYSTEM RELOAD DICTIONARY mydb.dict_a ON CLUSTER default" in executed_sql[0]
         assert "SELECT count() FROM mydb.users" in executed_sql[1]
 
@@ -125,7 +129,8 @@ class TestConfigIntegration:
         from ch_migrate.config import get_env_config
 
         config_file = tmp_path / "config.yaml"
-        config_file.write_text("""
+        config_file.write_text(
+            """
 environments:
   dev:
     host: localhost
@@ -135,7 +140,8 @@ environments:
 hooks:
   post_migrate:
     - "SYSTEM RELOAD DICTIONARY {db}.dict_regions ON CLUSTER default"
-""")
+"""
+        )
         monkeypatch.setenv("CH_DEV_PASSWORD", "pass")
 
         env_config = get_env_config("dev", config_file)
@@ -145,20 +151,25 @@ hooks:
 
         registry = HookRegistry.from_config(env_config.get("hooks"))
         assert registry.has_hooks
-        assert registry.post_migrate[0] == "SYSTEM RELOAD DICTIONARY {db}.dict_regions ON CLUSTER default"
+        assert (
+            registry.post_migrate[0]
+            == "SYSTEM RELOAD DICTIONARY {db}.dict_regions ON CLUSTER default"
+        )
 
     def test_no_hooks_section_works(self, tmp_path: Path, monkeypatch):
         """Existing configs without hooks section continue to work."""
         from ch_migrate.config import get_env_config
 
         config_file = tmp_path / "config.yaml"
-        config_file.write_text("""
+        config_file.write_text(
+            """
 environments:
   dev:
     host: localhost
     database: testdb
     user: test
-""")
+"""
+        )
         monkeypatch.setenv("CH_DEV_PASSWORD", "pass")
 
         env_config = get_env_config("dev", config_file)
@@ -174,14 +185,18 @@ class TestHookExecutionOrder:
     def test_pre_hooks_fire_before_post_hooks(self):
         """Pre-migrate hooks should fire before post-migrate hooks."""
         connection = MagicMock()
-        registry = HookRegistry.from_config({
-            "pre_migrate": ["SELECT 'pre'"],
-            "post_migrate": ["SELECT 'post'"],
-        })
+        registry = HookRegistry.from_config(
+            {
+                "pre_migrate": ["SELECT 'pre'"],
+                "post_migrate": ["SELECT 'post'"],
+            }
+        )
 
         # Simulate the env.py execution order: pre-hooks, then post-hooks
         run_hooks(connection, registry.pre_migrate, db="mydb", phase="pre_migrate", revision="all")
-        run_hooks(connection, registry.post_migrate, db="mydb", phase="post_migrate", revision="abc123")
+        run_hooks(
+            connection, registry.post_migrate, db="mydb", phase="post_migrate", revision="abc123"
+        )
 
         assert connection.execute.call_count == 2
         calls = [str(c.args[0]) for c in connection.execute.call_args_list]
@@ -212,6 +227,7 @@ class TestUpgradeEnvCommand:
     def test_upgrade_env_creates_new_env_py(self, tmp_path: Path):
         """upgrade-env copies the package env.py when no existing env.py."""
         from click.testing import CliRunner
+
         from ch_migrate.cli import main
 
         migrations_dir = tmp_path / "migrations"
@@ -224,9 +240,11 @@ class TestUpgradeEnvCommand:
         # command is registered and validates missing migrations dir
         # Test with no migrations dir in cwd
         assert result.exit_code != 0 or "Updated" in result.output or "not found" in result.output
+
     def test_upgrade_env_backs_up_existing(self, tmp_path: Path, monkeypatch):
         """upgrade-env creates a .bak backup of existing env.py."""
         from click.testing import CliRunner
+
         from ch_migrate.cli import main
 
         migrations_dir = tmp_path / "migrations"
@@ -250,6 +268,7 @@ class TestUpgradeEnvCommand:
     def test_upgrade_env_no_migrations_dir(self, tmp_path: Path, monkeypatch):
         """upgrade-env fails gracefully when no migrations dir exists."""
         from click.testing import CliRunner
+
         from ch_migrate.cli import main
 
         monkeypatch.chdir(tmp_path)

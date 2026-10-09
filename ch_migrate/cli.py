@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import math
-import os
 import re
 import shutil
 import subprocess
@@ -130,11 +129,15 @@ def _report_irreversible_range(
         summary = "The migration it would revert is irreversible:"
     else:
         verb = "is" if len(blocked) == 1 else "are"
-        summary = f"Of the {len(reasons)} migrations it would revert, {len(blocked)} {verb} irreversible:"
+        summary = (
+            f"Of the {len(reasons)} migrations it would revert, {len(blocked)} {verb} irreversible:"
+        )
     ui.error(f"Downgrade refused; nothing was run. {summary}")
     for rev, reason in reasons.items():
         name = graph.migrations[rev].description or ""
-        marker, status = ("✗", f"irreversible: {reason}") if reason is not None else (" ", "reversible")
+        marker, status = (
+            ("✗", f"irreversible: {reason}") if reason is not None else (" ", "reversible")
+        )
         ui.detail(f"{marker} {rev[:8]}  {name}  ({status})", stderr=True)
     newest_blocked = blocked[0]
     above = list(reasons).index(newest_blocked)
@@ -277,7 +280,9 @@ def bootstrap(environment: str, dry_run: bool, verbose: bool) -> None:
     help="Skip materialized view declaration validation",
 )
 @click.option("--verbose", is_flag=True, help="Show the full traceback if a migration fails")
-def up(environment: str, revision: str, skip_mv_check: bool, timeout: float | None, verbose: bool) -> None:
+def up(
+    environment: str, revision: str, skip_mv_check: bool, timeout: float | None, verbose: bool
+) -> None:
     """Apply pending migrations.
 
     Runs all unapplied migrations to bring the database to the latest version.
@@ -334,7 +339,9 @@ def status(environment: str, json_output: bool) -> None:
         document = status_document(state.graph, state.heads, state.env_config["database"])
         emit_json("status", document)
         sys.exit(0 if document["at_head"] else 1)
-    render_status(environment, state.env_config, state.graph, state.applied, db_error=state.db_error)
+    render_status(
+        environment, state.env_config, state.graph, state.applied, db_error=state.db_error
+    )
     if state.db_error:
         ui.warn(f"Could not reach the database: {state.db_error.strip().splitlines()[0]}")
         return
@@ -500,7 +507,9 @@ def new(
     )
     _check_new_options(options)
     if exchange:
-        ui.warn("Deprecated: --exchange uses legacy copy-and-swap and can lose rows written during the copy. Use --rebuild for guarded online rebuilding.")
+        ui.warn(
+            "Deprecated: --exchange uses legacy copy-and-swap and can lose rows written during the copy. Use --rebuild for guarded online rebuilding."
+        )
     result = run_alembic(environment, ["revision", "-m", name])
     if result.returncode != 0:
         ui.fail(f"Could not create the revision: {alembic_failure(result)}")
@@ -585,7 +594,9 @@ def _create_rebuild_scaffold(environment: str, migration_path: Path, options: Ne
     files = _create_sql_first_migration(migration_path, options)
     (Path.cwd() / "migrations" / "sql" / files.upgrade).write_text(content)
     if current_ddl:
-        ui.hint(f"Fetched current DDL for {table}; edit its ORDER BY or engine and keep the table name.")
+        ui.hint(
+            f"Fetched current DDL for {table}; edit its ORDER BY or engine and keep the table name."
+        )
     else:
         ui.warn("Live DDL unavailable: replace the commented placeholder before running up.")
 
@@ -1032,7 +1043,9 @@ def diff_cmd(environment: str, snapshot_dir: str | None, json_output: bool) -> N
         dirs = sorted(snapshots_base.iterdir()) if snapshots_base.exists() else []
         if not dirs:
             if json_output:
-                command_failure(f"No snapshots found. Run `ch-migrate snapshot {environment}` first.")
+                command_failure(
+                    f"No snapshots found. Run `ch-migrate snapshot {environment}` first."
+                )
             ui.fail("No snapshots found.", f"Run `ch-migrate snapshot {environment}` first.")
         snap_path = dirs[-1]
 
@@ -1190,7 +1203,7 @@ def snapshot(environment: str, exclude: tuple[str, ...], include_filter: tuple[s
 
     from ch_migrate.connection import get_client
     from ch_migrate.display import render_snapshot_progress
-    from ch_migrate.introspect import Schema, get_live_schema
+    from ch_migrate.introspect import get_live_schema
 
     env_config = _env_config_or_fail(environment)
     database = env_config["database"]

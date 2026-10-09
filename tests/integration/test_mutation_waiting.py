@@ -205,7 +205,7 @@ def test_mutation_changed_sql_refuses_replay(project):
 def test_mutation_completed_prefix_is_not_repeated_and_downgrade_resets(project):
     _seed(project)
     project.client.command(f"CREATE TABLE {project.database}.audit (n UInt64) ENGINE=Memory")
-    path = _upgrade_sql(
+    _upgrade_sql(
         project,
         "INSERT INTO {db}.audit VALUES (1);\n-- ch-migrate: allow-non-idempotent increment once\nALTER TABLE {db}.counter UPDATE x = x + 1 WHERE id = 1",
     )
@@ -699,9 +699,7 @@ def _until(predicate, message):
 @contextmanager
 def _running(project, args, code=None):
     path = project.root / f"run-{time.monotonic_ns()}.log"
-    command = (
-        [sys.executable, "-c", code] if code else [sys.executable, "-m", "ch_migrate.cli"]
-    )
+    command = [sys.executable, "-c", code] if code else [sys.executable, "-m", "ch_migrate.cli"]
     with path.open("w") as log:
         process = subprocess.Popen(
             [*command, *args],

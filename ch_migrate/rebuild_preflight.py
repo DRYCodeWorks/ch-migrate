@@ -140,9 +140,14 @@ def _transfer_differences(source: TableDefinition, destination: TableDefinition)
         destination.partition_by or "tuple()"
     ):
         differences.append("partition_key")
-    physical = lambda table: [
-        (col.name, _normalized(col.type)) for col in table.columns if col.default_kind != "ALIAS"
-    ]
+
+    def physical(table: TableDefinition) -> list[tuple[str, str]]:
+        return [
+            (col.name, _normalized(col.type))
+            for col in table.columns
+            if col.default_kind != "ALIAS"
+        ]
+
     if physical(source) != physical(destination):
         differences.append("physical_columns")
     return differences

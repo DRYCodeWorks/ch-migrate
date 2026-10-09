@@ -21,9 +21,7 @@ def json_project(tmp_path, monkeypatch):
     runner = CliRunner()
     assert runner.invoke(main, ["init", str(tmp_path)]).exit_code == 0
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(
-        "ch_migrate.cli.get_env_config", lambda *args: {"database": "example"}
-    )
+    monkeypatch.setattr("ch_migrate.cli.get_env_config", lambda *args: {"database": "example"})
     state = {"heads": set(), "error": None}
 
     def read_state(config):
