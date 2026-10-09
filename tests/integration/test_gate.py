@@ -28,7 +28,8 @@ def test_gate_refuses_then_accepts_visible_reasoned_waiver(project):
     assert project.client.command(f"EXISTS TABLE {project.database}.guarded") == 1
     lint = project.run("lint")
     assert lint.exit_code == 0, lint.output
-    assert "INFO" in lint.output and reason in " ".join(lint.output.split())
+    assert "✓" in lint.output and "[idempotency]" in lint.output
+    assert reason in " ".join(lint.output.split()) and "1 info line" in lint.output
 
 
 def test_recovery_reaches_same_schema_as_clean_run(project, request):
@@ -88,7 +89,7 @@ def test_baseline_exempts_old_pending_revision_but_not_new(project):
     (project.sql_dir / "new.sql").write_text("CREATE TABLE {db}.new (id UInt64) ENGINE = Memory;\n")
     project.write_revision(
         "bbbb",
-        {"upgrade": "from clickhouse_alembic import run_sql\nrun_sql('new.sql')"},
+        {"upgrade": "from ch_migrate import run_sql\nrun_sql('new.sql')"},
         down_revision="aaaa",
     )
     refused = project.run("up", "it")
@@ -131,7 +132,7 @@ def test_gate_other_findings_warn_without_blocking(project):
 
 def _revision(project, revision, path):
     project.write_revision(
-        revision, {"upgrade": f"from clickhouse_alembic import run_sql\nrun_sql({path!r})"}
+        revision, {"upgrade": f"from ch_migrate import run_sql\nrun_sql({path!r})"}
     )
 
 

@@ -17,12 +17,17 @@ def legacy_project(project):
     (project.sql_dir / "first.sql").write_text(
         "CREATE TABLE IF NOT EXISTS {db}.legacy (id UInt64) ENGINE = Memory"
     )
-    project.write_revision(
+    legacy_revision = project.write_revision(
         "aaaa",
         {
             "upgrade": "from clickhouse_alembic import read_sql\n"
             "op.execute(read_sql('first.sql', db=get_db()))"
         },
+    )
+    legacy_revision.write_text(
+        legacy_revision.read_text().replace(
+            "from ch_migrate import get_db", "from clickhouse_alembic import get_db"
+        )
     )
     old = subprocess.run(
         [
@@ -54,7 +59,7 @@ def legacy_project(project):
     project.write_revision(
         "bbbb",
         {
-            "upgrade": "from clickhouse_alembic import read_sql\n"
+            "upgrade": "from ch_migrate import read_sql\n"
             "op.execute(read_sql('second.sql', db=get_db()))"
         },
         down_revision="aaaa",
@@ -70,7 +75,7 @@ def test_session_sql_first_setting_applies(project):
         "INSERT INTO {db}.probe SELECT getSetting('max_threads');\n"
     )
     project.write_revision(
-        "aaaa", {"upgrade": "from clickhouse_alembic import run_sql\nrun_sql('settings.sql')"}
+        "aaaa", {"upgrade": "from ch_migrate import run_sql\nrun_sql('settings.sql')"}
     )
     result = project.run("up", "it")
     assert result.exit_code == 0, result.output
@@ -152,7 +157,7 @@ def test_upgrade_env_existing_release_and_idempotent_backup(legacy_project):
 def test_upgrade_env_required_before_legacy_commands_connect(legacy_project):
     project = legacy_project
     before = project.client.command(f"SHOW CREATE TABLE {project.database}.legacy")
-    for command in ("up", "down", "status", "history"):
+    for command in ("up", "down", "history"):
         refused = project.run(command, "it")
         assert refused.exit_code == 1, refused.output
         assert "Run `ch-migrate upgrade-env`." in refused.output
@@ -161,6 +166,10 @@ def test_upgrade_env_required_before_legacy_commands_connect(legacy_project):
         assert project.client.query(
             f"SELECT version_num FROM {project.database}.alembic_version"
         ).result_rows == [("aaaa",)]
+    # Status remains a non-blocking reporter under the 0.5.1 contract.
+    status = project.run("status", "it")
+    assert status.exit_code == 0, status.output
+    assert re.search(r"Pending:\s+1\b", status.output), status.output
 
 
 def test_session_preserves_batch_and_revision_hooks(project):

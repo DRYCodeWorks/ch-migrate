@@ -74,7 +74,7 @@ def test_run_sql_stops_on_first_failure(project):
     result = project.run("up", "it")
     assert result.exit_code != 0
     # The report points at the failing statement and ClickHouse's error, not a traceback.
-    assert "migrations/sql/case.sql (statement 2 of 3, line 2)" in result.output
+    assert "migrations/sql/case.sql (statement 2 of 3, line 3)" in result.output
     assert "UNKNOWN_TABLE" in result.output
     assert "Traceback" not in result.output
     assert project.client.command(f"SELECT count() FROM {project.database}.logs") == 0
