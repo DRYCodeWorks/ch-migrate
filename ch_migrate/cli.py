@@ -1,4 +1,4 @@
-"""Command-line interface for clickhouse-alembic."""
+"""Command-line interface for ch-migrate-cli."""
 
 from __future__ import annotations
 
@@ -15,13 +15,13 @@ from typing import TYPE_CHECKING, Any
 import click
 from dotenv import load_dotenv
 
-from clickhouse_alembic import ui
-from clickhouse_alembic.authoring import NewOptions
-from clickhouse_alembic.config import get_env_config
-from clickhouse_alembic.runner import alembic_failure, run_alembic, run_migrations
+from ch_migrate import ui
+from ch_migrate.authoring import NewOptions
+from ch_migrate.config import get_env_config
+from ch_migrate.runner import alembic_failure, run_alembic, run_migrations
 
 if TYPE_CHECKING:
-    from clickhouse_alembic.rebase import RevisionGraph
+    from ch_migrate.rebase import RevisionGraph
 
 # Load .env.local if it exists in the current directory
 _env_local = Path.cwd() / ".env.local"
@@ -43,9 +43,9 @@ def render_template(template_path: Path, **kwargs: str) -> str:
 
 
 def _refuse_irreversible_downgrade(environment: str, target: str) -> None:
-    from clickhouse_alembic.connection import get_current_heads
-    from clickhouse_alembic.downgrade import irreversible_reason, revisions_to_revert
-    from clickhouse_alembic.rebase import build_revision_graph
+    from ch_migrate.connection import get_current_heads
+    from ch_migrate.downgrade import irreversible_reason, revisions_to_revert
+    from ch_migrate.rebase import build_revision_graph
 
     try:
         env_config = get_env_config(environment, Path.cwd() / "config.yaml")
@@ -200,7 +200,7 @@ def bootstrap(environment: str, dry_run: bool, verbose: bool) -> None:
 
     Requires admin credentials in .env.local or SSM.
     """
-    from clickhouse_alembic.bootstrap import run_bootstrap
+    from ch_migrate.bootstrap import run_bootstrap
 
     try:
         run_bootstrap(environment, dry_run=dry_run, verbose=verbose)
@@ -252,7 +252,7 @@ def status(environment: str) -> None:
     Displays environment info, applied/pending counts, and head status.
     Exits 1 if the database cannot be reached.
     """
-    from clickhouse_alembic.display import render_status
+    from ch_migrate.display import render_status
 
     state = _load_migration_state(environment)
     render_status(environment, state.env_config, state.graph, state.applied, db_error=state.db_error)
@@ -271,7 +271,7 @@ def history(environment: str) -> None:
 
     Displays a tree of all migrations, color-coded by applied status.
     """
-    from clickhouse_alembic.display import render_history
+    from ch_migrate.display import render_history
 
     state = _load_migration_state(environment)
     render_history(state.graph, state.applied, db_error=state.db_error)
@@ -287,8 +287,8 @@ class _MigrationState:
 
 def _load_migration_state(environment: str) -> _MigrationState:
     """Local revision graph plus what the database says is applied."""
-    from clickhouse_alembic.connection import get_current_heads
-    from clickhouse_alembic.rebase import build_revision_graph
+    from ch_migrate.connection import get_current_heads
+    from ch_migrate.rebase import build_revision_graph
 
     env_config = _env_config_or_fail(environment)
     graph = build_revision_graph(_versions_dir_or_fail())
@@ -324,9 +324,9 @@ def _versions_dir_or_fail() -> Path:
 
 def _check_mv_declarations() -> None:
     """Refuse `up` when a materialized-view migration lacks its declarations."""
-    from clickhouse_alembic.config import load_config
-    from clickhouse_alembic.lint import LintConfig
-    from clickhouse_alembic.mv_validate import validate_mv_migrations
+    from ch_migrate.config import load_config
+    from ch_migrate.lint import LintConfig
+    from ch_migrate.mv_validate import validate_mv_migrations
 
     versions_dir = Path.cwd() / "migrations" / "versions"
     if not versions_dir.exists():
@@ -426,7 +426,7 @@ def _check_new_options(options: NewOptions) -> None:
 
 
 def _create_sql_first_migration(migration_path: Path, options: NewOptions) -> None:
-    from clickhouse_alembic.authoring import read_revision_header, render_revision, write_sql_files
+    from ch_migrate.authoring import read_revision_header, render_revision, write_sql_files
 
     header = read_revision_header(migration_path)
     files = write_sql_files(Path.cwd() / "migrations" / "sql", header, options)
@@ -442,7 +442,7 @@ def _create_sql_first_migration(migration_path: Path, options: NewOptions) -> No
 
 
 def _create_python_migration(migration_path: Path, options: NewOptions) -> None:
-    from clickhouse_alembic.authoring import read_revision_header
+    from ch_migrate.authoring import read_revision_header
 
     header = read_revision_header(migration_path)
     ui.success(f"Created migration {header.revision[:8]}  {header.message}")
@@ -516,7 +516,7 @@ def _create_exchange_scaffold(
     Rewrites the alembic-generated migration with the EXCHANGE pattern
     and creates a SQL history file for the shadow table.
     """
-    from clickhouse_alembic.scaffold import (
+    from ch_migrate.scaffold import (
         fetch_current_ddl,
         find_dependent_dictionaries,
         generate_exchange_sql,
@@ -586,7 +586,7 @@ def rebase(environment: str, onto: str | None, dry_run: bool) -> None:
     Explicit mode (specify target revision):
       ch-migrate rebase dev --onto abc123
     """
-    from clickhouse_alembic.rebase import apply_rebase, plan_rebase
+    from ch_migrate.rebase import apply_rebase, plan_rebase
 
     versions_dir = _versions_dir_or_fail()
 
@@ -705,11 +705,11 @@ def lint(environment: str | None) -> None:
       ch-migrate lint              # Static only (CI-friendly)
       ch-migrate lint dev          # Static + runtime (needs DB)
     """
-    from clickhouse_alembic.config import load_config
-    from clickhouse_alembic.display import render_lint_report
-    from clickhouse_alembic.lint import LintConfig, lint_migrations
-    from clickhouse_alembic.rebase import build_revision_graph
-    from clickhouse_alembic.statements import pending_revisions
+    from ch_migrate.config import load_config
+    from ch_migrate.display import render_lint_report
+    from ch_migrate.lint import LintConfig, lint_migrations
+    from ch_migrate.rebase import build_revision_graph
+    from ch_migrate.statements import pending_revisions
 
     versions_dir = _versions_dir_or_fail()
 
@@ -731,7 +731,7 @@ def lint(environment: str | None) -> None:
             env_config = get_env_config(environment, config_path)
             database = env_config["database"]
 
-            from clickhouse_alembic.connection import get_client, get_current_heads
+            from ch_migrate.connection import get_client, get_current_heads
 
             revisions = pending_revisions(
                 build_revision_graph(versions_dir), get_current_heads(env_config)
@@ -776,9 +776,9 @@ def deps(environment: str, validate_sql: str | None) -> None:
       ch-migrate deps dev
       ch-migrate deps dev --validate migrations/sql/history/tables/users/drop.sql
     """
-    from clickhouse_alembic.connection import get_client
-    from clickhouse_alembic.deps import build_dependency_graph, validate_migration
-    from clickhouse_alembic.display import render_dependency_tree
+    from ch_migrate.connection import get_client
+    from ch_migrate.deps import build_dependency_graph, validate_migration
+    from ch_migrate.display import render_dependency_tree
 
     env_config = _env_config_or_fail(environment)
     database = env_config["database"]
@@ -826,10 +826,10 @@ def diff_cmd(environment: str, snapshot_dir: str | None) -> None:
       ch-migrate diff dev
       ch-migrate diff dev --snapshot-dir migrations/sql/snapshots/20260305_120000
     """
-    from clickhouse_alembic.connection import get_client
-    from clickhouse_alembic.diff import DiffStatus, compare_schemas
-    from clickhouse_alembic.display import render_diff_report
-    from clickhouse_alembic.introspect import (
+    from ch_migrate.connection import get_client
+    from ch_migrate.diff import DiffStatus, compare_schemas
+    from ch_migrate.display import render_diff_report
+    from ch_migrate.introspect import (
         VERSION_TABLE,
         Schema,
         get_live_schema,
@@ -880,7 +880,7 @@ def diff_cmd(environment: str, snapshot_dir: str | None) -> None:
                 schema_attrs[obj_type][name] = parsed
             else:
                 # Store minimal object with raw DDL
-                from clickhouse_alembic.introspect import (
+                from ch_migrate.introspect import (
                     DictDefinition,
                     MVDefinition,
                     TableDefinition,
@@ -930,7 +930,7 @@ def upgrade_env() -> None:
         ui.fail("migrations/ not found.", "Run `ch-migrate init` first.")
 
     if not env_py_src.exists():
-        ui.fail("The package's env.py is missing; reinstall clickhouse-alembic.")
+        ui.fail("The package's env.py is missing; reinstall ch-migrate-cli.")
 
     # Back up existing env.py if present
     if env_py_dst.exists():
@@ -972,9 +972,9 @@ def snapshot(environment: str, exclude: tuple[str, ...], include_filter: tuple[s
     """
     import fnmatch
 
-    from clickhouse_alembic.connection import get_client
-    from clickhouse_alembic.display import render_snapshot_progress
-    from clickhouse_alembic.introspect import Schema, get_live_schema
+    from ch_migrate.connection import get_client
+    from ch_migrate.display import render_snapshot_progress
+    from ch_migrate.introspect import Schema, get_live_schema
 
     env_config = _env_config_or_fail(environment)
     database = env_config["database"]

@@ -1,12 +1,12 @@
 [project]
-name = "clickhouse-alembic"
+name = "ch-migrate-cli"
 dynamic = ["version"]
-description = "Alembic-based migrations for ClickHouse, optimized for ClickHouse Cloud"
+description = "SQL-first ClickHouse schema migrations across environments: the ch-migrate command"
 authors = [{ name = "Dan Young" }]
 license = { text = "MIT" }
 readme = "README.md"
 requires-python = ">=3.9"
-keywords = ["clickhouse", "alembic", "migrations", "schema-migrations", "database", "schema", "clickhouse-cloud"]
+keywords = ["clickhouse", "migrations", "schema-migrations", "database", "schema", "clickhouse-cloud", "alembic", "ch-migrate"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
@@ -38,7 +38,7 @@ Issues = "https://github.com/DRYCodeWorks/clickhouse-migrate/issues"
 Guide = "https://www.drycodeworks.com/articles/dev-guides/clickhouse-migrations-with-alembic"
 
 [project.scripts]
-ch-migrate = "clickhouse_alembic.cli:main"
+ch-migrate = "ch_migrate.cli:main"
 
 [project.optional-dependencies]
 postgres = [
@@ -58,13 +58,14 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.version]
-path = "clickhouse_alembic/__init__.py"
+path = "ch_migrate/__init__.py"
 
 [tool.hatch.build.targets.wheel]
-packages = ["clickhouse_alembic"]
+# clickhouse_alembic is the pre-0.5 import name, kept as a deprecated alias until 1.0.
+packages = ["ch_migrate", "clickhouse_alembic"]
 
 [tool.hatch.build.targets.sdist]
-include = ["clickhouse_alembic", "tests", "README.md", "LICENSE"]
+include = ["ch_migrate", "clickhouse_alembic", "tests", "README.md", "LICENSE"]
 
 [dependency-groups]
 dev = [

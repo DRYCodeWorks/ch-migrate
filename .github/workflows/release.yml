@@ -1,13 +1,14 @@
 name: release
 
-# Pushing a tag vX.Y.Z publishes that version to PyPI as `clickhouse-alembic`
+# Pushing a tag vX.Y.Z publishes that version to PyPI as `ch-migrate-cli`
 # (the CLI it installs is `ch-migrate`) and creates the matching GitHub release.
+# Releases up to 0.4.1 were published as `clickhouse-alembic`.
 #
 # No token: PyPI trusts this workflow through Trusted Publishing (OIDC).
-# PyPI publisher: owner DRYCodeWorks, repository clickhouse-migrate,
-# workflow release.yml, no environment.
+# PyPI publisher for project ch-migrate-cli: owner DRYCodeWorks, repository
+# clickhouse-migrate, workflow release.yml, no environment.
 #
-# To release: set __version__ in clickhouse_alembic/__init__.py, commit,
+# To release: set __version__ in ch_migrate/__init__.py, commit,
 # then `git tag vX.Y.Z && git push origin vX.Y.Z`.
 
 on:
@@ -31,7 +32,7 @@ jobs:
 
       - name: The tag matches the package version
         run: |
-          version=$(python3 -c 'import re; print(re.search(r"__version__ = \"(.+?)\"", open("clickhouse_alembic/__init__.py").read()).group(1))')
+          version=$(python3 -c 'import re; print(re.search(r"__version__ = \"(.+?)\"", open("ch_migrate/__init__.py").read()).group(1))')
           if [ "v${version}" != "${GITHUB_REF_NAME}" ]; then
             echo "::error::tag ${GITHUB_REF_NAME} does not match __version__ ${version}"
             exit 1

@@ -19,7 +19,7 @@ import pytest
 import yaml
 from click.testing import CliRunner
 
-from clickhouse_alembic.cli import main
+from ch_migrate.cli import main
 
 
 @dataclass(frozen=True)
@@ -62,7 +62,7 @@ class MigrationProject:
         path = self.versions_dir / f"{revision}.py"
         source = (
             "from alembic import op\n"
-            "from clickhouse_alembic import get_db\n\n"
+            "from ch_migrate import get_db\n\n"
             f"revision = {revision!r}\n"
             f"down_revision = {down_revision!r}\n"
             "branch_labels = None\ndepends_on = None\n"

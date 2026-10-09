@@ -23,7 +23,7 @@ def irreversible_project(project):
         "bbbb",
         {
             "upgrade": 'op.execute(f"ALTER TABLE {db}.logs DROP COLUMN legacy")',
-            "downgrade": "from clickhouse_alembic import IrreversibleMigration\n"
+            "downgrade": "from ch_migrate import IrreversibleMigration\n"
             "raise IrreversibleMigration(revision, irreversible)",
         },
         down_revision="aaaa",

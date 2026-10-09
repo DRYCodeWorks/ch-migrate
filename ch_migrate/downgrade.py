@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import re
 
-from clickhouse_alembic.rebase import _MISSING, RevisionGraph, _literal_assignment
+from ch_migrate.rebase import _MISSING, RevisionGraph, _literal_assignment
 
 _RELATIVE = re.compile(r"^-(\d+)$")
 

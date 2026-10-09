@@ -85,7 +85,7 @@ def test_run_sql_stops_on_first_failure(project):
 
 def _revision(project):
     project.write_revision(
-        "sql_001", {"upgrade": "from clickhouse_alembic import run_sql\nrun_sql('case.sql')"}
+        "sql_001", {"upgrade": "from ch_migrate import run_sql\nrun_sql('case.sql')"}
     )
 
 

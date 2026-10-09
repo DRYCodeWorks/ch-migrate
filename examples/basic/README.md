@@ -1,6 +1,6 @@
 # Basic Example
 
-A minimal example showing clickhouse-alembic in action.
+A minimal example showing ch-migrate-cli in action.
 
 ## What is ch-migrate?
 
@@ -13,8 +13,8 @@ A minimal example showing clickhouse-alembic in action.
 
 1. Install the package:
    ```bash
-   uv add clickhouse-alembic
-   # or: pip install clickhouse-alembic
+   uv add ch-migrate-cli
+   # or: pip install ch-migrate-cli
    ```
 
 2. Initialize (already done in this example):

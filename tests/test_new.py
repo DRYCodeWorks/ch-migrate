@@ -6,11 +6,11 @@ import re
 import pytest
 from click.testing import CliRunner
 
-from clickhouse_alembic import IrreversibleMigration
-from clickhouse_alembic.authoring import SqlFiles, read_revision_header, render_revision
-from clickhouse_alembic.cli import main
-from clickhouse_alembic.lint import lint_migrations
-from clickhouse_alembic.mv_validate import validate_mv_migrations
+from ch_migrate import IrreversibleMigration
+from ch_migrate.authoring import SqlFiles, read_revision_header, render_revision
+from ch_migrate.cli import main
+from ch_migrate.lint import lint_migrations
+from ch_migrate.mv_validate import validate_mv_migrations
 
 
 @pytest.fixture

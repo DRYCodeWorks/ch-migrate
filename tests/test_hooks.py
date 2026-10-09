@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, call
 
 import pytest
 
-from clickhouse_alembic.hooks import HookRegistry, run_hooks
+from ch_migrate.hooks import HookRegistry, run_hooks
 
 
 class TestHookRegistry:
@@ -122,7 +122,7 @@ class TestRunHooks:
 class TestConfigIntegration:
     def test_hooks_parsed_from_config_yaml(self, tmp_path: Path, monkeypatch):
         """Hooks section in config.yaml is passed through to env_config."""
-        from clickhouse_alembic.config import get_env_config
+        from ch_migrate.config import get_env_config
 
         config_file = tmp_path / "config.yaml"
         config_file.write_text("""
@@ -149,7 +149,7 @@ hooks:
 
     def test_no_hooks_section_works(self, tmp_path: Path, monkeypatch):
         """Existing configs without hooks section continue to work."""
-        from clickhouse_alembic.config import get_env_config
+        from ch_migrate.config import get_env_config
 
         config_file = tmp_path / "config.yaml"
         config_file.write_text("""
@@ -212,7 +212,7 @@ class TestUpgradeEnvCommand:
     def test_upgrade_env_creates_new_env_py(self, tmp_path: Path):
         """upgrade-env copies the package env.py when no existing env.py."""
         from click.testing import CliRunner
-        from clickhouse_alembic.cli import main
+        from ch_migrate.cli import main
 
         migrations_dir = tmp_path / "migrations"
         migrations_dir.mkdir()
@@ -228,7 +228,7 @@ class TestUpgradeEnvCommand:
     def test_upgrade_env_backs_up_existing(self, tmp_path: Path, monkeypatch):
         """upgrade-env creates a .bak backup of existing env.py."""
         from click.testing import CliRunner
-        from clickhouse_alembic.cli import main
+        from ch_migrate.cli import main
 
         migrations_dir = tmp_path / "migrations"
         migrations_dir.mkdir()
@@ -257,7 +257,7 @@ class TestUpgradeEnvCommand:
     def test_upgrade_env_no_migrations_dir(self, tmp_path: Path, monkeypatch):
         """upgrade-env fails gracefully when no migrations dir exists."""
         from click.testing import CliRunner
-        from clickhouse_alembic.cli import main
+        from ch_migrate.cli import main
 
         monkeypatch.chdir(tmp_path)
 

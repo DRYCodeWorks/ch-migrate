@@ -31,8 +31,8 @@ from clickhouse_sqlalchemy.drivers.compilers.sqlcompiler import ClickHouseSQLCom
 from dotenv import load_dotenv
 from sqlalchemy import Column, Connection, DateTime, MetaData, String, create_engine, pool, text
 
-from clickhouse_alembic.config import get_env_config
-from clickhouse_alembic.hooks import HookRegistry, run_hooks
+from ch_migrate.config import get_env_config
+from ch_migrate.hooks import HookRegistry, run_hooks
 
 logger = logging.getLogger(__name__)
 

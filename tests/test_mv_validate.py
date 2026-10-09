@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from clickhouse_alembic.mv_validate import (
+from ch_migrate.mv_validate import (
     MVDeclaration,
     MVValidationError,
     _find_grant_inserts,
@@ -65,7 +65,7 @@ def _write_migration(
         '"""',
         "",
         "from alembic import op",
-        "from clickhouse_alembic import get_db",
+        "from ch_migrate import get_db",
         "",
         f"revision = '{rev_id}'",
         f"down_revision = {down_rev}",
@@ -846,7 +846,7 @@ class TestSQLFileReferences:
 
             \"\"\"
             from alembic import op
-            from clickhouse_alembic import get_db, read_sql
+            from ch_migrate import get_db, read_sql
 
             revision = '{rev_id}'
             down_revision = None
@@ -872,7 +872,7 @@ class TestCLIIntegration:
 
     def test_up_blocks_on_mv_errors(self, tmp_path: Path, monkeypatch):
         from click.testing import CliRunner
-        from clickhouse_alembic.cli import main
+        from ch_migrate.cli import main
 
         # Create minimal project structure
         (tmp_path / "config.yaml").write_text(textwrap.dedent("""\
@@ -899,7 +899,7 @@ class TestCLIIntegration:
 
     def test_up_skip_mv_check_bypasses(self, tmp_path: Path, monkeypatch):
         from click.testing import CliRunner
-        from clickhouse_alembic.cli import main
+        from ch_migrate.cli import main
 
         (tmp_path / "config.yaml").write_text(textwrap.dedent("""\
             environments:
@@ -932,7 +932,7 @@ class TestLintIntegration:
     """Test MVDeclarationRule via lint_migrations."""
 
     def test_lint_catches_missing_declarations(self, tmp_path: Path):
-        from clickhouse_alembic.lint import LintConfig, Severity, lint_migrations
+        from ch_migrate.lint import LintConfig, Severity, lint_migrations
 
         versions = tmp_path / "versions"
         _write_migration(
@@ -946,7 +946,7 @@ class TestLintIntegration:
         assert mv_errors[0].severity == Severity.ERROR
 
     def test_lint_passes_with_declarations(self, tmp_path: Path):
-        from clickhouse_alembic.lint import lint_migrations
+        from ch_migrate.lint import lint_migrations
 
         versions = tmp_path / "versions"
         _write_migration(
@@ -966,7 +966,7 @@ class TestLintIntegration:
         assert mv_errors == []
 
     def test_lint_respects_severity_off(self, tmp_path: Path):
-        from clickhouse_alembic.lint import LintConfig, Severity, lint_migrations
+        from ch_migrate.lint import LintConfig, Severity, lint_migrations
 
         versions = tmp_path / "versions"
         _write_migration(
@@ -980,7 +980,7 @@ class TestLintIntegration:
         assert mv_errors == []
 
     def test_lint_respects_cutoff(self, tmp_path: Path):
-        from clickhouse_alembic.lint import LintConfig, lint_migrations
+        from ch_migrate.lint import LintConfig, lint_migrations
 
         versions = tmp_path / "versions"
         _write_migration(

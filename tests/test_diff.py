@@ -10,14 +10,14 @@ import pytest
 from click.testing import CliRunner
 from rich.console import Console
 
-from clickhouse_alembic.diff import (
+from ch_migrate.diff import (
     DiffStatus,
     FieldDiff,
     SchemaDiff,
     compare_schemas,
 )
-from clickhouse_alembic.display import render_diff_report
-from clickhouse_alembic.introspect import (
+from ch_migrate.display import render_diff_report
+from ch_migrate.introspect import (
     ColumnDefinition,
     DictDefinition,
     MVDefinition,
@@ -259,8 +259,8 @@ environments:
 
 
 class TestDiffCommand:
-    @patch("clickhouse_alembic.connection.get_client")
-    @patch("clickhouse_alembic.introspect.get_live_schema")
+    @patch("ch_migrate.connection.get_client")
+    @patch("ch_migrate.introspect.get_live_schema")
     def test_in_sync_exits_0(self, mock_schema, mock_client, diff_runner, tmp_path):
         mock_client.return_value = MagicMock()
         live = Schema(database="testdb")
@@ -276,12 +276,12 @@ class TestDiffCommand:
         )
         mock_schema.return_value = live
 
-        from clickhouse_alembic.cli import main
+        from ch_migrate.cli import main
         result = diff_runner.invoke(main, ["diff", "dev"])
         assert result.exit_code == 0
 
-    @patch("clickhouse_alembic.connection.get_client")
-    @patch("clickhouse_alembic.introspect.get_live_schema")
+    @patch("ch_migrate.connection.get_client")
+    @patch("ch_migrate.introspect.get_live_schema")
     def test_drift_exits_1(self, mock_schema, mock_client, diff_runner, tmp_path):
         mock_client.return_value = MagicMock()
         live = Schema(database="testdb")
@@ -297,12 +297,12 @@ class TestDiffCommand:
         )
         mock_schema.return_value = live
 
-        from clickhouse_alembic.cli import main
+        from ch_migrate.cli import main
         result = diff_runner.invoke(main, ["diff", "dev"])
         assert result.exit_code == 1
 
-    @patch("clickhouse_alembic.connection.get_client")
-    @patch("clickhouse_alembic.introspect.get_live_schema")
+    @patch("ch_migrate.connection.get_client")
+    @patch("ch_migrate.introspect.get_live_schema")
     def test_no_snapshot_exits_1(self, mock_schema, mock_client, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         (tmp_path / "config.yaml").write_text("""
@@ -314,7 +314,7 @@ environments:
 """)
         monkeypatch.setenv("CH_DEV_PASSWORD", "pass")
 
-        from clickhouse_alembic.cli import main
+        from ch_migrate.cli import main
         runner = CliRunner()
         result = runner.invoke(main, ["diff", "dev"])
         assert result.exit_code == 1

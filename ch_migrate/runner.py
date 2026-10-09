@@ -18,9 +18,9 @@ from pathlib import Path
 
 import click
 
-from clickhouse_alembic import ui
-from clickhouse_alembic.config import get_env_config
-from clickhouse_alembic.sql import clean_database_error
+from ch_migrate import ui
+from ch_migrate.config import get_env_config
+from ch_migrate.sql import clean_database_error
 
 _LOG_LINE = re.compile(r"^(?P<level>[A-Z]+)\s+\[(?P<logger>[^\]]+)\]\s?(?P<message>.*)$")
 _RUNNING = re.compile(

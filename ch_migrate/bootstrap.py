@@ -18,9 +18,9 @@ import sys
 from pathlib import Path
 from typing import Optional
 
-from clickhouse_alembic import ui
-from clickhouse_alembic.config import get_env_config
-from clickhouse_alembic.secrets import get_secret
+from ch_migrate import ui
+from ch_migrate.config import get_env_config
+from ch_migrate.secrets import get_secret
 
 # Pattern for valid SQL identifiers (database, user, role names)
 _IDENTIFIER_PATTERN = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")

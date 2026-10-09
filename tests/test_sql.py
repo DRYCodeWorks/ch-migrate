@@ -2,7 +2,7 @@
 
 import pytest
 
-from clickhouse_alembic.sql import (
+from ch_migrate.sql import (
     Statement,
     load_statements,
     render_placeholders,

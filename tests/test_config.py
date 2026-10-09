@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from clickhouse_alembic.config import get_env_config, load_config
+from ch_migrate.config import get_env_config, load_config
 
 
 class TestLoadConfig:

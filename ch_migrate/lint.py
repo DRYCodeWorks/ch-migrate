@@ -9,9 +9,9 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
-from clickhouse_alembic.mv_validate import MVValidationError, validate_mv_migrations
-from clickhouse_alembic.rebase import RevisionGraph, build_revision_graph
-from clickhouse_alembic.statements import MigrationStatement, migration_statements
+from ch_migrate.mv_validate import MVValidationError, validate_mv_migrations
+from ch_migrate.rebase import RevisionGraph, build_revision_graph
+from ch_migrate.statements import MigrationStatement, migration_statements
 
 
 # ---------------------------------------------------------------------------
@@ -417,7 +417,7 @@ class MVDependencyRule(LintRule):
         results: list[LintResult] = []
         file_path = kwargs.get("file_path")
 
-        from clickhouse_alembic.introspect import get_dependencies
+        from ch_migrate.introspect import get_dependencies
 
         try:
             dep_graph = get_dependencies(client, database)

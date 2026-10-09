@@ -7,7 +7,7 @@ Create Date: ${create_date}
 
 from alembic import op
 
-from clickhouse_alembic import get_db, read_sql
+from ch_migrate import get_db, read_sql
 
 # revision identifiers
 revision = ${repr(up_revision)}

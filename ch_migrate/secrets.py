@@ -29,7 +29,7 @@ def _get_ssm_client(region: Optional[str] = None):  # type: ignore[no-untyped-de
     except ImportError:
         raise ImportError(
             "boto3 is required for SSM support. "
-            "Install with: pip install clickhouse-alembic[ssm]"
+            "Install with: pip install ch-migrate-cli[ssm]"
         )
     if region:
         return boto3.client("ssm", region_name=region)

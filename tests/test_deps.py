@@ -10,9 +10,9 @@ import pytest
 from click.testing import CliRunner
 from rich.console import Console
 
-from clickhouse_alembic.deps import MigrationWarning, validate_migration
-from clickhouse_alembic.display import render_dependency_tree
-from clickhouse_alembic.introspect import (
+from ch_migrate.deps import MigrationWarning, validate_migration
+from ch_migrate.display import render_dependency_tree
+from ch_migrate.introspect import (
     DependencyEdge,
     DependencyGraph,
     DepType,
@@ -150,13 +150,13 @@ class TestRenderDependencyTree:
         """Nodes with both data_flow and schema edges should appear once, not as 'circular'."""
         from io import StringIO
         from rich.console import Console
-        from clickhouse_alembic.introspect import (
+        from ch_migrate.introspect import (
             DependencyEdge,
             DependencyGraph,
             DepType,
             ObjectNode,
         )
-        from clickhouse_alembic.display import render_dependency_tree
+        from ch_migrate.display import render_dependency_tree
 
         graph = DependencyGraph(
             nodes={
@@ -219,19 +219,19 @@ environments:
 
 
 class TestDepsCommand:
-    @patch("clickhouse_alembic.connection.get_client")
-    @patch("clickhouse_alembic.deps.get_dependencies")
+    @patch("ch_migrate.connection.get_client")
+    @patch("ch_migrate.deps.get_dependencies")
     def test_shows_graph(self, mock_deps, mock_client, deps_runner):
         mock_client.return_value = MagicMock()
         mock_deps.return_value = _make_graph()
 
-        from clickhouse_alembic.cli import main
+        from ch_migrate.cli import main
         result = deps_runner.invoke(main, ["deps", "dev"])
         assert result.exit_code == 0
         assert "Dependency Graph" in result.output
 
-    @patch("clickhouse_alembic.connection.get_client")
-    @patch("clickhouse_alembic.deps.get_dependencies")
+    @patch("ch_migrate.connection.get_client")
+    @patch("ch_migrate.deps.get_dependencies")
     def test_validate_safe_migration(self, mock_deps, mock_client, deps_runner, tmp_path):
         mock_client.return_value = MagicMock()
         mock_deps.return_value = _make_graph()
@@ -239,13 +239,13 @@ class TestDepsCommand:
         sql_file = tmp_path / "safe.sql"
         sql_file.write_text("ALTER TABLE users ADD COLUMN email String")
 
-        from clickhouse_alembic.cli import main
+        from ch_migrate.cli import main
         result = deps_runner.invoke(main, ["deps", "dev", "--validate", str(sql_file)])
         assert result.exit_code == 0
         assert "passed" in result.output
 
-    @patch("clickhouse_alembic.connection.get_client")
-    @patch("clickhouse_alembic.deps.get_dependencies")
+    @patch("ch_migrate.connection.get_client")
+    @patch("ch_migrate.deps.get_dependencies")
     def test_validate_breaking_migration(self, mock_deps, mock_client, deps_runner, tmp_path):
         mock_client.return_value = MagicMock()
         mock_deps.return_value = _make_graph()
@@ -253,6 +253,6 @@ class TestDepsCommand:
         sql_file = tmp_path / "break.sql"
         sql_file.write_text("DROP TABLE events")
 
-        from clickhouse_alembic.cli import main
+        from ch_migrate.cli import main
         result = deps_runner.invoke(main, ["deps", "dev", "--validate", str(sql_file)])
         assert result.exit_code == 1

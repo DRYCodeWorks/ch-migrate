@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Literal
 
-from clickhouse_alembic.introspect import (
+from ch_migrate.introspect import (
     ColumnDefinition,
     Schema,
     TableDefinition,

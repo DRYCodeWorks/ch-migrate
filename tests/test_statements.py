@@ -4,9 +4,9 @@ from pathlib import Path
 
 import pytest
 
-from clickhouse_alembic.lint import lint_migrations
-from clickhouse_alembic.rebase import build_revision_graph
-from clickhouse_alembic.statements import migration_statements, pending_revisions
+from ch_migrate.lint import lint_migrations
+from ch_migrate.rebase import build_revision_graph
+from ch_migrate.statements import migration_statements, pending_revisions
 
 
 @pytest.fixture

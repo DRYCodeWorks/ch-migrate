@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from clickhouse_alembic.helpers import (
+from ch_migrate.helpers import (
     _parse_source_table,
     get_cluster,
     get_db,

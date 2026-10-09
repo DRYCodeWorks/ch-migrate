@@ -5,7 +5,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from clickhouse_alembic.secrets import (
+from ch_migrate.secrets import (
     SSMJsonKeyError,
     SSMSecretNotFoundError,
     _parse_ssm_path,
@@ -19,7 +19,7 @@ class TestGetSecret:
         result = get_secret("dev", "password")
         assert result == "from-env"
 
-    @patch("clickhouse_alembic.secrets._get_ssm_client")
+    @patch("ch_migrate.secrets._get_ssm_client")
     def test_ssm_takes_precedence_when_path_configured(self, mock_get_client, monkeypatch):
         # Even with env var set, SSM is used when ssm_path is provided
         monkeypatch.setenv("CH_DEV_PASSWORD", "from-env")
@@ -42,7 +42,7 @@ class TestGetSecret:
         with pytest.raises(ValueError, match="CH_DEV_PASSWORD.*required"):
             get_secret("dev", "password", required=True)
 
-    @patch("clickhouse_alembic.secrets._get_ssm_client")
+    @patch("ch_migrate.secrets._get_ssm_client")
     def test_fetches_from_ssm_when_path_configured(self, mock_get_client, monkeypatch):
         monkeypatch.delenv("CH_DEV_PASSWORD", raising=False)
 
@@ -56,8 +56,8 @@ class TestGetSecret:
             Name="/myproject/dev/password", WithDecryption=True
         )
 
-    @patch("clickhouse_alembic.secrets._get_ssm_exceptions")
-    @patch("clickhouse_alembic.secrets._get_ssm_client")
+    @patch("ch_migrate.secrets._get_ssm_exceptions")
+    @patch("ch_migrate.secrets._get_ssm_client")
     def test_raises_when_ssm_parameter_not_found(
         self, mock_get_client, mock_get_exceptions, monkeypatch
     ):
@@ -82,7 +82,7 @@ class TestGetSecret:
         monkeypatch.delenv("CH_DEV_PASSWORD", raising=False)
 
         with patch.dict("sys.modules", {"boto3": None}):
-            with pytest.raises(ImportError, match="boto3.*pip install clickhouse-alembic\\[ssm\\]"):
+            with pytest.raises(ImportError, match="boto3.*pip install ch-migrate-cli\\[ssm\\]"):
                 get_secret("dev", "password", ssm_path="/some/path")
 
 
@@ -109,7 +109,7 @@ class TestParseSSMPath:
 
 
 class TestSSMJsonKeyExtraction:
-    @patch("clickhouse_alembic.secrets._get_ssm_client")
+    @patch("ch_migrate.secrets._get_ssm_client")
     def test_extracts_json_key_with_hash_suffix(self, mock_get_client):
         mock_client = Mock()
         mock_client.get_parameter.return_value = {
@@ -123,7 +123,7 @@ class TestSSMJsonKeyExtraction:
             Name="/database/credentials", WithDecryption=True
         )
 
-    @patch("clickhouse_alembic.secrets._get_ssm_client")
+    @patch("ch_migrate.secrets._get_ssm_client")
     def test_extracts_json_key_with_dict_syntax(self, mock_get_client):
         mock_client = Mock()
         mock_client.get_parameter.return_value = {
@@ -138,7 +138,7 @@ class TestSSMJsonKeyExtraction:
         )
         assert result == "secret456"
 
-    @patch("clickhouse_alembic.secrets._get_ssm_client")
+    @patch("ch_migrate.secrets._get_ssm_client")
     def test_raises_when_json_key_not_found(self, mock_get_client):
         mock_client = Mock()
         mock_client.get_parameter.return_value = {
@@ -149,7 +149,7 @@ class TestSSMJsonKeyExtraction:
         with pytest.raises(SSMJsonKeyError, match="JSON key 'password' not found"):
             get_secret("dev", "password", ssm_path="/database/credentials#password")
 
-    @patch("clickhouse_alembic.secrets._get_ssm_client")
+    @patch("ch_migrate.secrets._get_ssm_client")
     def test_raises_when_value_not_valid_json(self, mock_get_client):
         mock_client = Mock()
         mock_client.get_parameter.return_value = {"Parameter": {"Value": "not-json"}}
@@ -160,7 +160,7 @@ class TestSSMJsonKeyExtraction:
 
 
 class TestAWSRegion:
-    @patch("clickhouse_alembic.secrets._get_ssm_client")
+    @patch("ch_migrate.secrets._get_ssm_client")
     def test_passes_region_to_ssm_client(self, mock_get_client):
         mock_client = Mock()
         mock_client.get_parameter.return_value = {"Parameter": {"Value": "secret123"}}
@@ -171,7 +171,7 @@ class TestAWSRegion:
         assert result == "secret123"
         mock_get_client.assert_called_once_with("us-west-2")
 
-    @patch("clickhouse_alembic.secrets._get_ssm_client")
+    @patch("ch_migrate.secrets._get_ssm_client")
     def test_none_region_uses_default(self, mock_get_client):
         mock_client = Mock()
         mock_client.get_parameter.return_value = {"Parameter": {"Value": "secret123"}}

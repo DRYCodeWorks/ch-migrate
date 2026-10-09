@@ -4,7 +4,7 @@
 
 ```bash
 # 1. Install
-uv add clickhouse-alembic        # or: pip install clickhouse-alembic
+uv add ch-migrate-cli        # or: pip install ch-migrate-cli
 
 # 2. Initialize
 ch-migrate init                   # creates project structure in current dir
@@ -30,7 +30,7 @@ ch-migrate up dev
 
 ```bash
 # 1. Install in your project
-uv add clickhouse-alembic
+uv add ch-migrate-cli
 
 # 2. Initialize in a subdirectory (or root)
 ch-migrate init ./migrations --name my_project
@@ -113,7 +113,7 @@ docker run -d \
 
 ```bash
 mkdir my-project && cd my-project
-uv init && uv add clickhouse-alembic
+uv init && uv add ch-migrate-cli
 ch-migrate init --name my_project
 ```
 
@@ -256,10 +256,7 @@ environments:
       mcp_password: /my_project/prod/mcp_password
 ```
 
-**Install SSM support:**
-```bash
-uv add clickhouse-alembic[ssm]
-```
+SSM support (`boto3`) is included in the base install; AWS credentials come from your usual AWS profile or environment.
 
 **Set up SSM parameters:**
 ```bash

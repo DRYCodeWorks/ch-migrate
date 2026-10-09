@@ -8,7 +8,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from clickhouse_alembic.lint import (
+from ch_migrate.lint import (
     ALL_RULES,
     RUNTIME_RULES,
     STATIC_RULES,
@@ -312,7 +312,7 @@ class TestLargeTableMutationRule:
 class TestMVDependencyRule:
     def _make_client_with_deps(self) -> MagicMock:
         """Create a mock client that returns a dependency graph with MV on events."""
-        from clickhouse_alembic.introspect import (
+        from ch_migrate.introspect import (
             DepType,
             DependencyEdge,
             DependencyGraph,
@@ -338,7 +338,7 @@ class TestMVDependencyRule:
         client, graph = self._make_client_with_deps()
         sql = "DROP TABLE IF EXISTS events"
 
-        with patch("clickhouse_alembic.introspect.get_dependencies", return_value=graph):
+        with patch("ch_migrate.introspect.get_dependencies", return_value=graph):
             results = MVDependencyRule().check(
                 sql, client=client, database="mydb"
             )
@@ -352,7 +352,7 @@ class TestMVDependencyRule:
         client, graph = self._make_client_with_deps()
         sql = "DROP TABLE IF EXISTS unrelated_table"
 
-        with patch("clickhouse_alembic.introspect.get_dependencies", return_value=graph):
+        with patch("ch_migrate.introspect.get_dependencies", return_value=graph):
             results = MVDependencyRule().check(
                 sql, client=client, database="mydb"
             )

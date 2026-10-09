@@ -18,7 +18,7 @@ def fetch_current_ddl(env_config: dict[str, Any], table_name: str) -> str | None
     Returns:
         DDL string or None if connection fails or table doesn't exist.
     """
-    from clickhouse_alembic.connection import get_client
+    from ch_migrate.connection import get_client
 
     try:
         client = get_client(env_config)
@@ -46,7 +46,7 @@ def find_dependent_dictionaries(
     Returns:
         List of dictionary names that depend on this table.
     """
-    from clickhouse_alembic.connection import get_client
+    from ch_migrate.connection import get_client
 
     try:
         client = get_client(env_config)
@@ -181,7 +181,7 @@ Steps: CREATE shadow -> INSERT SELECT -> EXCHANGE -> DROP
 
 from alembic import op
 
-from clickhouse_alembic import IrreversibleMigration, get_db, read_sql
+from ch_migrate import IrreversibleMigration, get_db, read_sql
 
 # revision identifiers
 revision = {repr(revision)}

@@ -67,7 +67,7 @@ def _configure(root, server, request):
 
 def _cli(root, *args):
     result = subprocess.run(
-        [sys.executable, "-m", "clickhouse_alembic.cli", *args],
+        [sys.executable, "-m", "ch_migrate.cli", *args],
         cwd=root,
         capture_output=True,
         text=True,

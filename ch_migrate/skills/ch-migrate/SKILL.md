@@ -13,8 +13,8 @@ Alembic integration; this development line still uses `clickhouse-sqlalchemy`
 for migration connections. Do not imply an endorsement or promise transactional
 DDL.
 
-**Install:** `uv tool install clickhouse-alembic` or `pip install clickhouse-alembic`.
-The command is `ch-migrate`; the import package is `clickhouse_alembic`.
+**Install:** `uv tool install ch-migrate-cli` or `pip install ch-migrate-cli`.
+The command is `ch-migrate`; the import package is `ch_migrate`.
 
 ## CLI Quick Reference
 

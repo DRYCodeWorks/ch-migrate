@@ -10,8 +10,8 @@ from rich.table import Table
 from rich.text import Text
 from rich.tree import Tree
 
-from clickhouse_alembic import ui
-from clickhouse_alembic.rebase import RevisionGraph
+from ch_migrate import ui
+from ch_migrate.rebase import RevisionGraph
 
 
 def _short_error(error: str) -> str:
@@ -306,7 +306,7 @@ def render_diff_report(
         diffs: List of SchemaDiff objects from compare_schemas().
         console: Optional Console for testability.
     """
-    from clickhouse_alembic.diff import DiffStatus
+    from ch_migrate.diff import DiffStatus
 
     console = console or ui.out
 

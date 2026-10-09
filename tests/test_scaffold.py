@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from clickhouse_alembic.scaffold import (
+from ch_migrate.scaffold import (
     _make_shadow_ddl,
     find_dependent_dictionaries,
     generate_exchange_migration,
@@ -109,7 +109,7 @@ class TestGenerateExchangeMigration:
             table_name="users",
             sql_path="history/tables/users/001_abc123.sql",
         )
-        from clickhouse_alembic import IrreversibleMigration
+        from ch_migrate import IrreversibleMigration
 
         namespace = {}
         exec(compile(content, "<generated migration>", "exec"), namespace)
@@ -186,7 +186,7 @@ class TestFindDependentDictionaries:
             "password": "test",
         }
 
-        with patch("clickhouse_alembic.connection.get_client", return_value=mock_client):
+        with patch("ch_migrate.connection.get_client", return_value=mock_client):
             find_dependent_dictionaries(env_config, "logs")
 
         call_args = mock_client.query.call_args

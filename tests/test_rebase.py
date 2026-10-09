@@ -6,7 +6,7 @@ from textwrap import dedent
 import pytest
 from typing import Optional, Tuple, Union
 
-from clickhouse_alembic.rebase import (
+from ch_migrate.rebase import (
     apply_rebase,
     build_revision_graph,
     find_branch_roots,

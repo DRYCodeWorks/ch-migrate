@@ -14,7 +14,7 @@ from datetime import datetime
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from clickhouse_alembic.rebase import _MISSING, _literal_assignment
+from ch_migrate.rebase import _MISSING, _literal_assignment
 
 OBJECT_DIRS = {"table": "tables", "view": "views", "dictionary": "dictionaries"}
 OTHER_DIR = "other"
@@ -123,7 +123,7 @@ def render_revision(header: RevisionHeader, files: SqlFiles, irreversible: str |
 
     return (
         f"{header.docstring_source}\n\n"
-        f"from clickhouse_alembic import {imports}\n\n"
+        f"from ch_migrate import {imports}\n\n"
         "# revision identifiers\n"
         f"revision = {header.revision!r}\n"
         f"down_revision = {header.down_revision!r}\n"

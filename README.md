@@ -1,4 +1,4 @@
-# clickhouse-alembic
+# ch-migrate
 
 ## What it is
 
@@ -9,13 +9,15 @@ Background: [ClickHouse migrations with Alembic](https://www.drycodeworks.com/ar
 ## Install
 
 ```bash
-uv tool install clickhouse-alembic
+uv tool install ch-migrate-cli
 # Or:
-pip install clickhouse-alembic
+pip install ch-migrate-cli
 ch-migrate --version
 ```
 
-The package is `clickhouse-alembic` and the executable is `ch-migrate`: PyPI rejected `ch-migrate` because it is too similar to the existing `chmigrate` package. The Python import package remains `clickhouse_alembic`.
+The command is `ch-migrate`, the PyPI package is `ch-migrate-cli` (PyPI treats `ch-migrate` as the same name as the existing, unrelated `chmigrate`), and migrations import from `ch_migrate`. Versions up to 0.4.1 were published as `clickhouse-alembic` with the import package `clickhouse_alembic`; that import still works with a deprecation warning until 1.0, so existing migration files keep running. Replace `clickhouse_alembic` with `ch_migrate` in them when convenient, and run `ch-migrate upgrade-env` to refresh `migrations/env.py`.
+
+To switch an existing install, remove the old package first, because both install the `ch-migrate` command and the `clickhouse_alembic` folder: `uv tool uninstall clickhouse-alembic && uv tool install ch-migrate-cli`, or `pip uninstall clickhouse-alembic && pip install ch-migrate-cli`. In a project that lists `clickhouse-alembic` as a dependency, replace it with `ch-migrate-cli`.
 
 This README describes the source checkout, which may be ahead of PyPI. To try an unreleased checkout locally, run `uv tool install .` in the repository. For development without installing a global tool, use `uv run --locked ch-migrate`.
 
@@ -150,7 +152,7 @@ There is no override flag. To revert past a marked revision, implement its downg
 Use `new --python` for logic that cannot be expressed as SQL files. It retains the Python template and, with an object option, a single SQL history file. Existing Python migrations continue to work.
 
 ```python
-from clickhouse_alembic import get_db, run_sql
+from ch_migrate import get_db, run_sql
 
 def upgrade():
     run_sql("history/tables/logs/001_add_status.up.sql", db=get_db())
@@ -160,7 +162,7 @@ def upgrade():
 
 ```python
 from alembic import op
-from clickhouse_alembic import get_db, read_sql
+from ch_migrate import get_db, read_sql
 
 def upgrade():
     op.execute(read_sql("history/tables/users/001_create.sql", db=get_db()))
@@ -169,7 +171,7 @@ def upgrade():
 A hand-written irreversible Python revision uses both the marker and backstop:
 
 ```python
-from clickhouse_alembic import IrreversibleMigration
+from ch_migrate import IrreversibleMigration
 
 irreversible = "Drops legacy data"
 
@@ -196,7 +198,7 @@ DROP TABLE IF EXISTS {db}.users_shadow;
 The dictionary helper retains automatic SELECT grants for a configured dictionary reader:
 
 ```python
-from clickhouse_alembic import create_dictionary
+from ch_migrate import create_dictionary
 
 def upgrade():
     create_dictionary("history/dictionaries/dict_users/001_create.sql")

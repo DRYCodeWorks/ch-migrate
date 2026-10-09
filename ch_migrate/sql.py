@@ -83,7 +83,7 @@ def load_statements(path: str, **values: Any) -> list[Statement]:
 
 def default_values(overrides: dict[str, Any]) -> dict[str, Any]:
     """Placeholder values from the environment, with explicit overrides applied."""
-    from clickhouse_alembic.helpers import get_cluster, get_db, on_cluster
+    from ch_migrate.helpers import get_cluster, get_db, on_cluster
 
     values: dict[str, Any] = {
         "db": get_db(),

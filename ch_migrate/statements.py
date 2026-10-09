@@ -8,8 +8,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-from clickhouse_alembic.rebase import RevisionGraph
-from clickhouse_alembic.sql import split_statements
+from ch_migrate.rebase import RevisionGraph
+from ch_migrate.sql import split_statements
 
 MigrationDirection = Literal["upgrade", "downgrade"]
 _FSTRING_POSITIONS = sys.version_info >= (3, 12)

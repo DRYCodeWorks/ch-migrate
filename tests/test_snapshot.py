@@ -9,8 +9,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 from click.testing import CliRunner
 
-from clickhouse_alembic.cli import main
-from clickhouse_alembic.introspect import (
+from ch_migrate.cli import main
+from ch_migrate.introspect import (
     DictDefinition,
     MVDefinition,
     Schema,
@@ -70,8 +70,8 @@ environments:
 
 
 class TestSnapshotCommand:
-    @patch("clickhouse_alembic.connection.get_client")
-    @patch("clickhouse_alembic.introspect.get_live_schema")
+    @patch("ch_migrate.connection.get_client")
+    @patch("ch_migrate.introspect.get_live_schema")
     def test_captures_all_objects(self, mock_schema, mock_client, runner, tmp_path):
         mock_client.return_value = MagicMock()
         mock_schema.return_value = _make_schema()
@@ -95,8 +95,8 @@ class TestSnapshotCommand:
         assert (snap / "materialized_views" / "hourly_events.sql").exists()
         assert (snap / "dictionaries" / "dict_topic.sql").exists()
 
-    @patch("clickhouse_alembic.connection.get_client")
-    @patch("clickhouse_alembic.introspect.get_live_schema")
+    @patch("ch_migrate.connection.get_client")
+    @patch("ch_migrate.introspect.get_live_schema")
     def test_ddl_content_written(self, mock_schema, mock_client, runner, tmp_path):
         mock_client.return_value = MagicMock()
         mock_schema.return_value = _make_schema()
@@ -110,8 +110,8 @@ class TestSnapshotCommand:
         content = (snap / "tables" / "users.sql").read_text()
         assert "CREATE TABLE testdb.users" in content
 
-    @patch("clickhouse_alembic.connection.get_client")
-    @patch("clickhouse_alembic.introspect.get_live_schema")
+    @patch("ch_migrate.connection.get_client")
+    @patch("ch_migrate.introspect.get_live_schema")
     def test_exclude_filter(self, mock_schema, mock_client, runner, tmp_path):
         mock_client.return_value = MagicMock()
         mock_schema.return_value = _make_schema()
@@ -125,8 +125,8 @@ class TestSnapshotCommand:
         assert (snap / "tables" / "users.sql").exists()
         assert not (snap / "tables" / "peerdb_staging.sql").exists()
 
-    @patch("clickhouse_alembic.connection.get_client")
-    @patch("clickhouse_alembic.introspect.get_live_schema")
+    @patch("ch_migrate.connection.get_client")
+    @patch("ch_migrate.introspect.get_live_schema")
     def test_exclude_comma_separated(self, mock_schema, mock_client, runner, tmp_path):
         mock_client.return_value = MagicMock()
         mock_schema.return_value = _make_schema()
@@ -141,8 +141,8 @@ class TestSnapshotCommand:
         assert not (snap / "tables" / "peerdb_staging.sql").exists()
         assert not (snap / "tables" / "events.sql").exists()
 
-    @patch("clickhouse_alembic.connection.get_client")
-    @patch("clickhouse_alembic.introspect.get_live_schema")
+    @patch("ch_migrate.connection.get_client")
+    @patch("ch_migrate.introspect.get_live_schema")
     def test_include_filter(self, mock_schema, mock_client, runner, tmp_path):
         mock_client.return_value = MagicMock()
         mock_schema.return_value = _make_schema()
@@ -158,8 +158,8 @@ class TestSnapshotCommand:
         assert (snap / "dictionaries" / "dict_topic.sql").exists()
         assert not (snap / "tables" / "events.sql").exists()
 
-    @patch("clickhouse_alembic.connection.get_client")
-    @patch("clickhouse_alembic.introspect.get_live_schema")
+    @patch("ch_migrate.connection.get_client")
+    @patch("ch_migrate.introspect.get_live_schema")
     def test_filter_no_matches_exits_1(self, mock_schema, mock_client, runner, tmp_path):
         mock_client.return_value = MagicMock()
         mock_schema.return_value = _make_schema()
@@ -168,8 +168,8 @@ class TestSnapshotCommand:
         assert result.exit_code == 1
         assert "No objects matched" in result.output
 
-    @patch("clickhouse_alembic.connection.get_client")
-    @patch("clickhouse_alembic.introspect.get_live_schema")
+    @patch("ch_migrate.connection.get_client")
+    @patch("ch_migrate.introspect.get_live_schema")
     def test_timestamped_dirs_no_overwrite(self, mock_schema, mock_client, runner, tmp_path):
         mock_client.return_value = MagicMock()
         mock_schema.return_value = _make_schema()
@@ -188,8 +188,8 @@ class TestSnapshotCommand:
         snapshot_dirs = list(snapshots_dir.iterdir())
         assert len(snapshot_dirs) == 2
 
-    @patch("clickhouse_alembic.connection.get_client")
-    @patch("clickhouse_alembic.introspect.get_live_schema")
+    @patch("ch_migrate.connection.get_client")
+    @patch("ch_migrate.introspect.get_live_schema")
     def test_empty_schema(self, mock_schema, mock_client, runner, tmp_path):
         mock_client.return_value = MagicMock()
         mock_schema.return_value = Schema(database="testdb")
@@ -203,7 +203,7 @@ class TestSnapshotDisplay:
     def test_render_snapshot_progress(self):
         from io import StringIO
         from rich.console import Console
-        from clickhouse_alembic.display import render_snapshot_progress
+        from ch_migrate.display import render_snapshot_progress
 
         output = StringIO()
         console = Console(file=output, force_terminal=True, width=80)
@@ -223,7 +223,7 @@ class TestSnapshotDisplay:
     def test_render_snapshot_progress_no_excluded(self):
         from io import StringIO
         from rich.console import Console
-        from clickhouse_alembic.display import render_snapshot_progress
+        from ch_migrate.display import render_snapshot_progress
 
         output = StringIO()
         console = Console(file=output, force_terminal=True, width=80)

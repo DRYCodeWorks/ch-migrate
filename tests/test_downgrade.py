@@ -5,12 +5,12 @@ from typing import Optional, Tuple, Union
 
 import pytest
 
-from clickhouse_alembic.downgrade import (
+from ch_migrate.downgrade import (
     IrreversibleMigration,
     irreversible_reason,
     revisions_to_revert,
 )
-from clickhouse_alembic.rebase import build_revision_graph
+from ch_migrate.rebase import build_revision_graph
 
 DownRevision = Optional[Union[str, Tuple[str, ...]]]
 

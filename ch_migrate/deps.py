@@ -6,7 +6,7 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-from clickhouse_alembic.introspect import (
+from ch_migrate.introspect import (
     DependencyGraph,
     DepType,
     ObjectNode,

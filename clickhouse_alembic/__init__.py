@@ -1,68 +1,59 @@
+"""Deprecated alias for `ch_migrate`, the import name before 0.5. Removed in 1.0.
+
+`from clickhouse_alembic import run_sql` and `from clickhouse_alembic.config import ...`
+(as in env.py files generated before 0.5) keep working. Every `clickhouse_alembic.X`
+is the same module object as `ch_migrate.X`, so classes and state are shared rather
+than loaded twice.
 """
-clickhouse-alembic: Alembic-based migrations for ClickHouse Cloud.
 
-Usage:
-    from clickhouse_alembic import read_sql, get_db, get_env_config, create_dictionary
-"""
+from __future__ import annotations
 
-__version__ = "0.5.0"
+import importlib
+import importlib.abc
+import importlib.util
+import sys
+import warnings
+from types import FrameType, ModuleType
+from typing import Any, Optional
+
+_NEW = "ch_migrate"
+_MESSAGE = (
+    "clickhouse_alembic was renamed to ch_migrate in 0.5; update this import. "
+    "The old name stops working in 1.0."
+)
 
 
-from typing import Any
-
-
-# Lazy imports to avoid import errors before dependencies are created
 def __getattr__(name: str) -> Any:
-    if name in ("read_sql", "get_db", "create_dictionary", "on_cluster", "get_cluster"):
-        from clickhouse_alembic.helpers import (
-            create_dictionary,
-            get_cluster,
-            get_db,
-            on_cluster,
-            read_sql,
-        )
-
-        return {
-            "read_sql": read_sql,
-            "get_db": get_db,
-            "create_dictionary": create_dictionary,
-            "on_cluster": on_cluster,
-            "get_cluster": get_cluster,
-        }[name]
-    elif name == "run_sql":
-        from clickhouse_alembic.sql import run_sql
-
-        return run_sql
-    elif name == "IrreversibleMigration":
-        from clickhouse_alembic.downgrade import IrreversibleMigration
-
-        return IrreversibleMigration
-    elif name == "get_env_config":
-        from clickhouse_alembic.config import get_env_config
-
-        return get_env_config
-    elif name in ("get_secret", "SSMSecretNotFoundError", "SSMJsonKeyError"):
-        from clickhouse_alembic.secrets import SSMJsonKeyError, SSMSecretNotFoundError, get_secret
-
-        return {
-            "get_secret": get_secret,
-            "SSMSecretNotFoundError": SSMSecretNotFoundError,
-            "SSMJsonKeyError": SSMJsonKeyError,
-        }[name]
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    return getattr(importlib.import_module(_NEW), name)
 
 
-__all__ = [
-    "__version__",
-    "read_sql",
-    "run_sql",
-    "IrreversibleMigration",
-    "get_db",
-    "get_env_config",
-    "create_dictionary",
-    "on_cluster",
-    "get_cluster",
-    "get_secret",
-    "SSMSecretNotFoundError",
-    "SSMJsonKeyError",
-]
+class _AliasFinder(importlib.abc.MetaPathFinder, importlib.abc.Loader):
+    """Resolve `clickhouse_alembic.X` to the already-importable `ch_migrate.X`."""
+
+    def find_spec(self, fullname: str, path: Any, target: Any = None) -> Any:
+        if not fullname.startswith(__name__ + "."):
+            return None
+        return importlib.util.spec_from_loader(fullname, self)
+
+    def create_module(self, spec: Any) -> ModuleType:
+        return importlib.import_module(_NEW + spec.name[len(__name__) :])
+
+    def exec_module(self, module: ModuleType) -> None:
+        pass  # create_module returned the real, already-executed module
+
+
+def _warn_at_importer() -> None:
+    """Point the warning at the file that wrote the old import, not at importlib."""
+    frame: Optional[FrameType] = sys._getframe(1)
+    while frame is not None and (
+        "importlib" in frame.f_code.co_filename or frame.f_code.co_filename == __file__
+    ):
+        frame = frame.f_back
+    if frame is None:
+        warnings.warn(_MESSAGE, FutureWarning, stacklevel=2)
+    else:
+        warnings.warn_explicit(_MESSAGE, FutureWarning, frame.f_code.co_filename, frame.f_lineno)
+
+
+sys.meta_path.insert(0, _AliasFinder())
+_warn_at_importer()

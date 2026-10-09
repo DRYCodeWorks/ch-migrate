@@ -1,4 +1,4 @@
-"""Pre/post migration hook support for clickhouse-alembic."""
+"""Pre/post migration hook support for ch-migrate-cli."""
 
 from __future__ import annotations
 

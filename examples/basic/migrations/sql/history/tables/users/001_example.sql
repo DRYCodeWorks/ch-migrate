@@ -1,5 +1,5 @@
 -- Users table v1
--- Example schema for clickhouse-alembic
+-- Example schema for ch-migrate-cli
 
 CREATE TABLE {db}.users (
     id UInt64,

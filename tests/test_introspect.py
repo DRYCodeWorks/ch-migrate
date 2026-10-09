@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from clickhouse_alembic.introspect import (
+from ch_migrate.introspect import (
     ColumnDefinition,
     DependencyGraph,
     DictDefinition,
@@ -393,7 +393,7 @@ class TestParseCreateStatement:
 
 class TestDependencyGraph:
     def _make_graph(self) -> DependencyGraph:
-        from clickhouse_alembic.introspect import DepType, DependencyEdge
+        from ch_migrate.introspect import DepType, DependencyEdge
 
         graph = DependencyGraph()
         graph.nodes = {

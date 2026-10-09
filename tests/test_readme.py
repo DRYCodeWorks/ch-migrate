@@ -3,7 +3,7 @@
 import re
 from pathlib import Path
 
-from clickhouse_alembic.cli import main
+from ch_migrate.cli import main
 
 
 def test_quick_start_requires_no_python():

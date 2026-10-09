@@ -13,11 +13,11 @@ def test_lint_pending_reports_only_second_revision(project, monkeypatch):
         "-- pending change\n\nDROP TABLE IF EXISTS {db}.pending_only;\n"
     )
     project.write_revision(
-        "aaaa", {"upgrade": "from clickhouse_alembic import run_sql\nrun_sql('a.sql')"}
+        "aaaa", {"upgrade": "from ch_migrate import run_sql\nrun_sql('a.sql')"}
     )
     project.write_revision(
         "bbbb",
-        {"upgrade": "from clickhouse_alembic import run_sql\nrun_sql('b.sql')"},
+        {"upgrade": "from ch_migrate import run_sql\nrun_sql('b.sql')"},
         down_revision="aaaa",
     )
     applied = project.run("up", "it", "-r", "aaaa")
@@ -33,7 +33,7 @@ def test_lint_pending_reports_only_second_revision(project, monkeypatch):
 def test_lint_pending_before_first_up_treats_all_revisions_as_pending(project):
     (project.sql_dir / "first.sql").write_text("DROP TABLE IF EXISTS {db}.old;\n")
     project.write_revision(
-        "aaaa", {"upgrade": "from clickhouse_alembic import run_sql\nrun_sql('first.sql')"}
+        "aaaa", {"upgrade": "from ch_migrate import run_sql\nrun_sql('first.sql')"}
     )
     result = project.run("lint", "it")
     assert result.exit_code == 0, result.output

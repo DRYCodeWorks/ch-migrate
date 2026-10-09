@@ -1,11 +1,11 @@
-"""Configuration loading for clickhouse-alembic."""
+"""Configuration loading for ch-migrate-cli."""
 
 from pathlib import Path
 from typing import Any
 
 import yaml
 
-from clickhouse_alembic.secrets import get_secret
+from ch_migrate.secrets import get_secret
 
 
 def load_config(config_path: Path) -> dict[str, Any]:

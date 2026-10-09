@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from clickhouse_alembic.bootstrap import (
+from ch_migrate.bootstrap import (
     build_bootstrap_sql,
     escape_sql_string,
     run_bootstrap,
@@ -212,8 +212,8 @@ class TestRunBootstrap:
         mock_module.get_client.return_value = mock_client
         return mock_module, mock_client
 
-    @patch("clickhouse_alembic.bootstrap.get_secret")
-    @patch("clickhouse_alembic.bootstrap.get_env_config")
+    @patch("ch_migrate.bootstrap.get_secret")
+    @patch("ch_migrate.bootstrap.get_env_config")
     def test_executes_sql_statements(
         self, mock_get_env_config, mock_get_secret, mock_env_config, mock_clickhouse_connect
     ):
@@ -238,8 +238,8 @@ class TestRunBootstrap:
         # Verify SQL was executed
         assert mock_client.command.call_count > 0
 
-    @patch("clickhouse_alembic.bootstrap.get_secret")
-    @patch("clickhouse_alembic.bootstrap.get_env_config")
+    @patch("ch_migrate.bootstrap.get_secret")
+    @patch("ch_migrate.bootstrap.get_env_config")
     def test_dry_run_does_not_execute(
         self, mock_get_env_config, mock_get_secret, mock_env_config, mock_clickhouse_connect
     ):
@@ -256,8 +256,8 @@ class TestRunBootstrap:
         # Client should not be created in dry run (import never happens)
         mock_module.get_client.assert_not_called()
 
-    @patch("clickhouse_alembic.bootstrap.get_secret")
-    @patch("clickhouse_alembic.bootstrap.get_env_config")
+    @patch("ch_migrate.bootstrap.get_secret")
+    @patch("ch_migrate.bootstrap.get_env_config")
     def test_raises_without_migration_user(self, mock_get_env_config, mock_get_secret):
         """Test that missing migration_user raises ValueError."""
         mock_get_env_config.return_value = {
@@ -270,8 +270,8 @@ class TestRunBootstrap:
         with pytest.raises(ValueError, match="migration_user is required"):
             run_bootstrap("dev", config_path=Path("/fake/config.yaml"))
 
-    @patch("clickhouse_alembic.bootstrap.get_secret")
-    @patch("clickhouse_alembic.bootstrap.get_env_config")
+    @patch("ch_migrate.bootstrap.get_secret")
+    @patch("ch_migrate.bootstrap.get_env_config")
     def test_supports_legacy_user_field(
         self, mock_get_env_config, mock_get_secret, mock_clickhouse_connect
     ):
@@ -292,8 +292,8 @@ class TestRunBootstrap:
         # Should work without error
         mock_module.get_client.assert_called_once()
 
-    @patch("clickhouse_alembic.bootstrap.get_secret")
-    @patch("clickhouse_alembic.bootstrap.get_env_config")
+    @patch("ch_migrate.bootstrap.get_secret")
+    @patch("ch_migrate.bootstrap.get_env_config")
     def test_includes_optional_users_when_configured(
         self, mock_get_env_config, mock_get_secret, mock_clickhouse_connect
     ):
