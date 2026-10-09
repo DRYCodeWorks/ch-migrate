@@ -27,7 +27,7 @@ The command is `ch-migrate`; the import package is `clickhouse_alembic`.
 | `ch-migrate down ENV [-r REV]` | Rollback (default: last, or to REV) |
 | `ch-migrate status ENV` | Show current migration state |
 | `ch-migrate history ENV` | Show migration history |
-| `ch-migrate lint [ENV]` | Static checks; ENV adds live checks |
+| `ch-migrate lint [ENV]` | Check upgrade statements; ENV restricts to pending revisions and adds live checks |
 | `ch-migrate deps ENV [--validate PATH]` | Inspect live dependencies |
 | `ch-migrate snapshot ENV [--exclude GLOB] [--filter GLOB]` | Capture schema |
 | `ch-migrate diff ENV [--snapshot-dir PATH]` | Compare snapshot and live schema |

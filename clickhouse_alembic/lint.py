@@ -9,11 +9,9 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
-from clickhouse_alembic.mv_validate import (
-    _read_migration_sql,
-    validate_mv_migrations,
-)
-from clickhouse_alembic.rebase import RevisionGraph, build_revision_graph, parse_migration
+from clickhouse_alembic.mv_validate import MVValidationError, validate_mv_migrations
+from clickhouse_alembic.rebase import RevisionGraph, build_revision_graph
+from clickhouse_alembic.statements import MigrationStatement, migration_statements
 
 
 # ---------------------------------------------------------------------------
@@ -339,7 +337,7 @@ class LargeTableMutationRule(LintRule):
     requires_db = True
 
     _RE_ALTER_TABLE = re.compile(
-        r"\bALTER\s+TABLE\s+(?:`?(\w+)`?\.)?`?(\w+)`?",
+        r"\bALTER\s+TABLE\s+(?:`?(\w+|\{[^}]+\})`?\.)?`?(\w+)`?",
         re.IGNORECASE,
     )
 
@@ -359,7 +357,9 @@ class LargeTableMutationRule(LintRule):
         threshold = config.large_table_threshold
 
         for match in self._RE_ALTER_TABLE.finditer(sql):
-            db = match.group(1) or database
+            db = match.group(1)
+            if db is None or db.startswith("{"):
+                db = database
             table_name = match.group(2)
             try:
                 result = client.query(
@@ -395,11 +395,11 @@ class MVDependencyRule(LintRule):
     requires_db = True
 
     _RE_DROP_TABLE = re.compile(
-        r"\bDROP\s+TABLE\s+(?:IF\s+EXISTS\s+)?(?:`?(\w+)`?\.)?`?(\w+)`?",
+        r"\bDROP\s+TABLE\s+(?:IF\s+EXISTS\s+)?(?:`?(\w+|\{[^}]+\})`?\.)?`?(\w+)`?",
         re.IGNORECASE,
     )
     _RE_ALTER_TABLE = re.compile(
-        r"\bALTER\s+TABLE\s+(?:`?(\w+)`?\.)?`?(\w+)`?",
+        r"\bALTER\s+TABLE\s+(?:`?(\w+|\{[^}]+\})`?\.)?`?(\w+)`?",
         re.IGNORECASE,
     )
 
@@ -480,44 +480,20 @@ class MVDeclarationRule(LintRule):
     def check(self, sql: str, **kwargs: Any) -> list[LintResult]:
         config = kwargs.get("config") or LintConfig()
         severity = self.get_severity(config)
-        if severity == Severity.OFF:
-            return []
-
         graph: RevisionGraph | None = kwargs.get("graph")
-        if graph is None:
+        if severity == Severity.OFF or graph is None or not graph.migrations:
             return []
-
-        # Find the versions_dir from any migration in the graph
-        versions_dir = None
-        for migration in graph.migrations.values():
-            versions_dir = migration.path.parent
-            break
-
-        if versions_dir is None:
-            return []
-
-        # Only run validation once per lint pass — on the first migration file
-        first_file = None
-        for migration in sorted(graph.migrations.values(), key=lambda m: m.path.name):
-            first_file = migration.path.name
-            break
-
-        file_path = kwargs.get("file_path", "")
-        if file_path != first_file:
-            return []
-
-        cutoff = config.mv_validation_cutoff
-        mv_errors = validate_mv_migrations(versions_dir, cutoff_date=cutoff)
-
-        return [
-            LintResult(
-                rule=self.name,
-                message=e.message,
-                severity=severity,
-                file=e.file,
-            )
-            for e in mv_errors
-        ]
+        versions_dir = next(iter(graph.migrations.values())).path.parent
+        statements = kwargs.get("statements", {})
+        errors = validate_mv_migrations(versions_dir, cutoff_date=config.mv_validation_cutoff)
+        results = []
+        for error in errors:
+            origin = _mv_origin(error, statements.get(error.file, []))
+            if origin is not None:
+                results.append(
+                    LintResult(self.name, error.message, severity, origin.source, origin.line)
+                )
+        return results
 
 
 # ---------------------------------------------------------------------------
@@ -551,49 +527,75 @@ def lint_migrations(
     config: LintConfig | None = None,
     client: Any | None = None,
     database: str | None = None,
+    revisions: set[str] | None = None,
 ) -> LintReport:
-    """Run lint rules against pending migration files.
-
-    Args:
-        versions_dir: Path to migrations/versions/ directory.
-        config: Lint configuration. Defaults to LintConfig().
-        client: Optional clickhouse-connect client for runtime rules.
-        database: Database name for runtime rules.
-
-    Returns:
-        LintReport with all findings.
-    """
-    if config is None:
-        config = LintConfig()
-
+    """Lint upgrade statements, optionally restricted to an explicit revision set."""
+    config = config or LintConfig()
     graph = build_revision_graph(versions_dir)
-    report = LintReport()
-
-    rules = list(STATIC_RULES)
-    if client is not None:
-        rules.extend(RUNTIME_RULES)
-
+    scope = _LintScope(config, client, database, graph)
+    selected = {}
     for migration in graph.migrations.values():
-        sql = _read_migration_sql(migration.path)
-        if not sql.strip():
-            continue
-
-        file_path = str(migration.path.name)
-        for rule in rules:
-            severity = rule.get_severity(config)
-            if severity == Severity.OFF:
-                continue
-            if rule.requires_db and client is None:
-                continue
-
-            findings = rule.check(
-                sql,
-                file_path=file_path,
-                config=config,
-                client=client,
-                database=database,
-                graph=graph,
-            )
-            report.results.extend(findings)
-
+        if revisions is None or migration.revision in revisions:
+            selected[migration.path.name] = [
+                statement
+                for statement in migration_statements(migration.path)
+                if statement.direction == "upgrade"
+            ]
+    report = LintReport()
+    rules = list(STATIC_RULES) + (RUNTIME_RULES if client is not None else [])
+    for statements in selected.values():
+        for statement in statements:
+            report.results.extend(_lint_statement(statement, rules, scope))
+    # Declaration checks need the whole grant batch, but report only selected upgrades.
+    report.results.extend(
+        MVDeclarationRule().check("", config=config, graph=graph, statements=selected)
+    )
     return report
+
+
+@dataclass(frozen=True)
+class _LintScope:
+    config: LintConfig
+    client: Any
+    database: str | None
+    graph: RevisionGraph
+
+
+def _lint_statement(
+    statement: MigrationStatement, rules: list[LintRule], scope: _LintScope
+) -> list[LintResult]:
+    results = []
+    for rule in rules:
+        if isinstance(rule, MVDeclarationRule) or rule.get_severity(scope.config) == Severity.OFF:
+            continue
+        findings = rule.check(
+            statement.sql,
+            file_path=statement.source,
+            config=scope.config,
+            client=scope.client,
+            database=scope.database,
+            graph=scope.graph,
+        )
+        for finding in findings:
+            finding.file = statement.source
+            finding.line = statement.line
+        results.extend(findings)
+    return results
+
+
+def _mv_origin(
+    error: MVValidationError, statements: list[MigrationStatement]
+) -> MigrationStatement | None:
+    candidates = []
+    for statement in statements:
+        match = re.search(
+            r"\bCREATE\s+MATERIALIZED\s+VIEW\s+(?:IF\s+NOT\s+EXISTS\s+)?"
+            r"(?:(?:\{[^}]*\}|`[^`]+`|\w+)\.)?`?(\w+)`?",
+            statement.sql,
+            re.IGNORECASE,
+        )
+        if match:
+            candidates.append(statement)
+            if error.mv_name is None or match.group(1) == error.mv_name:
+                return statement
+    return candidates[0] if candidates else None

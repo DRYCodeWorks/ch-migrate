@@ -60,8 +60,24 @@ def get_current_heads(env_config: dict[str, Any]) -> set[str]:
     Returns:
         Set of current head revision ID strings (usually just one).
     """
+    from clickhouse_connect.driver.binding import quote_identifier
+
     with _suppress_stderr():
         client = get_client(env_config)
-        db = env_config["database"]
-        result = client.query(f"SELECT version_num FROM {db}.alembic_version FINAL")
-    return {row[0] for row in result.result_rows}
+        try:
+            db = env_config["database"]
+            engines = client.query(
+                "SELECT engine FROM system.tables "
+                "WHERE database = {db:String} AND name = 'alembic_version'",
+                parameters={"db": db},
+            ).result_rows
+            if not engines:
+                return set()
+            # Legacy tables require FINAL; the official plain MergeTree rejects it.
+            final = " FINAL" if engines[0][0].endswith("ReplacingMergeTree") else ""
+            result = client.query(
+                f"SELECT version_num FROM {quote_identifier(db)}.alembic_version{final}"
+            )
+            return {row[0] for row in result.result_rows}
+        finally:
+            client.close()

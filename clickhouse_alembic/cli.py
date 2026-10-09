@@ -762,13 +762,13 @@ def skill(target: str) -> None:
 @main.command()
 @click.argument("environment", required=False, default=None)
 def lint(environment: str | None) -> None:
-    """Lint pending migration files.
+    """Lint upgrade statements with their source file and line.
 
-    Without an environment argument, runs static analysis only (no DB connection,
-    no credentials needed, CI-friendly).
+    Without an environment, checks every local revision statically without
+    credentials or a database connection.
 
-    With an environment argument, runs static + runtime analysis (connects to the
-    live database for row counts and dependency checks).
+    With an environment, checks only pending revisions and adds live size and
+    dependency checks. Fails if the pending scope cannot be determined.
 
     \b
     Examples:
@@ -778,6 +778,8 @@ def lint(environment: str | None) -> None:
     from clickhouse_alembic.config import load_config
     from clickhouse_alembic.display import render_lint_report
     from clickhouse_alembic.lint import LintConfig, lint_migrations
+    from clickhouse_alembic.rebase import build_revision_graph
+    from clickhouse_alembic.statements import pending_revisions
 
     versions_dir = Path.cwd() / "migrations" / "versions"
     if not versions_dir.exists():
@@ -795,26 +797,37 @@ def lint(environment: str | None) -> None:
 
     client = None
     database = None
+    revisions = None
 
     if environment:
         try:
             env_config = get_env_config(environment, config_path)
             database = env_config["database"]
 
-            from clickhouse_alembic.connection import get_client
+            from clickhouse_alembic.connection import get_client, get_current_heads
 
+            revisions = pending_revisions(
+                build_revision_graph(versions_dir), get_current_heads(env_config)
+            )
             client = get_client(env_config)
         except Exception as e:
-            click.echo(f"Warning: Could not connect to {environment}: {e}", err=True)
-            click.echo("Falling back to static-only analysis.", err=True)
-            click.echo()
+            raise click.ClickException(
+                f"Could not resolve pending revisions for {environment}: {e}"
+            ) from e
 
-    report = lint_migrations(
-        versions_dir,
-        config=lint_config,
-        client=client,
-        database=database,
-    )
+    try:
+        report = lint_migrations(
+            versions_dir,
+            config=lint_config,
+            client=client,
+            database=database,
+            revisions=revisions,
+        )
+    except (OSError, SyntaxError, ValueError) as e:
+        raise click.ClickException(str(e)) from e
+    finally:
+        if client is not None:
+            client.close()
 
     render_lint_report(report, runtime=environment is not None)
 

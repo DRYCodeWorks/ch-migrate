@@ -250,9 +250,17 @@ Example: `ch-migrate history dev`
 
 ### `lint`
 
-`ch-migrate lint [ENV]` analyzes migration SQL. Without `ENV`, it performs static checks without credentials or a connection; supplying an environment adds live size and dependency checks. No command-specific options. Errors exit nonzero; warnings alone do not.
+`ch-migrate lint [ENV]` analyzes upgrade statements, not downgrade SQL. Without `ENV`, it checks every revision statically without credentials or a connection. With an environment, it checks only pending revisions and adds live size and dependency checks. If it cannot determine the pending set, it fails rather than silently checking a different scope. No command-specific options. Errors exit nonzero; warnings alone do not.
 
 Example: `ch-migrate lint`
+
+Findings name the project-relative SQL file and statement line. Inline Python SQL
+points to its `op.execute` call. Extraction reads `run_sql`/`read_sql` file
+references and literal or f-string `op.execute` arguments without importing
+revisions. It preserves placeholders and adjacent comments; arbitrary Python
+expressions are not evaluated. Materialized-view declaration and companion-grant
+validation still uses the complete migration batch, with lint findings limited
+to selected upgrade statements.
 
 ### `deps`
 
