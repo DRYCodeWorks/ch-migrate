@@ -15,6 +15,8 @@ _ENGINE = re.compile(
 _IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z_0-9]*\Z")
 _CLAUSES = {"ENGINE", "PARTITION", "PRIMARY", "ORDER", "SAMPLE", "TTL", "SETTINGS", "COMMENT"}
 _COLUMN_EXTRAS = {"INDEX", "PROJECTION", "CONSTRAINT"}
+_COLUMN_MODIFIERS = {"DEFAULT", "MATERIALIZED", "ALIAS", "CODEC", "COMMENT", "TTL"}
+_PLAIN_ROLES = {"snap", "stage"}
 
 
 def build_definition(
@@ -63,7 +65,12 @@ def build_definition(
 
 
 def helper_ddl(definition: RebuildDefinition, role: str, uuid: str) -> str:
-    """Create a same-database physical helper with its own UUID and Keeper path."""
+    """Create a same-database physical helper with its own UUID and Keeper path.
+
+    `snap` and `stage` are plain MergeTree without TTL, in the source's replication
+    family: their merges keep every row, so snapshot counts hold without
+    SYSTEM STOP MERGES, which a server restart silently undoes.
+    """
     if role not in {"new", "snap", "stage"}:
         raise ValueError(f"unknown rebuild helper role: {role}")
     _validate_uuid(uuid)
@@ -78,6 +85,8 @@ def helper_ddl(definition: RebuildDefinition, role: str, uuid: str) -> str:
         ),
         (parsed.engine_at, parsed.engine_end, _helper_engine(parsed, role, uuid)),
     ]
+    if role in _PLAIN_ROLES:
+        replacements.extend((start, end, "") for start, end in _ttl_spans(parsed))
     if parsed.uuid_span:
         replacements.append((*parsed.uuid_span, f"UUID '{uuid}'"))
     else:
@@ -298,14 +307,7 @@ def _column(text: str, tokens: tuple[_Token, ...]) -> ColumnDefinition:
             depth += 1
         elif token.text in (")", "]", "}"):
             depth -= 1
-        if depth == 0 and _upper(token) in {
-            "DEFAULT",
-            "MATERIALIZED",
-            "ALIAS",
-            "CODEC",
-            "COMMENT",
-            "TTL",
-        }:
+        if depth == 0 and _upper(token) in _COLUMN_MODIFIERS:
             modifiers.append((_upper(token), index))
     type_end = modifiers[0][1] if modifiers else len(tokens)
     column_type = text[tokens[1].start : tokens[type_end - 1].end]
@@ -403,30 +405,74 @@ def _helper_engine(parsed: _DDL, role: str, uuid: str) -> str:
     name = parsed.engine_name
     args = parsed.engine_args or ()
     if name.lower().startswith(("replicated", "shared")):
-        if args and _string(args[0]) and (len(args) < 2 or not _string(args[1])):
-            raise ValueError("ambiguous replicated Keeper path/replica arguments")
-        if len(args) >= 2 and _string(args[0]):
-            original = (
-                _unquote(args[0])
-                .replace("{database}", _ident(parsed.tokens[parsed.name_at]))
-                .replace("{table}", _ident(parsed.tokens[parsed.name_at + 2]))
-            )
-            # Sibling roots survive removal of the old table's Keeper subtree.
-            # Freeze name-dependent macros before the eventual EXCHANGE/RENAME.
-            parent = original.rstrip("/").rsplit("/", 1)[0]
-            path = parent + f"/__chm_{role}_{uuid}"
-            for macro in dict.fromkeys(re.findall(r"\{[A-Za-z_][A-Za-z_0-9]*\}", original)):
-                if macro not in path:
-                    path += "/" + macro  # Retain shard/UUID discrimination from the old leaf.
-            replica = args[1]
-            args = ("'" + path.replace("'", "\\'") + "'", replica, *args[2:])
-        else:
-            args = (f"'/clickhouse/tables/{uuid}/{{shard}}'", "'{replica}'", *args)
+        keeper, params = _keeper_arguments(parsed, role, uuid)
+    else:
+        keeper, params = (), args
+    if role in _PLAIN_ROLES:
+        prefix = re.match(r"(?:replicated|shared)?", name, re.I).group(0)
+        name, params = prefix + "MergeTree", ()
+    args = (*keeper, *params)
     return (
         f"ENGINE = {name}({', '.join(args)})"
         if args or parsed.engine_args is not None
         else f"ENGINE = {name}"
     )
+
+
+def _keeper_arguments(
+    parsed: _DDL, role: str, uuid: str
+) -> tuple[tuple[str, str], tuple[str, ...]]:
+    """The helper's own Keeper path and replica, and the engine's remaining parameters."""
+    args = parsed.engine_args or ()
+    if args and _string(args[0]) and (len(args) < 2 or not _string(args[1])):
+        raise ValueError("ambiguous replicated Keeper path/replica arguments")
+    if len(args) < 2 or not _string(args[0]):
+        return (f"'/clickhouse/tables/{uuid}/{{shard}}'", "'{replica}'"), args
+    original = (
+        _unquote(args[0])
+        .replace("{database}", _ident(parsed.tokens[parsed.name_at]))
+        .replace("{table}", _ident(parsed.tokens[parsed.name_at + 2]))
+    )
+    # Sibling roots survive removal of the old table's Keeper subtree.
+    # Freeze name-dependent macros before the eventual EXCHANGE/RENAME.
+    parent = original.rstrip("/").rsplit("/", 1)[0]
+    path = parent + f"/__chm_{role}_{uuid}"
+    for macro in dict.fromkeys(re.findall(r"\{[A-Za-z_][A-Za-z_0-9]*\}", original)):
+        if macro not in path:
+            path += "/" + macro  # Retain shard/UUID discrimination from the old leaf.
+    return ("'" + path.replace("'", "\\'") + "'", args[1]), args[2:]
+
+
+def _ttl_spans(parsed: _DDL) -> list[tuple[int, int]]:
+    """Every table and column TTL, which a plain helper drops so merges keep every row."""
+    tokens = parsed.tokens
+    opening = next(i for i, token in enumerate(tokens) if token.start == parsed.schema_at)
+    closing = _closing(tokens, opening)
+    spans = []
+    for first, last in _split(tokens, opening + 1, closing):
+        if _upper(tokens[first]) not in _COLUMN_EXTRAS:
+            spans.extend(_ttl_in(tokens, (first + 1, last), _COLUMN_MODIFIERS))
+    spans.extend(_ttl_in(tokens, (closing + 1, len(tokens)), _CLAUSES))
+    return spans
+
+
+def _ttl_in(
+    tokens: tuple[_Token, ...], bounds: tuple[int, int], stops: set[str]
+) -> list[tuple[int, int]]:
+    """The span from a depth-0 TTL keyword to the next depth-0 stop word."""
+    depth, start = 0, None
+    for index in range(*bounds):
+        token = tokens[index]
+        depth += token.text in ("(", "[", "{")
+        depth -= token.text in (")", "]", "}")
+        word = _upper(token)
+        if depth or word not in stops or not _clause_start(tokens, index):
+            continue
+        if start is not None:
+            return [(tokens[start].start, tokens[index - 1].end)]
+        if word == "TTL":
+            start = index
+    return [] if start is None else [(tokens[start].start, tokens[bounds[1] - 1].end)]
 
 
 def _insert_cluster(sql: str, cluster: str) -> str:

@@ -513,8 +513,11 @@ whole rebuild. Ordinary inserts continue. Sharded/Distributed sources,
 partition-key changes, unfinished mutations, and incompatible physical transfers
 are refused. Budget roughly **2–3× the table's disk space**: the snapshot pins old
 parts and the replacement stores a second copy. Helpers stay in the same database.
-Source-to-snapshot definitions match; stage-to-replacement definitions match.
-An intentional engine change happens through row copy, not mismatched ATTACH/MOVE.
+The snapshot and stage helpers are plain `MergeTree` without TTL, in the source's
+replication family, so their merges keep every row they hold, even after a server
+restart. Sorting key, partition key and physical columns match across each
+transfer. An intentional engine change happens through row copy, not mismatched
+ATTACH/MOVE.
 Keeper helper roots are siblings of the original root, not children that could be
 removed with it. Name-dependent path macros are resolved before the swap.
 For Replicated tables in an Atomic database, configure a cluster covering every

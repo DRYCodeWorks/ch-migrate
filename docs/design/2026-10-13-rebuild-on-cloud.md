@@ -1,7 +1,7 @@
 # Rebuilding tables on ClickHouse Cloud
 
 **Date:** 2026-10-13  
-**Status:** Cloud support chosen (Dan, 2026-10-13). The protocol below is proposed and awaits Dan's approval; nothing is implemented yet.
+**Status:** Cloud support chosen and the protocol below approved (Dan, 2026-10-13): all four points, with plain helpers on self-hosted too and the required `writers_on_this_service_only` declaration plus grace period. Implementation is under DRY-1445.
 
 ## Decision
 

@@ -148,7 +148,9 @@ def _definition_findings(request: RebuildRequest) -> list[PreflightFinding]:
 
 def _transfer_differences(source: TableDefinition, destination: TableDefinition) -> list[str]:
     differences = []
-    if _engine_signature(source.engine) != _engine_signature(destination.engine):
+    # Snapshot and stage helpers are deliberately plain MergeTree; partition transfer
+    # between MergeTree families works, but never across replication families.
+    if _replication_family(source.engine) != _replication_family(destination.engine):
         differences.append("engine")
     if _normalized(" ".join(source.order_by)) != _normalized(" ".join(destination.order_by)):
         differences.append("sorting_key")
@@ -169,19 +171,9 @@ def _transfer_differences(source: TableDefinition, destination: TableDefinition)
     return differences
 
 
-def _engine_signature(engine: str) -> tuple:
-    from ch_migrate.idempotency import _action_clauses
-
-    tokens = _tokens(engine)
-    if not tokens:
-        raise ValueError("Cannot inspect an empty physical-transfer engine")
-    arguments = _action_clauses(tokens[2:-1]) if tokens[1:2] == ("(",) else []
-    if arguments == [()]:
-        arguments = []
-    if tokens[0].startswith(("Replicated", "Shared")) and len(arguments) >= 2:
-        if arguments[0][0].startswith("'") and arguments[1][0].startswith("'"):
-            arguments = arguments[2:]  # Each physical helper MUST have its own Keeper path.
-    return tokens[0], tuple(arguments)
+def _replication_family(engine: str) -> str:
+    match = re.match(r"(Replicated|Shared)?", engine.strip(), re.I)
+    return match.group(0).lower()
 
 
 def _topology_findings(scope: _Scope, request: RebuildRequest) -> list[PreflightFinding]:

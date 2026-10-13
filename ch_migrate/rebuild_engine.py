@@ -505,13 +505,6 @@ def _helpers(ctx):
             helper_ddl(ctx.definition, role, uid),
             lambda n=name, u=uid: ctx.converged(n, u),
         )
-    _stop_merges(ctx, ctx.name("stage"))
-    _stop_merges(ctx, ctx.name("snap"))
-
-
-def _stop_merges(ctx, name):
-    cluster = f" ON CLUSTER {_id(ctx.cluster)}" if ctx.cluster else ""
-    ctx.command(f"SYSTEM STOP MERGES{cluster} {ctx.qualified(name)}")
 
 
 def _dual(ctx):
@@ -576,7 +569,7 @@ def _snapshot(ctx):
             _drop_partition(ctx, ctx.name("snap"), partition)
         snapshot.clear()
         ctx.save()
-    _stop_merges(ctx, ctx.name("snap"))
+    # snap is plain MergeTree without TTL, so its merges keep every counted row.
     snapshot.update({"partitions": ctx.partition_ids(ctx.table), "started": True, "counts": {}})
     ctx.save()
     for partition in snapshot["partitions"]:
@@ -597,7 +590,6 @@ def _snapshot(ctx):
 
 
 def _copy(ctx, lock):
-    _stop_merges(ctx, ctx.name("stage"))
     for partition, expected in sorted(ctx.state["snapshot"]["counts"].items()):
         lock.check()
         _copy_partition(ctx, partition, expected)

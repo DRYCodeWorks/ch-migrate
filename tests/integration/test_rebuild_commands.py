@@ -431,6 +431,45 @@ def test_completed_rebuild_is_not_repeated_after_later_interruption(owned_projec
     assert _heads(project) == ["bbbb"]
 
 
+def test_rebuild_survives_helper_merges_resuming_mid_copy(owned_project):
+    """A server restart re-enables merges; snapshot helpers must still keep every counted row."""
+    project = owned_project
+    db = project.database
+    project.client.command(
+        f"CREATE TABLE {db}.events (id UInt64, ts DateTime, k UInt8, payload String) "
+        "ENGINE = ReplacingMergeTree PARTITION BY toYYYYMM(ts) ORDER BY id"
+    )
+    _baseline(project)
+    project.client.command(f"SYSTEM STOP MERGES {db}.events")  # Keep duplicate rows to snapshot.
+    for _ in range(2):
+        project.client.command(
+            f"INSERT INTO {db}.events SELECT number, toDateTime('2026-02-01') + number, "
+            "number % 7, toString(number) FROM numbers(60000)"
+        )
+    project.client.command("SYSTEM FLUSH LOGS")
+    before = project.client.query(
+        f"SELECT count(), sum(cityHash64(id, ts, k, payload)) FROM {db}.events FINAL"
+    ).result_rows[0]
+    # Slow enough to act mid-copy, within ClickHouse's 3 s sleep-per-block limit.
+    slow = "id + toUInt64(sleepEachRow(0.0001)) AS id, ts, k, payload"
+    _revision(project, target=_target(project, "ReplacingMergeTree"), select=slow)
+    try:
+        with _running(project, timeout="90") as (process, log):
+            _until(lambda: _active_copy(project), "Copy never started", seconds=60)
+            for role in ("snap", "stage"):
+                helper = f"{db}.events__chm_{role}"
+                project.client.command(f"SYSTEM START MERGES {helper}")
+                project.client.command(f"OPTIMIZE TABLE {helper} FINAL")
+            assert process.wait(timeout=120) == 0, log.read_text()
+    finally:
+        project.client.command(f"SYSTEM START MERGES {db}.events")
+    after = project.client.query(
+        f"SELECT count(), sum(cityHash64(id, ts, k, payload)) FROM {db}.events FINAL"
+    ).result_rows[0]
+    assert after == before
+    assert _heads(project) == ["bbbb"]
+
+
 def _baseline(project):
     project.write_revision("aaaa", {"upgrade": 'op.execute("SELECT 1")'})
     result = project.run("up", "it")

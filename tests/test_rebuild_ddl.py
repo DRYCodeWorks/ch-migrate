@@ -53,10 +53,8 @@ def test_helpers_preserve_complete_physical_schema_and_isolate_keeper_paths():
         assert parsed.uuid_span is not None
         assert sql[parsed.uuid_span[0] : parsed.uuid_span[1]] == f"UUID '{uuid}'"
         assert parsed.cluster_span is not None
-        assert parsed.engine_args[1:] == ("'{replica}'", "id")
         assert parsed.clauses["PARTITION"] == "toYYYYMM(day)"
         assert parsed.clauses["PRIMARY"] == "id"
-        assert parsed.clauses["TTL"] == "day + INTERVAL 90 DAY"
         assert parsed.clauses["SETTINGS"] == "index_granularity = 4096, allow_nullable_key = 0"
         assert "CODEC(Delta, ZSTD(3))" in sql
         assert "INDEX ix_kind" in sql
@@ -68,6 +66,35 @@ def test_helpers_preserve_complete_physical_schema_and_isolate_keeper_paths():
     assert all("/__chm_" in path for path in paths)
     assert definition.columns == ("id", "day", "kind")
     assert definition.target.order_by == ["day", "id"]
+
+
+def test_snapshot_and_stage_are_plain_and_ttl_free_so_merges_keep_every_row():
+    source = SOURCE.replace(
+        "`kind` LowCardinality(String),", "`kind` LowCardinality(String) TTL day + INTERVAL 1 DAY,"
+    )
+    definition = _definition(
+        TARGET.replace(
+            "`kind` LowCardinality(String),",
+            "`kind` LowCardinality(String) TTL day + INTERVAL 1 DAY CODEC(ZSTD(1)),",
+        ),
+        source,
+    )
+    for role, uuid in UUIDS.items():
+        parsed = _parse(helper_ddl(definition, role, uuid), "analytics", "events__chm_" + role)
+        kind = next(column for column in parsed.columns if column.name == "kind")
+        if role == "new":
+            assert parsed.engine_name == "ReplicatedReplacingMergeTree"
+            assert parsed.engine_args[1:] == ("'{replica}'", "id")
+            assert parsed.clauses["TTL"] == "day + INTERVAL 90 DAY"
+            assert "TTL" in parsed.sql[parsed.schema_at : parsed.schema_end]
+            continue
+        assert parsed.engine_name == "ReplicatedMergeTree"
+        assert parsed.engine_args[1:] == ("'{replica}'",)
+        assert "TTL" not in parsed.clauses
+        assert "TTL" not in parsed.sql[parsed.schema_at : parsed.schema_end]
+        assert kind.type == "LowCardinality(String)"
+        assert kind.codec == ("(ZSTD(1))" if role == "stage" else None)
+        assert parsed.clauses["SETTINGS"] == "index_granularity = 4096, allow_nullable_key = 0"
 
 
 def test_implicit_keeper_arguments_get_explicit_unique_paths_preserving_versions():
@@ -83,7 +110,12 @@ def test_implicit_keeper_arguments_get_explicit_unique_paths_preserving_versions
     paths = []
     for role, uuid in UUIDS.items():
         parsed = _parse(helper_ddl(definition, role, uuid), "analytics", "events__chm_" + role)
-        assert parsed.engine_args == (f"'/clickhouse/tables/{uuid}/{{shard}}'", "'{replica}'", "id")
+        params = ("id",) if role == "new" else ()
+        assert parsed.engine_args == (
+            f"'/clickhouse/tables/{uuid}/{{shard}}'",
+            "'{replica}'",
+            *params,
+        )
         paths.append(parsed.engine_args[0])
     assert len(set(paths)) == 3
 

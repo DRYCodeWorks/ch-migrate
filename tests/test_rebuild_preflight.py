@@ -242,17 +242,17 @@ def test_another_hosts_process_cannot_prove_queued_writer_settings():
     assert _codes(result)["writer_settings_unknown"].severity == "refusal"
 
 
-def test_physical_helpers_need_distinct_keeper_paths_but_matching_engine_semantics():
+def test_plain_helpers_transfer_within_a_replication_family_only():
     source = _table(engine="ReplicatedReplacingMergeTree('/source', 'r1', id)")
-    target = _table("new", "ReplicatedReplacingMergeTree('/new', 'r2', id)")
+    helper = _table("snap", "ReplicatedMergeTree('/snap', 'r2')")
     client = _Client(writer_settings={"async_insert": "0", "wait_for_async_insert": "1"})
     result = inspect_rebuild(
-        client, RebuildRequest("db", source, target, transfer_pairs=((source, target),))
+        client, RebuildRequest("db", source, _table("new"), transfer_pairs=((source, helper),))
     )
     assert "transfer_structure_mismatch" not in _codes(result)
-    target.engine = "ReplicatedReplacingMergeTree('/new', 'r2', other_version)"
+    helper.engine = "MergeTree"
     mismatch = inspect_rebuild(
-        client, RebuildRequest("db", source, target, transfer_pairs=((source, target),))
+        client, RebuildRequest("db", source, _table("new"), transfer_pairs=((source, helper),))
     )
     assert _codes(mismatch)["transfer_structure_mismatch"].details["differences"] == ["engine"]
 
