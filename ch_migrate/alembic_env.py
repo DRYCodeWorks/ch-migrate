@@ -27,6 +27,7 @@ from ch_migrate.version_table import (
     sync_version_replica,
 )
 from ch_migrate.waiting import MigrationWaiter
+from ch_migrate.waiting_versions import write_unjournaled
 
 ENV_VERSION = 2
 DEFAULT_SESSION_TIMEOUT = 1800
@@ -59,14 +60,14 @@ class ChMigrateImpl(ClickHouseImpl):
     def _exec(self, construct, execution_options=None, multiparams=None, params=None):
         # The official implementation owns these SQLAlchemy version constructs;
         # all user SQL, including raw bind execution, is covered by cursor events.
-        waiter = self.context_opts.get("ch_migrate_waiter")
-        if (
-            waiter is not None
-            and waiter.revision is not None
-            and isinstance(construct, (Insert, Update, Delete))
-            and self._is_version_table_construct(construct)
+        if isinstance(construct, (Insert, Update, Delete)) and self._is_version_table_construct(
+            construct
         ):
-            return waiter.versions.execute(construct, self)
+            waiter = self.context_opts.get("ch_migrate_waiter")
+            if waiter is not None and waiter.revision is not None:
+                return waiter.versions.execute(construct, self)
+            if not isinstance(construct, Delete):
+                return write_unjournaled(construct, self)
         return super()._exec(
             construct, execution_options=execution_options, multiparams=multiparams, params=params
         )
