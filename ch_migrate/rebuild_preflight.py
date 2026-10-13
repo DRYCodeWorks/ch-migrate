@@ -354,62 +354,106 @@ def _capacity_findings(
 
 
 def _writer_log(scope: _Scope, request: RebuildRequest) -> tuple[float, list[dict[str, Any]]]:
-    sql = (
-        "SELECT materialize(hostName()), query_id, type, user, current_database, tables, query, Settings, written_rows, query_start_time "
-        + "FROM "
-        + scope.log()
-        + " WHERE query_start_time >= now() - INTERVAL 60 MINUTE"
-        + " AND query_kind = 'Insert' AND is_initial_query = 1 AND type IN ('QueryStart', 'QueryFinish')"
-        + f" ORDER BY query_start_time DESC LIMIT {_LOG_LIMIT}"
+    """Writers of the source table in the last hour, one per host, user and async settings.
+
+    Queued inserts whose settings the log cannot prove are taken from the queue instead
+    and kept out of the logged groups.
+    """
+    queued = _queued_writers(scope, request)
+    writers = _logged_writers(scope, request, {query_id for _, query_id in queued})
+    writers.extend(queued.values())
+    return sum(writer["rows"] for writer in writers) / (_WINDOW_MINUTES * 60), writers
+
+
+def _logged_writers(
+    scope: _Scope, request: RebuildRequest, excluded: set[str]
+) -> list[dict[str, Any]]:
+    """Filtering and grouping happen in the server: a busy service logs far more inserts
+    into other tables than any row limit could hold."""
+    skip = f" AND query_id NOT IN ({_literals(excluded)})" if excluded else ""
+    rows = scope.rows(
+        "SELECT materialize(hostName()) AS host, user, "
+        "mapContains(Settings, 'async_insert') AS has_async, Settings['async_insert'] AS async_value, "
+        "mapContains(Settings, 'wait_for_async_insert') AS has_wait, "
+        "Settings['wait_for_async_insert'] AS wait_value, "
+        "sumIf(written_rows, type = 'QueryFinish') AS finished_rows, uniqExact(query_id) AS queries "
+        f"FROM {scope.log()} WHERE query_start_time >= now() - INTERVAL {_WINDOW_MINUTES} MINUTE "
+        "AND query_kind = 'Insert' AND is_initial_query = 1 "
+        f"AND type IN ('QueryStart', 'QueryFinish') AND {_inserts_target_sql(request)}{skip} "
+        "GROUP BY host, user, has_async, async_value, has_wait, wait_value "
+        f"LIMIT {_LOG_LIMIT}"
     )
-    rows = scope.rows(sql)
     if len(rows) >= _LOG_LIMIT:
-        raise RuntimeError("Writer log exceeds bounded 60-minute inspection window")
-    writers: dict[tuple[str, str], dict[str, Any]] = {}
-    target = f"{request.database}.{request.source.name}"
-    for host, qid, event, user, db, tables, query, settings, written, _ in rows:
-        if not _inserts_target((str(query), str(db), list(tables)), target):
-            continue
-        key = (str(host), str(qid))
-        if key not in writers or event == "QueryFinish":
-            writers[key] = {
-                "host": str(host),
-                "user": str(user),
-                "settings": dict(settings),
-                "rows": int(written),
-                "finished": event == "QueryFinish",
-            }
-    _include_queued_writers(scope, request, writers)
-    return sum(row["rows"] for row in writers.values() if row["finished"]) / (
-        _WINDOW_MINUTES * 60
-    ), list(writers.values())
+        raise RuntimeError("Writer groups exceed the bounded 60-minute inspection window")
+    writers = []
+    for host, user, has_async, async_value, has_wait, wait_value, finished, queries in rows:
+        settings = {"async_insert": str(async_value)} if has_async else {}
+        if has_wait:
+            settings["wait_for_async_insert"] = str(wait_value)
+        writers.append(
+            {"host": str(host), "user": str(user), "settings": settings, "rows": int(finished)}
+        )
+        writers[-1]["queries"] = int(queries)
+    return writers
 
 
-def _include_queued_writers(scope: _Scope, request: RebuildRequest, writers: dict) -> None:
+def _inserts_target_sql(request: RebuildRequest) -> str:
+    """Direct INSERTs into the source table; QueryStart rows may list no tables, so the
+    statement prefix identifies direct writes and excludes materialized-view side effects."""
+    db, table = request.database, request.source.name
+    target = f"{db}.{table}"
+    named = (
+        "replaceRegexpAll(extract(query, "
+        r"'(?i)^\\s*INSERT\\s+INTO\\s+(?:TABLE\\s+)?((?:[`\"]?\\w+[`\"]?\\.)?[`\"]?\\w+[`\"]?)'"
+        "), '[`\"]', '')"
+    )
+    return (
+        f"if({named} != '', {named} = {_literal(target)} OR ({named} = {_literal(table)} "
+        f"AND current_database = {_literal(db)}), has(tables, {_literal(target)}) "
+        r"AND match(query, '(?i)^\\s*INSERT\\b'))"
+    )
+
+
+def _queued_writers(scope: _Scope, request: RebuildRequest) -> dict[tuple[str, str], dict]:
+    """Queued inserts the log cannot vouch for, with settings from their live process."""
     rows = scope.rows(
         "SELECT materialize(hostName()), entries.query_id FROM "
         + scope.table("asynchronous_inserts")
         + f" WHERE database = {_literal(request.database)} AND table = {_literal(request.source.name)}"
     )
     queued = {(str(host), str(qid)) for host, query_ids in rows for qid in query_ids}
-    known = {key for key, writer in writers.items() if writer["settings"]}
-    active = _queued_settings(scope, queued - known)
-    for host, query_ids in rows:
-        for query_id in query_ids:
-            writer = writers.setdefault(
-                (str(host), str(query_id)),
-                {
-                    "host": str(host),
-                    "user": "<unlogged queued writer>",
-                    "settings": {},
-                    "rows": 0,
-                    "finished": False,
-                },
-            )
-            if (str(host), str(query_id)) in active:
-                writer.update(active[str(host), str(query_id)])
-            if not writer["settings"]:
-                writer["queued_without_settings"] = True
+    logged = _logged_users(scope, queued)
+    unknown = {key for key in queued if not logged.get(key, (None, False))[1]}
+    active = _queued_settings(scope, unknown)
+    writers = {}
+    for key in sorted(unknown):
+        user = logged.get(key, ("<unlogged queued writer>", False))[0]
+        writer = {"host": key[0], "user": user, "settings": {}, "rows": 0, "queries": 1}
+        writer.update(active.get(key, {}))
+        if not writer["settings"]:
+            writer["queued_without_settings"] = True
+        writers[key] = writer
+    return writers
+
+
+def _logged_users(scope: _Scope, queued: set[tuple[str, str]]) -> dict[tuple[str, str], tuple]:
+    """(user, logged with per-query settings) for each queued insert the log has seen."""
+    if not queued:
+        return {}
+    rows = scope.rows(
+        f"SELECT materialize(hostName()) AS host, query_id, any(user), max(notEmpty(Settings)) "
+        f"FROM {scope.log()} WHERE query_id IN ({_literals({qid for _, qid in queued})}) "
+        "AND is_initial_query = 1 GROUP BY host, query_id"
+    )
+    return {
+        (str(host), str(qid)): (str(user), bool(proven))
+        for host, qid, user, proven in rows
+        if (str(host), str(qid)) in queued
+    }
+
+
+def _literals(values: set[str]) -> str:
+    return ", ".join(_literal(value) for value in sorted(values))
 
 
 def _queued_settings(scope: _Scope, missing: set[tuple[str, str]]) -> dict:
@@ -429,19 +473,6 @@ def _queued_settings(scope: _Scope, missing: set[tuple[str, str]]) -> dict:
     }
 
 
-def _inserts_target(insert: tuple[str, str, list[str]], target: str) -> bool:
-    query, database, tables = insert
-    db, table = target.split(".", 1)
-    # QueryStart may have empty tables; the SQL prefix identifies direct writes, not MV side effects.
-    prefix = re.match(
-        r"^\s*INSERT\s+INTO\s+(?:TABLE\s+)?((?:[`\"]?\w+[`\"]?\.)?[`\"]?\w+[`\"]?)", query, re.I
-    )
-    if prefix:
-        named = prefix.group(1).replace("`", "").replace('"', "")
-        return named == target or (named == table and database == db)
-    return target in tables and bool(re.match(r"^\s*INSERT\b", query, re.I))
-
-
 def _writer_findings(
     scope: _Scope, request: RebuildRequest, writers: list[dict[str, Any]]
 ) -> list[PreflightFinding]:
@@ -450,7 +481,10 @@ def _writer_findings(
             "insert_rate",
             "warning",
             "Recent completed INSERT throughput is reported; async fire-and-forget writes may have zero written_rows.",
-            {"window_minutes": _WINDOW_MINUTES, "writer_queries": len(writers)},
+            {
+                "window_minutes": _WINDOW_MINUTES,
+                "writer_queries": sum(writer["queries"] for writer in writers),
+            },
         )
     ]
     if not writers:

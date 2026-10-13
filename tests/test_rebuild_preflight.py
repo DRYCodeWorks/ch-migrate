@@ -43,23 +43,26 @@ class _Client:
             return _Result([])
         if "system.processes" in sql:
             return _Result([])
-        if "query_log" in sql:
+        if "query_log" in sql and "sumIf" in sql:
+            if "NOT IN ('q1'" in sql:
+                return _Result([])  # Logged q1 is the only writer; the queue now speaks for it.
+            settings = self.writer_settings
             return _Result(
                 [
                     (
                         "node",
-                        "q1",
-                        "QueryFinish",
                         "writer",
-                        "db",
-                        ["db.t"],
-                        "INSERT INTO db.t VALUES (1)",
-                        self.writer_settings,
+                        "async_insert" in settings,
+                        settings.get("async_insert", ""),
+                        "wait_for_async_insert" in settings,
+                        settings.get("wait_for_async_insert", ""),
                         3600,
-                        "2026-01-01",
+                        1,
                     )
                 ]
             )
+        if "query_log" in sql:
+            return _Result([("node", "q1", "writer", bool(self.writer_settings))])
         if "system.settings_profiles" in sql:
             return _Result([("node", "writer_profile", 0, ["writer"], [])])
         if "system.settings_profile_elements" in sql:
