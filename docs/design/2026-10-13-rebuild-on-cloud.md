@@ -1,16 +1,15 @@
 # Rebuilding tables on ClickHouse Cloud
 
 **Date:** 2026-10-13  
-**Status:** Draft for decision (Dan); not approved.
+**Status:** Cloud support chosen (Dan, 2026-10-13). The protocol below is proposed and awaits Dan's approval; nothing is implemented yet.
 
-## Decision to make
+## Decision
 
-ClickHouse Cloud supplies a consistent Shared catalog and immutable SharedMergeTree parts. It does **not** supply the three application-level fences used by the current `rebuild_table`: caller-chosen UUIDs, a frozen snapshot-helper part set, or an async-insert queue barrier at `EXCHANGE`. The Cloud catalog makes an alternative ownership protocol possible; it does not implement that protocol for ch-migrate. The [accepted 1.0 definition](2026-10-02-ch-migrate-1.0.md#8-oprebuild_table) currently includes Cloud. This note offers a scope change or a separately proved Cloud engine, without approving either.
+ClickHouse Cloud supplies a consistent Shared catalog and immutable SharedMergeTree parts. It does **not** supply the three application-level fences used by the current `rebuild_table`: caller-chosen UUIDs, a frozen snapshot-helper part set, or an async-insert queue barrier at `EXCHANGE`. **Dan decided on 2026-10-13 that 1.0 fully supports Cloud, `rebuild_table` included**, as the [accepted 1.0 definition](2026-10-02-ch-migrate-1.0.md#8-oprebuild_table) already promises. The protocol below replaces each fence with one Cloud allows, keeps every fail-closed recovery rule, and lists what Dan is asked to approve.
 
-**Interim behaviour, either way:** `plan` reports and `up` refuses a rebuild on a
-Shared database with the preflight finding `cloud_unsupported`, before any lock,
-helper or swap exists. The integration test asserts the table, its rows and its
-catalog are unchanged.
+**Until then:** `plan` reports and `up` refuses a rebuild on a Shared database with
+the preflight finding `cloud_unsupported`, before any lock, helper or swap exists.
+The integration test asserts the table, its rows and its catalog are unchanged.
 
 ## What the current engine protects
 
@@ -40,23 +39,73 @@ The DRY Cloud test service ran ClickHouse 26.6.1.2326 with two replicas and a Sh
 | Earlier A/B/D4/D5 Cloud spike: `EXCHANGE`, `ATTACH PARTITION FROM`, `MOVE PARTITION TO TABLE`, in-flight insert across swap then `DROP TABLE dual SYNC` | Same name-following MV, accepted transfers and two-replica visibility as self-hosted; in-flight insert landed fully and DROP waited about 13 seconds. The end-to-end rebuild stopped at the denied queue flush. These observations do not prove arbitrary concurrent-load or crash recovery. |
 | Prior Cloud spike: `CREATE TABLE … UUID '…'` / `CREATE MATERIALIZED VIEW … UUID '…'`; `SET database_replicated_allow_explicit_uuid=1` (or `2`); `CREATE TABLE … ENGINE=ReplicatedMergeTree('path','replica')`; `SYSTEM STOP MERGES it_design_db.snap`; `SYSTEM FLUSH ASYNC INSERT QUEUE it_design_db.t` | Explicit UUID rejected (Code 36) in Shared; setting is read-only; explicit replica name rejected (Code 80); STOP MERGES access denied and not grantable; table-scoped queue flush access denied (Code 497, requires grant `ON *.*`). These are results on this service, not proof about future Cloud releases. |
 
-## Cloud-capable replacements, not yet accepted
+### Protocol probes (2026-10-13, same service)
 
-### 1. Server-assigned UUIDs instead of chosen UUIDs
+| Probe | Result |
+|---|---|
+| Replacing, Collapsing, Aggregating and Summing source (with TTL) → `ATTACH PARTITION ID '1' FROM` into a **plain** `MergeTree` snap with the same columns, ORDER BY and PARTITION BY and no TTL; `OPTIMIZE ... FINAL` on snap; `INSERT ... SELECT` into a plain stage; `OPTIMIZE ... FINAL`; `MOVE PARTITION` stage → a target with the source's engine | Every step accepted for all four families. The plain helpers kept all 3 physical rows through `OPTIMIZE FINAL` on both replicas, and the MOVE delivered 3 rows to the family target and emptied the stage. |
+| `CREATE TABLE ... COMMENT '<token>'`, then `EXCHANGE` | Both replicas show one server UUID with the token. After `EXCHANGE`, UUID and comment travel together under the other name. `ALTER TABLE ... MODIFY COMMENT` is allowed, so an edited comment must count as lost ownership. |
+| `CREATE MATERIALIZED VIEW v TO dst COMMENT '<token>' AS SELECT ...` | Accepted; the token shows in `system.tables.comment` on both replicas and the view delivers rows. `... AS SELECT ... FROM src COMMENT '...'` fails (62) because `COMMENT` parses as a table alias, so put `COMMENT` before `AS`. |
+| `SYSTEM SYNC REPLICA ON CLUSTER 'default' t LIGHTWEIGHT`, `KILL QUERY ON CLUSTER 'default' ... SYNC`, `SYSTEM FLUSH LOGS ON CLUSTER 'default'`; `system.clusters` | All accepted for `chm_it`. Cluster `default` has 1 shard and 2 replicas. |
+| Six concurrent async inserts (three `wait=0`, three `wait=1`, busy timeout 30 s) queued across both replicas, then `EXCHANGE` with **no** queue flush; three trials | The old table's queue entries (`system.asynchronous_inserts`, cluster-wide) were gone 0.15–0.23 s after `EXCHANGE`, long before the busy timeout. All `wait=0` inserts were acknowledged and lost; all `wait=1` inserts got 741. After `SYSTEM FLUSH LOGS ON CLUSTER`, `asynchronous_insert_log` held old-UUID `FlushError` rows for 6, 5 and 6 of the 6 queued inserts. |
+| Self-hosted 26.3: `SYSTEM STOP MERGES` on a ReplacingMergeTree, two inserts, restart the server, `OPTIMIZE FINAL` | Before restart the merge was refused (236) and 2 physical rows remained. **After restart the merge ran and 1 row remained: `STOP MERGES` does not survive a restart.** |
 
-**Cloud guarantee: partial.** UUIDs are stable and globally catalogued, but assignment and app ownership are separate. Generate a unique owner token *before* submission. Put it in the lock/helper table `COMMENT` (including an unmistakable role and attempt), record DDL intent and `log_comment`/`query_id`, issue CREATE without UUID or explicit replica path, then bind the returned server UUID only after the exact comment, shape, engine, dependency and all-replica catalog agree. For a dual MV without a reliable object comment, use the unique view name plus token-bearing CREATE/query_log **only as supporting evidence**; require a durable ownership marker attached to the view or fail closed rather than claim a matching name proves ownership. Keep the lock's heartbeat and never auto-take over an expired lock. Do not rerun an unacknowledged CREATE merely because the catalog is temporarily absent. Reconcile intent, query log on all hosts, Shared catalog result, lock heartbeat, and in-flight queries; if receipt has expired or object was created then dropped, an operator must establish the previous runner cannot resume and determine the DDL outcome. UUID binding must be checkpointed atomically with the journal transition, and later EXCHANGE/rollback checks must use the bound UUID. **Residual:** comments can be copied/spoofed and positive logs are not durable fencing; Shared Catalog does not authenticate an application owner. Cloud's generated Keeper paths replace the manually isolated paths only after uniqueness is demonstrated.
+## Proposed Cloud protocol (for approval)
 
-### 2. Immutable snapshot plus measured content instead of STOP MERGES
+### 1. Ownership: owner-token comment, then read back the UUID
 
-**Cloud guarantee: partial.** Source parts already attached remain immutable, but helper merges can change active rows and values. The `ReplacingMergeTree` probe above demonstrates why fixed per-partition row counts cannot be assumed. Replacement choices need separate proof: constrain the Cloud rebuild to plain `SharedMergeTree` where merges preserve row multiplicity and projected content; or maintain a logically immutable snapshot by copying into a helper whose engine/merge policy cannot coalesce rows, with a tested schema/partition-transfer compatibility path. Do **not** silently relax supported engine families. Record partition identity, count **and stable content digest** at snapshot capture and again before/after stage MOVE on every replica; digest alone is not ownership or an atomic MOVE proof. If a snapshot/stage changes or MOVE has a mixed result, stop and reconcile active-part sets, rows, checkpoint intent and destination/source counts before any drop or replay; an operator may need to rebuild only the affected partition from a proven owned snapshot. **Residual:** no stop-merges privilege means count/digest polling cannot prevent change between inspection and operation; aggregating/collapsing engines, TTL and concurrent mutations remain unsupported without a stronger immutability mechanism. Transfer cost and crash atomicity are unproved on Cloud.
+On a Shared database, `_initialize` no longer generates helper UUIDs. It journals a token for each role (`chm-rebuild:<revision>:<role>:<uuid4>`) before any CREATE. The lock, `new`, `snap`, `stage` and the dual view are created **without** `UUID` and **with** `COMMENT '<token>'`, using plain engine names that Cloud converts to Shared, with no Keeper path. For the view, `COMMENT` goes before `AS`.
 
-### 3. Async queue policy instead of an unavailable flush
+An object is ours only when every replica (`clusterAllReplicas('default', system.tables)`) shows the name with exactly our token and one common UUID. That UUID is then journaled ("bound"). From that point every existing UUID check runs unchanged against the bound value: exchange evidence, rollback identity, cleanup, old-UUID async attribution and the result.
 
-**Cloud guarantee: no.** Require `wait_for_async_insert=1` (or synchronous inserts) for writers whose acknowledged rows must be protected; inspect writer settings and require the existing explicit fire-and-forget loss opt-in where applicable. A pre-swap full-replica pending-queue inspection plus grace interval can narrow risk but is **not** a barrier: a writer can enqueue after the check, and another service may write through different nodes. At swap, preserve the D5 contract: retry 741 for wait=1; wait=0 can be acknowledged and lost. Replace `_async_report`'s finite, flushed old-UUID count with a clearly labeled **bounded observation window** over every available node, or refuse a finite report until an operator verifies all old-UUID queues have drained and logs have flushed. On interrupted/uncertain swap, inspect all replica catalogs, pending queues, process/query logs and old-UUID `FlushError` records; do not treat no log entry as a zero-error result. **Residual:** no per-table enqueue fence, no server-side DDL flush and no complete cross-service queue inventory proved. Even with wait=1, clients must implement retry for an error or ambiguous response; the migration cannot retry on their behalf.
+| Resume finds | Action | Rule |
+|---|---|---|
+| Intent journaled, name absent, CREATE not acknowledged | `UnknownOutcome`; operator reconciles | Same as today for unacknowledged local DDL |
+| Name with our token on every replica, UUID not yet bound | Bind and continue | The catalog proves ownership; covers a crash between acknowledgement and bind |
+| Name with another comment, or replicas disagree on UUID | `UnknownOutcome`; never adopt | Same as the unowned pre-existing rule |
+| Bound object whose comment changed later | Ownership lost; fail closed | New case; there is no takeover path |
 
-## Options for Dan
+The lock keeps its heartbeat and the 2026-10-04 rule: expiry never authorizes takeover; the operator confirms and releases. Self-hosted keeps chosen UUIDs, because its helper Keeper paths embed them.
 
-1. **1.0 self-hosted rebuild only; Cloud rebuild later.** Keep the current UUID/STOP MERGES/flush safety checks and fail preflight on Shared databases with an explicit reason. Revise the accepted capability 8 and Compatibility text, tests, docs and release claim to distinguish general Cloud migrations from Cloud `rebuild_table`. Effort: bounded scope correction plus Cloud-specific refusal test; risk: delayed Cloud sorting-key rebuild and a visible change to the accepted 1.0 promise. Approval required: Dan explicitly changes the 1.0 product scope; this draft does not do that.
-2. **Cloud rebuild in 1.0 with a separate Cloud path.** Implement and prove the three replacement protocols together, including dual-view ownership, interruption between CREATE and UUID binding, snapshot and stage merges on every promised engine, pending queue/741 under continuous writers, node churn, per-replica catalog convergence, cross-table MOVE interruption, cleanup and operator reconciliation. Preserve the existing fail-closed rule from the [waiting design](2026-10-02-waiting.md#missing-evidence-recovery) and the operator-confirmed lock recovery decision (`knowledge-base/source-of-truth/internal/ch-migrate/decisions/2026-10-04-operator-confirmed-rebuild-recovery.md`). Effort: substantial new design, implementation and Cloud acceptance suite; risk: silently wrong ownership, changed-row snapshot, or an overstated async-error count. Approval required: Dan accepts the replacement safety contract and its explicitly bounded Cloud support; implementation authorization is separate.
+### 2. Snapshot without `STOP MERGES`: plain, TTL-free helpers
 
-The evidence favors **option 1 for the 1.0 release** unless option 2 receives its own design and load-bearing Cloud acceptance checks. This is an assessment, not a scope decision. A Shared catalog solves metadata convergence, not all three application invariants.
+`snap` and `stage` become plain `MergeTree`, in the same replication family as the source (Shared on Cloud; `ReplicatedMergeTree` with a distinct Keeper path on replicated self-hosted). They keep the same columns, ORDER BY, PARTITION BY, PRIMARY KEY, indexes and projections, but drop engine parameters and every table and column TTL. Plain merges keep every physical row, and with no TTL nothing expires. The per-partition counts taken at the snapshot therefore stay exact however often the helpers merge, and the `{0, expected}` MOVE recovery states stay valid. `new` keeps the target engine. Preflight compares source → snap and stage → target for transfer compatibility (columns, ORDER BY, partition key) instead of requiring equal engines for the helpers.
+
+**Proposed for self-hosted as well, deleting `STOP MERGES`.** The restart probe shows `STOP MERGES` silently lapses when a node restarts. After such a restart, a Replacing, Collapsing, Summing or Aggregating snapshot can merge away rows, so `_verify_stage` never sees the count it expects. [INFERENCE] The run would then fail closed and need an operator, rather than lose rows. One mechanism that holds by construction is simpler than two. Cost: DRY-1410's continuous-writer acceptance (5 variants × 5 runs) must be re-run on the new helpers.
+
+### 3. Swap without a forced queue flush
+
+On Cloud the pre-`EXCHANGE` flush is skipped. `EXCHANGE` itself drained the old queue within about 0.2 s in every trial. The guarantee is unchanged: synchronous and `wait=1` rows are never lost (`wait=1` writers get 741 and retry), and `wait=0` writers still need `allow_unacknowledged_async_loss=True`.
+
+After the swap, the flush of the rollback table is replaced by a cluster-wide wait: no `system.asynchronous_inserts` entry for the table with `first_update` at or before the `EXCHANGE` acknowledgement may remain on any replica. Then come the existing drain of in-flight flushes, `SYSTEM FLUSH LOGS ON CLUSTER 'default'`, and the old-UUID `FlushError` query, repeated until two consecutive reads agree. On Cloud the report says `at least N` and names the replicas it observed, because one trial logged 5 of 6. Self-hosted keeps the flush.
+
+### 4. Topology and other writers
+
+For a Shared database the engine inspects through cluster `default`: hosts, catalog, processes, counts, logs, `KILL QUERY` and `SYSTEM SYNC REPLICA ... LIGHTWEIGHT`, all accepted in the probes. DDL never uses `ON CLUSTER`. Source and `new` are synchronized on Shared as they are on Replicated today.
+
+**Gap: writers on other compute services.** Under Cloud compute-compute separation, another service's replicas, queues and running inserts are invisible to this one. An insert from such a service that started before the dual view reached it would skip the view. If it commits after the snapshot, an acknowledged row would be missing from the new table. That case breaks the guarantee, and ch-migrate cannot detect it from inside the service. Proposal: on Cloud the migration must declare `writers_on_this_service_only=True`. Like the async-loss opt-in, there is no command-line bypass. It comes with a configurable minimum grace period after the dual view is visible, and `plan` states that the condition cannot be checked.
+
+### Acceptance for this protocol
+
+- **Unit:**
+  - every row of the ownership table;
+  - plain, TTL-free helper DDL for each engine family;
+  - the queue-drain and report logic.
+- **Docker, single node and cluster:**
+  - all rebuild suites;
+  - DRY-1410's five continuous-writer variants, five consecutive runs;
+  - a new node-restart-during-copy test.
+- **Cloud:**
+  - scaffolded rebuild round trip;
+  - the rebuild command and dependent suites;
+  - continuous-writer variants `sync`, `async1` and `async0` against the service;
+  - SIGKILL mid-copy, then operator release and resume;
+  - rebuild spike E re-run to completion and recorded in rebuild-spike section C.
+- The `cloud_unsupported` refusal is removed only when all of the above pass.
+
+### What approval covers
+
+1. Token-comment ownership with read-back UUIDs on Shared databases (self-hosted unchanged).
+2. Plain, TTL-free `snap`/`stage` helpers everywhere, deleting `STOP MERGES`, plus the DRY-1410 re-run.
+3. A Cloud swap without forced flushes, with the async report as an observed lower bound.
+4. The required `writers_on_this_service_only=True` declaration plus grace period on Cloud, or another way to handle other-service writers.
