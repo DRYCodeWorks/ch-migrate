@@ -1,0 +1,90 @@
+Unknown setting 'dynamic_disk_allow_from_env', skipping
+Unknown setting 'dynamic_disk_allow_include', skipping
+Unknown setting 'dynamic_disk_allow_from_zk', skipping
+Unknown setting 's3_allow_server_credentials_in_user_queries', skipping
+Unknown setting 'execute_exists_as_scalar_subquery', skipping
+Unknown setting 'distributed_cache_write_request_max_tries', skipping
+Unknown setting 'show_data_lake_catalogs_in_system_tables', skipping
+Unknown setting 'enable_producing_buckets_out_of_order_in_aggregation', skipping
+Unknown setting 'enable_full_text_index', skipping
+Unknown setting 'use_text_index_tokens_cache', skipping
+Unknown setting 'use_text_index_header_cache', skipping
+Unknown setting 'type_json_allow_duplicated_key_with_literal_and_nested_object', skipping
+Unknown setting 'max_dynamic_subcolumns_in_json_type_parsing', skipping
+DROP DATABASE IF EXISTS it_spike_b SYNC;
+CREATE DATABASE it_spike_b;
+CREATE TABLE it_spike_b.t (id UInt64, ts DateTime, payload String) ENGINE = MergeTree PARTITION BY toYYYYMM(ts) ORDER BY id;
+INSERT INTO it_spike_b.t SELECT number, toDateTime('2026-01-01 00:00:00') + intDiv(number, 50000) * 3600 * 24, repeat('x', 40) FROM numbers(5000000) SETTINGS max_partitions_per_insert_block = 1000;
+Received exception from server (version 26.6.1):
+Code: 452. DB::Exception: Received from <cloud-service>:9440. DB::Exception: Setting max_partitions_per_insert_block should not be changed. (SETTING_CONSTRAINT_VIOLATION)
+(query: INSERT INTO it_spike_b.t SELECT number, toDateTime('2026-01-01 00:00:00') + intDiv(number, 50000) * 3600 * 24, repeat('x', 40) FROM numbers(5000000) SETTINGS max_partitions_per_insert_block = 1000;)
+OPTIMIZE TABLE it_spike_b.t FINAL;
+Unknown setting 'dynamic_disk_allow_from_env', skipping
+Unknown setting 'dynamic_disk_allow_include', skipping
+Unknown setting 'dynamic_disk_allow_from_zk', skipping
+Unknown setting 's3_allow_server_credentials_in_user_queries', skipping
+Unknown setting 'execute_exists_as_scalar_subquery', skipping
+Unknown setting 'distributed_cache_write_request_max_tries', skipping
+Unknown setting 'show_data_lake_catalogs_in_system_tables', skipping
+Unknown setting 'enable_producing_buckets_out_of_order_in_aggregation', skipping
+Unknown setting 'enable_full_text_index', skipping
+Unknown setting 'use_text_index_tokens_cache', skipping
+Unknown setting 'use_text_index_header_cache', skipping
+Unknown setting 'type_json_allow_duplicated_key_with_literal_and_nested_object', skipping
+Unknown setting 'max_dynamic_subcolumns_in_json_type_parsing', skipping
+SELECT partition, count() AS parts, sum(rows) AS rows, formatReadableSize(sum(bytes_on_disk)) AS size FROM system.parts WHERE database='it_spike_b' AND table='t' AND active GROUP BY partition ORDER BY partition;
+-- t_snap: same structure as t
+CREATE TABLE it_spike_b.t_snap AS it_spike_b.t;
+SET send_logs_level = 'none';
+ALTER TABLE it_spike_b.t_snap ATTACH PARTITION 202601 FROM it_spike_b.t;
+ALTER TABLE it_spike_b.t_snap ATTACH PARTITION 202602 FROM it_spike_b.t;
+ALTER TABLE it_spike_b.t_snap ATTACH PARTITION 202603 FROM it_spike_b.t;
+ALTER TABLE it_spike_b.t_snap ATTACH PARTITION 202604 FROM it_spike_b.t;
+SYSTEM FLUSH LOGS;
+SELECT query_duration_ms, read_rows, written_rows, ProfileEvents['WriteBufferFromFileDescriptorWriteBytes'] AS bytes_written, substr(query, 1, 60) AS q FROM system.query_log WHERE type='QueryFinish' AND query LIKE 'ALTER TABLE it_spike_b.t_snap ATTACH PARTITION%' ORDER BY event_time_microseconds;
+   ┌─query_duration_ms─┬─read_rows─┬─written_rows─┬─bytes_written─┬─q────────────────────────────────────────────────────────────┐
+1. │                32 │         0 │            0 │             0 │ ALTER TABLE it_spike_b.t_snap ATTACH PARTITION 202601 FROM i │
+2. │                32 │         0 │            0 │             0 │ ALTER TABLE it_spike_b.t_snap ATTACH PARTITION 202602 FROM i │
+3. │                27 │         0 │            0 │             0 │ ALTER TABLE it_spike_b.t_snap ATTACH PARTITION 202603 FROM i │
+4. │                16 │         0 │            0 │             0 │ ALTER TABLE it_spike_b.t_snap ATTACH PARTITION 202604 FROM i │
+   └───────────────────┴───────────┴──────────────┴───────────────┴──────────────────────────────────────────────────────────────┘
+SELECT count() FROM it_spike_b.t_snap;
+   ┌─count()─┐
+1. │       0 │
+   └─────────┘
+-- hardlinks? compare inode of a data file in t and t_snap
+SELECT table, name, path FROM system.parts WHERE database='it_spike_b' AND table IN ('t','t_snap') AND active AND partition='202601';
+-- structure mismatches
+CREATE TABLE it_spike_b.diff_order (id UInt64, ts DateTime, payload String) ENGINE = MergeTree PARTITION BY toYYYYMM(ts) ORDER BY (payload, id);
+ALTER TABLE it_spike_b.diff_order ATTACH PARTITION 202601 FROM it_spike_b.t;
+Received exception from server (version 26.6.1):
+Code: 36. DB::Exception: Received from <cloud-service>:9440. DB::Exception: Tables have different ordering. (BAD_ARGUMENTS)
+(query: ALTER TABLE it_spike_b.diff_order ATTACH PARTITION 202601 FROM it_spike_b.t;)
+CREATE TABLE it_spike_b.diff_partkey (id UInt64, ts DateTime, payload String) ENGINE = MergeTree PARTITION BY toYYYYMMDD(ts) ORDER BY id;
+ALTER TABLE it_spike_b.diff_partkey ATTACH PARTITION 202601 FROM it_spike_b.t;
+Received exception from server (version 26.6.1):
+Code: 36. DB::Exception: Received from <cloud-service>:9440. DB::Exception: Tables have different partition key. (BAD_ARGUMENTS)
+(query: ALTER TABLE it_spike_b.diff_partkey ATTACH PARTITION 202601 FROM it_spike_b.t;)
+CREATE TABLE it_spike_b.diff_coltype (id UInt64, ts DateTime, payload LowCardinality(String)) ENGINE = MergeTree PARTITION BY toYYYYMM(ts) ORDER BY id;
+ALTER TABLE it_spike_b.diff_coltype ATTACH PARTITION 202601 FROM it_spike_b.t;
+Received exception from server (version 26.6.1):
+Code: 122. DB::Exception: Received from <cloud-service>:9440. DB::Exception: Tables have different structure. (INCOMPATIBLE_COLUMNS)
+(query: ALTER TABLE it_spike_b.diff_coltype ATTACH PARTITION 202601 FROM it_spike_b.t;)
+CREATE TABLE it_spike_b.diff_colorder (id UInt64, payload String, ts DateTime) ENGINE = MergeTree PARTITION BY toYYYYMM(ts) ORDER BY id;
+ALTER TABLE it_spike_b.diff_colorder ATTACH PARTITION 202601 FROM it_spike_b.t;
+CREATE TABLE it_spike_b.diff_extracol (id UInt64, ts DateTime, payload String, extra UInt8 DEFAULT 0) ENGINE = MergeTree PARTITION BY toYYYYMM(ts) ORDER BY id;
+ALTER TABLE it_spike_b.diff_extracol ATTACH PARTITION 202601 FROM it_spike_b.t;
+Received exception from server (version 26.6.1):
+Code: 122. DB::Exception: Received from <cloud-service>:9440. DB::Exception: Tables have different structure. (INCOMPATIBLE_COLUMNS)
+(query: ALTER TABLE it_spike_b.diff_extracol ATTACH PARTITION 202601 FROM it_spike_b.t;)
+CREATE TABLE it_spike_b.diff_index (id UInt64, ts DateTime, payload String, INDEX ip payload TYPE bloom_filter GRANULARITY 1) ENGINE = MergeTree PARTITION BY toYYYYMM(ts) ORDER BY id;
+ALTER TABLE it_spike_b.diff_index ATTACH PARTITION 202601 FROM it_spike_b.t;
+CREATE TABLE it_spike_b.diff_settings (id UInt64, ts DateTime, payload String) ENGINE = MergeTree PARTITION BY toYYYYMM(ts) ORDER BY id SETTINGS index_granularity = 1024;
+ALTER TABLE it_spike_b.diff_settings ATTACH PARTITION 202601 FROM it_spike_b.t;
+CREATE TABLE it_spike_b.diff_engine (id UInt64, ts DateTime, payload String) ENGINE = ReplacingMergeTree PARTITION BY toYYYYMM(ts) ORDER BY id;
+ALTER TABLE it_spike_b.diff_engine ATTACH PARTITION 202601 FROM it_spike_b.t;
+CREATE TABLE it_spike_b.diff_ttl (id UInt64, ts DateTime, payload String) ENGINE = MergeTree PARTITION BY toYYYYMM(ts) ORDER BY id TTL ts + INTERVAL 10 YEAR;
+ALTER TABLE it_spike_b.diff_ttl ATTACH PARTITION 202601 FROM it_spike_b.t;
+CREATE TABLE it_spike_b.diff_codec (id UInt64 CODEC(Delta, ZSTD), ts DateTime, payload String) ENGINE = MergeTree PARTITION BY toYYYYMM(ts) ORDER BY id;
+ALTER TABLE it_spike_b.diff_codec ATTACH PARTITION 202601 FROM it_spike_b.t;
+SELECT 'diff_*' AS t, table, sum(rows) FROM system.parts WHERE database='it_spike_b' AND table LIKE 'diff_%' AND active GROUP BY table ORDER BY table;

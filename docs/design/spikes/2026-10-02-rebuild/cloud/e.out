@@ -1,0 +1,89 @@
+Traceback (most recent call last):
+  File "/private/tmp/chm-cloud-spike/e2e.py", line 259, in <module>
+    rebuild(sys.argv[2])
+    ~~~~~~~^^^^^^^^^^^^^
+  File "/private/tmp/chm-cloud-spike/e2e.py", line 209, in rebuild
+    step5(c, fh)
+    ~~~~~^^^^^^^
+  File "/private/tmp/chm-cloud-spike/e2e.py", line 186, in step5
+    c.command(f"SYSTEM FLUSH ASYNC INSERT QUEUE {DB}.t")
+    ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/danyoung/.cache/uv/archive-v0/T5ttq3RJkygYl1C6/lib/python3.13/site-packages/clickhouse_connect/driver/_backendclient.py", line 147, in command
+    execution = self._backend.execute_command(bound_cmd, bind_params, data, external_data, runtime, transport_settings)
+  File "/Users/danyoung/.cache/uv/archive-v0/T5ttq3RJkygYl1C6/lib/python3.13/site-packages/clickhouse_connect/driver/_backend/http_sync.py", line 278, in execute_command
+    response = self.request(
+        plan.payload,
+    ...<5 lines>...
+        retryable=_read_request_retryable(runtime.retryable, plan.payload, plan.params, self.params, plan.form_files),
+    )
+  File "/Users/danyoung/.cache/uv/archive-v0/T5ttq3RJkygYl1C6/lib/python3.13/site-packages/clickhouse_connect/driver/_backend/http_sync.py", line 398, in request
+    self.error_handler(response)
+    ~~~~~~~~~~~~~~~~~~^^^^^^^^^^
+  File "/Users/danyoung/.cache/uv/archive-v0/T5ttq3RJkygYl1C6/lib/python3.13/site-packages/clickhouse_connect/driver/_backend/http_sync.py", line 129, in error_handler
+    raise build_http_error(
+    ...<6 lines>...
+    ) from None
+clickhouse_connect.driver.exceptions.DatabaseError: Received ClickHouse exception, code: 497, server response: Code: 497. DB::Exception: chm_it: Not enough privileges. To execute this query, it's necessary to have the grant SYSTEM FLUSH ASYNC INSERT QUEUE ON *.*. (ACCESS_DENIED) (for url https://<cloud-service>:8443)
+rebuild exit=1
+=== ledger ===
+Unknown setting 'dynamic_disk_allow_from_env', skipping
+Unknown setting 'dynamic_disk_allow_include', skipping
+Unknown setting 'dynamic_disk_allow_from_zk', skipping
+Unknown setting 's3_allow_server_credentials_in_user_queries', skipping
+Unknown setting 'execute_exists_as_scalar_subquery', skipping
+Unknown setting 'distributed_cache_write_request_max_tries', skipping
+Unknown setting 'show_data_lake_catalogs_in_system_tables', skipping
+Unknown setting 'enable_producing_buckets_out_of_order_in_aggregation', skipping
+Unknown setting 'enable_full_text_index', skipping
+Unknown setting 'use_text_index_tokens_cache', skipping
+Unknown setting 'use_text_index_header_cache', skipping
+Unknown setting 'type_json_allow_duplicated_key_with_literal_and_nested_object', skipping
+Unknown setting 'max_dynamic_subcolumns_in_json_type_parsing', skipping
+uuids		recorded	{"old": "bf568072-4c72-4ec1-81c8-cb2d0ef40f8a", "new": "9ab98492-3cc7-4cc2-a524-c80d7cea69fc"}
+snapshot		done	{"202608": 2021306, "202607": 2019960, "202609": 2019361}
+copy	202607	staged	2019960
+copy	202607	moved	2019960
+copy	202608	staged	2021306
+copy	202608	moved	2021306
+copy	202609	staged	2019361
+copy	202609	moved	2019361
+=== verify ===
+{
+ "preload_rows": 6000000,
+ "preload_missing": 0,
+ "preload_duplicated": 0,
+ "writer_batches": 250,
+ "writer_rows_acked": {
+  "sync": 76000,
+  "async": 7800,
+  "async0": 34600
+ },
+ "writer_errors_logged": 0,
+ "missing_acked_ids_by_writer": {},
+ "missing_sample": {},
+ "duplicate_ids_inside_window": 0,
+ "duplicate_ids_outside_window": 0,
+ "outside_sample": [],
+ "final_rows": 6118400,
+ "final_distinct_ids": 6118400,
+ "dependent_mv_sink_ids_not_exactly_once": 0,
+ "sink_rows": 6118400,
+ "window_seconds": 4.692,
+ "step_marks_rel": [
+  "1:start@0.000",
+  "1:end@0.887",
+  "2:start@1.077",
+  "2:end@3.193",
+  "3:start@3.193",
+  "3:end@4.692",
+  "4:start@4.692",
+  "4:stage-start:202607@5.304",
+  "4:moved:202607@6.787",
+  "4:stage-start:202608@6.986",
+  "4:moved:202608@8.917",
+  "4:stage-start:202609@9.057",
+  "4:moved:202609@10.980",
+  "4:end@10.980",
+  "5:start@10.980"
+ ]
+}

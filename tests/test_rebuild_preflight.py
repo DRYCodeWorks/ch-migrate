@@ -142,6 +142,20 @@ def test_partition_key_and_mutation_and_shards_refuse():
     )
 
 
+def test_shared_source_refuses_on_cloud_and_self_hosted_does_not():
+    writer = {"async_insert": "0", "wait_for_async_insert": "1"}
+    shared = _table(engine="SharedReplacingMergeTree")
+    cloud = inspect_rebuild(
+        _Client(writer_settings=writer), RebuildRequest("db", shared, _table("new"))
+    )
+    assert _codes(cloud)["cloud_unsupported"].severity == "refusal"
+    self_hosted = inspect_rebuild(
+        _Client(writer_settings=writer),
+        RebuildRequest("db", _table(engine="ReplicatedReplacingMergeTree"), _table("new")),
+    )
+    assert "cloud_unsupported" not in _codes(self_hosted)
+
+
 def test_query_failure_is_not_silently_converted_to_empty_evidence():
     class Broken(_Client):
         def query(self, sql):

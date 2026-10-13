@@ -46,7 +46,7 @@ class RebuildAssessment:
 def inspect_rebuild(client: Any, request: RebuildRequest) -> RebuildAssessment:
     """Inspect live state; inspection errors propagate instead of implying safety."""
     scope = _Scope(client, request.cluster)
-    findings = _definition_findings(request)
+    findings = _cloud_findings(request) + _definition_findings(request)
     findings.extend(_topology_findings(scope, request))
     findings.extend(_replica_findings(scope, request))
     findings.extend(_mutation_findings(scope, request))
@@ -92,6 +92,22 @@ class _Scope:
 
     def rows(self, sql: str) -> list[tuple[Any, ...]]:
         return self.client.query(sql).result_rows
+
+
+def _cloud_findings(request: RebuildRequest) -> list[PreflightFinding]:
+    # Shared* engines exist only in ClickHouse Cloud's Shared databases (DRY-1445).
+    if not request.source.engine.startswith("Shared"):
+        return []
+    return [
+        PreflightFinding(
+            "cloud_unsupported",
+            "refusal",
+            "Rebuild does not run on ClickHouse Cloud yet: Cloud refuses explicit table UUIDs, "
+            "SYSTEM STOP MERGES and SYSTEM FLUSH ASYNC INSERT QUEUE, which the guarded rebuild "
+            "needs for crash-safe ownership and the swap. Nothing was changed.",
+            {"engine": request.source.engine},
+        )
+    ]
 
 
 def _definition_findings(request: RebuildRequest) -> list[PreflightFinding]:

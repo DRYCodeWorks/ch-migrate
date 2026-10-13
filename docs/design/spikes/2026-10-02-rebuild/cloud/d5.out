@@ -1,0 +1,308 @@
+> DROP DATABASE IF EXISTS it_spike_d5 SYNC
+Unknown setting 'dynamic_disk_allow_from_env', skipping
+Unknown setting 'dynamic_disk_allow_include', skipping
+Unknown setting 'dynamic_disk_allow_from_zk', skipping
+Unknown setting 's3_allow_server_credentials_in_user_queries', skipping
+Unknown setting 'execute_exists_as_scalar_subquery', skipping
+Unknown setting 'distributed_cache_write_request_max_tries', skipping
+Unknown setting 'show_data_lake_catalogs_in_system_tables', skipping
+Unknown setting 'enable_producing_buckets_out_of_order_in_aggregation', skipping
+Unknown setting 'enable_full_text_index', skipping
+Unknown setting 'use_text_index_tokens_cache', skipping
+Unknown setting 'use_text_index_header_cache', skipping
+Unknown setting 'type_json_allow_duplicated_key_with_literal_and_nested_object', skipping
+Unknown setting 'max_dynamic_subcolumns_in_json_type_parsing', skipping
+> CREATE DATABASE it_spike_d5
+Unknown setting 'dynamic_disk_allow_from_env', skipping
+Unknown setting 'dynamic_disk_allow_include', skipping
+Unknown setting 'dynamic_disk_allow_from_zk', skipping
+Unknown setting 's3_allow_server_credentials_in_user_queries', skipping
+Unknown setting 'execute_exists_as_scalar_subquery', skipping
+Unknown setting 'distributed_cache_write_request_max_tries', skipping
+Unknown setting 'show_data_lake_catalogs_in_system_tables', skipping
+Unknown setting 'enable_producing_buckets_out_of_order_in_aggregation', skipping
+Unknown setting 'enable_full_text_index', skipping
+Unknown setting 'use_text_index_tokens_cache', skipping
+Unknown setting 'use_text_index_header_cache', skipping
+Unknown setting 'type_json_allow_duplicated_key_with_literal_and_nested_object', skipping
+Unknown setting 'max_dynamic_subcolumns_in_json_type_parsing', skipping
+> CREATE TABLE it_spike_d5.t (id UInt64) ENGINE = MergeTree ORDER BY id
+Unknown setting 'dynamic_disk_allow_from_env', skipping
+Unknown setting 'dynamic_disk_allow_include', skipping
+Unknown setting 'dynamic_disk_allow_from_zk', skipping
+Unknown setting 's3_allow_server_credentials_in_user_queries', skipping
+Unknown setting 'execute_exists_as_scalar_subquery', skipping
+Unknown setting 'distributed_cache_write_request_max_tries', skipping
+Unknown setting 'show_data_lake_catalogs_in_system_tables', skipping
+Unknown setting 'enable_producing_buckets_out_of_order_in_aggregation', skipping
+Unknown setting 'enable_full_text_index', skipping
+Unknown setting 'use_text_index_tokens_cache', skipping
+Unknown setting 'use_text_index_header_cache', skipping
+Unknown setting 'type_json_allow_duplicated_key_with_literal_and_nested_object', skipping
+Unknown setting 'max_dynamic_subcolumns_in_json_type_parsing', skipping
+> CREATE TABLE it_spike_d5.t_new (id UInt64) ENGINE = MergeTree ORDER BY (intHash32(id), id)
+Unknown setting 'dynamic_disk_allow_from_env', skipping
+Unknown setting 'dynamic_disk_allow_include', skipping
+Unknown setting 'dynamic_disk_allow_from_zk', skipping
+Unknown setting 's3_allow_server_credentials_in_user_queries', skipping
+Unknown setting 'execute_exists_as_scalar_subquery', skipping
+Unknown setting 'distributed_cache_write_request_max_tries', skipping
+Unknown setting 'show_data_lake_catalogs_in_system_tables', skipping
+Unknown setting 'enable_producing_buckets_out_of_order_in_aggregation', skipping
+Unknown setting 'enable_full_text_index', skipping
+Unknown setting 'use_text_index_tokens_cache', skipping
+Unknown setting 'use_text_index_header_cache', skipping
+Unknown setting 'type_json_allow_duplicated_key_with_literal_and_nested_object', skipping
+Unknown setting 'max_dynamic_subcolumns_in_json_type_parsing', skipping
+> CREATE MATERIALIZED VIEW it_spike_d5.t_dual TO it_spike_d5.t_new AS SELECT id FROM it_spike_d5.t
+Unknown setting 'dynamic_disk_allow_from_env', skipping
+Unknown setting 'dynamic_disk_allow_include', skipping
+Unknown setting 'dynamic_disk_allow_from_zk', skipping
+Unknown setting 's3_allow_server_credentials_in_user_queries', skipping
+Unknown setting 'execute_exists_as_scalar_subquery', skipping
+Unknown setting 'distributed_cache_write_request_max_tries', skipping
+Unknown setting 'show_data_lake_catalogs_in_system_tables', skipping
+Unknown setting 'enable_producing_buckets_out_of_order_in_aggregation', skipping
+Unknown setting 'enable_full_text_index', skipping
+Unknown setting 'use_text_index_tokens_cache', skipping
+Unknown setting 'use_text_index_header_cache', skipping
+Unknown setting 'type_json_allow_duplicated_key_with_literal_and_nested_object', skipping
+Unknown setting 'max_dynamic_subcolumns_in_json_type_parsing', skipping
+> INSERT INTO it_spike_d5.t SETTINGS async_insert = 1, async_insert_use_adaptive_busy_timeout = 0, async_insert_busy_timeout_ms = 8000, async_insert_busy_timeout_max_ms = 8000, wait_for_async_insert = 0 VALUES (1),(2),(3)
+Unknown setting 'dynamic_disk_allow_from_env', skipping
+Unknown setting 'dynamic_disk_allow_include', skipping
+Unknown setting 'dynamic_disk_allow_from_zk', skipping
+Unknown setting 's3_allow_server_credentials_in_user_queries', skipping
+Unknown setting 'execute_exists_as_scalar_subquery', skipping
+Unknown setting 'distributed_cache_write_request_max_tries', skipping
+Unknown setting 'show_data_lake_catalogs_in_system_tables', skipping
+Unknown setting 'enable_producing_buckets_out_of_order_in_aggregation', skipping
+Unknown setting 'enable_full_text_index', skipping
+Unknown setting 'use_text_index_tokens_cache', skipping
+Unknown setting 'use_text_index_header_cache', skipping
+Unknown setting 'type_json_allow_duplicated_key_with_literal_and_nested_object', skipping
+Unknown setting 'max_dynamic_subcolumns_in_json_type_parsing', skipping
+> [background] INSERT INTO it_spike_d5.t SETTINGS async_insert = 1, async_insert_use_adaptive_busy_timeout = 0, async_insert_busy_timeout_ms = 8000, async_insert_busy_timeout_max_ms = 8000, wait_for_async_insert = 1 VALUES (4),(5)
+> SELECT database, table, total_bytes, length(entries.query_id) entries FROM system.asynchronous_inserts WHERE database='it_spike_d5'
+Unknown setting 'dynamic_disk_allow_from_env', skipping
+Unknown setting 'dynamic_disk_allow_include', skipping
+Unknown setting 'dynamic_disk_allow_from_zk', skipping
+Unknown setting 's3_allow_server_credentials_in_user_queries', skipping
+Unknown setting 'execute_exists_as_scalar_subquery', skipping
+Unknown setting 'distributed_cache_write_request_max_tries', skipping
+Unknown setting 'show_data_lake_catalogs_in_system_tables', skipping
+Unknown setting 'enable_producing_buckets_out_of_order_in_aggregation', skipping
+Unknown setting 'enable_full_text_index', skipping
+Unknown setting 'use_text_index_tokens_cache', skipping
+Unknown setting 'use_text_index_header_cache', skipping
+Unknown setting 'type_json_allow_duplicated_key_with_literal_and_nested_object', skipping
+Unknown setting 'max_dynamic_subcolumns_in_json_type_parsing', skipping
+   ┌─database────┬─table─┬─total_bytes─┬─entries─┐
+1. │ it_spike_d5 │ t     │           7 │       1 │
+   └─────────────┴───────┴─────────────┴─────────┘
+> EXCHANGE TABLES it_spike_d5.t AND it_spike_d5.t_new
+Unknown setting 'dynamic_disk_allow_from_env', skipping
+Unknown setting 'dynamic_disk_allow_include', skipping
+Unknown setting 'dynamic_disk_allow_from_zk', skipping
+Unknown setting 's3_allow_server_credentials_in_user_queries', skipping
+Unknown setting 'execute_exists_as_scalar_subquery', skipping
+Unknown setting 'distributed_cache_write_request_max_tries', skipping
+Unknown setting 'show_data_lake_catalogs_in_system_tables', skipping
+Unknown setting 'enable_producing_buckets_out_of_order_in_aggregation', skipping
+Unknown setting 'enable_full_text_index', skipping
+Unknown setting 'use_text_index_tokens_cache', skipping
+Unknown setting 'use_text_index_header_cache', skipping
+Unknown setting 'type_json_allow_duplicated_key_with_literal_and_nested_object', skipping
+Unknown setting 'max_dynamic_subcolumns_in_json_type_parsing', skipping
+> SYSTEM FLUSH ASYNC INSERT QUEUE
+Unknown setting 'dynamic_disk_allow_from_env', skipping
+Unknown setting 'dynamic_disk_allow_include', skipping
+Unknown setting 'dynamic_disk_allow_from_zk', skipping
+Unknown setting 's3_allow_server_credentials_in_user_queries', skipping
+Unknown setting 'execute_exists_as_scalar_subquery', skipping
+Unknown setting 'distributed_cache_write_request_max_tries', skipping
+Unknown setting 'show_data_lake_catalogs_in_system_tables', skipping
+Unknown setting 'enable_producing_buckets_out_of_order_in_aggregation', skipping
+Unknown setting 'enable_full_text_index', skipping
+Unknown setting 'use_text_index_tokens_cache', skipping
+Unknown setting 'use_text_index_header_cache', skipping
+Unknown setting 'type_json_allow_duplicated_key_with_literal_and_nested_object', skipping
+Unknown setting 'max_dynamic_subcolumns_in_json_type_parsing', skipping
+Received exception from server (version 26.6.1):
+Code: 497. DB::Exception: Received from <cloud-service>:9440. DB::Exception: chm_it: Not enough privileges. To execute this query, it's necessary to have the grant SYSTEM FLUSH ASYNC INSERT QUEUE ON *.*. (ACCESS_DENIED)
+(query: SYSTEM FLUSH ASYNC INSERT QUEUE)
+> client of the wait_for_async_insert=1 insert saw:
+Unknown setting 'dynamic_disk_allow_from_env', skipping
+Unknown setting 'dynamic_disk_allow_include', skipping
+Unknown setting 'dynamic_disk_allow_from_zk', skipping
+Unknown setting 's3_allow_server_credentials_in_user_queries', skipping
+Unknown setting 'execute_exists_as_scalar_subquery', skipping
+Unknown setting 'distributed_cache_write_request_max_tries', skipping
+Unknown setting 'show_data_lake_catalogs_in_system_tables', skipping
+Unknown setting 'enable_producing_buckets_out_of_order_in_aggregation', skipping
+Unknown setting 'enable_full_text_index', skipping
+Unknown setting 'use_text_index_tokens_cache', skipping
+Unknown setting 'use_text_index_header_cache', skipping
+Unknown setting 'type_json_allow_duplicated_key_with_literal_and_nested_object', skipping
+Unknown setting 'max_dynamic_subcolumns_in_json_type_parsing', skipping
+Received exception from server (version 26.6.1):
+Code: 741. DB::Exception: Received from <cloud-service>:9440. DB::Exception: Table it_spike_d5.t (fe982bc0-f02b-4fd8-a6c7-f4f907d89014) does not match it_spike_d5.t_new (fe982bc0-f02b-4fd8-a6c7-f4f907d89014): While executing WaitForAsyncInsert. (TABLE_UUID_MISMATCH)
+(query: INSERT INTO it_spike_d5.t SETTINGS async_insert = 1, async_insert_use_adaptive_busy_timeout = 0, async_insert_busy_timeout_ms = 8000, async_insert_busy_timeout_max_ms = 8000, wait_for_async_insert = 1 VALUES (4),(5))
+> SELECT (SELECT groupArray(id) FROM it_spike_d5.t) AS name_t_new_physical, (SELECT groupArray(id) FROM it_spike_d5.t_new) AS name_t_new_old_physical
+Unknown setting 'dynamic_disk_allow_from_env', skipping
+Unknown setting 'dynamic_disk_allow_include', skipping
+Unknown setting 'dynamic_disk_allow_from_zk', skipping
+Unknown setting 's3_allow_server_credentials_in_user_queries', skipping
+Unknown setting 'execute_exists_as_scalar_subquery', skipping
+Unknown setting 'distributed_cache_write_request_max_tries', skipping
+Unknown setting 'show_data_lake_catalogs_in_system_tables', skipping
+Unknown setting 'enable_producing_buckets_out_of_order_in_aggregation', skipping
+Unknown setting 'enable_full_text_index', skipping
+Unknown setting 'use_text_index_tokens_cache', skipping
+Unknown setting 'use_text_index_header_cache', skipping
+Unknown setting 'type_json_allow_duplicated_key_with_literal_and_nested_object', skipping
+Unknown setting 'max_dynamic_subcolumns_in_json_type_parsing', skipping
+   ┌─name_t_new_physical─┬─name_t_new_old_physical─┐
+1. │ []                  │ []                      │
+   └─────────────────────┴─────────────────────────┘
+> SYSTEM FLUSH LOGS
+Unknown setting 'dynamic_disk_allow_from_env', skipping
+Unknown setting 'dynamic_disk_allow_include', skipping
+Unknown setting 'dynamic_disk_allow_from_zk', skipping
+Unknown setting 's3_allow_server_credentials_in_user_queries', skipping
+Unknown setting 'execute_exists_as_scalar_subquery', skipping
+Unknown setting 'distributed_cache_write_request_max_tries', skipping
+Unknown setting 'show_data_lake_catalogs_in_system_tables', skipping
+Unknown setting 'enable_producing_buckets_out_of_order_in_aggregation', skipping
+Unknown setting 'enable_full_text_index', skipping
+Unknown setting 'use_text_index_tokens_cache', skipping
+Unknown setting 'use_text_index_header_cache', skipping
+Unknown setting 'type_json_allow_duplicated_key_with_literal_and_nested_object', skipping
+Unknown setting 'max_dynamic_subcolumns_in_json_type_parsing', skipping
+> SELECT status, rows, substr(exception, 1, 110) AS exception FROM clusterAllReplicas('default', system.asynchronous_insert_log) WHERE database = 'it_spike_d5' ORDER BY event_time_microseconds
+Unknown setting 'dynamic_disk_allow_from_env', skipping
+Unknown setting 'dynamic_disk_allow_include', skipping
+Unknown setting 'dynamic_disk_allow_from_zk', skipping
+Unknown setting 's3_allow_server_credentials_in_user_queries', skipping
+Unknown setting 'execute_exists_as_scalar_subquery', skipping
+Unknown setting 'distributed_cache_write_request_max_tries', skipping
+Unknown setting 'show_data_lake_catalogs_in_system_tables', skipping
+Unknown setting 'enable_producing_buckets_out_of_order_in_aggregation', skipping
+Unknown setting 'enable_full_text_index', skipping
+Unknown setting 'use_text_index_tokens_cache', skipping
+Unknown setting 'use_text_index_header_cache', skipping
+Unknown setting 'type_json_allow_duplicated_key_with_literal_and_nested_object', skipping
+Unknown setting 'max_dynamic_subcolumns_in_json_type_parsing', skipping
+   ┌─status─────┬─rows─┬─exception──────────────────────────────────────────────────────────────────────────────────────────────────────┐
+1. │ FlushError │    0 │ Code: 741. DB::Exception: Table it_spike_d5.t (fe982bc0-f02b-4fd8-a6c7-f4f907d89014) does not match it_spike_d │
+   └────────────┴──────┴────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+=== D5c: is an in-progress AsyncInsertFlush visible in system.processes? ===
+> CREATE TABLE it_spike_d5.slow_src (id UInt64) ENGINE = MergeTree ORDER BY id
+Unknown setting 'dynamic_disk_allow_from_env', skipping
+Unknown setting 'dynamic_disk_allow_include', skipping
+Unknown setting 'dynamic_disk_allow_from_zk', skipping
+Unknown setting 's3_allow_server_credentials_in_user_queries', skipping
+Unknown setting 'execute_exists_as_scalar_subquery', skipping
+Unknown setting 'distributed_cache_write_request_max_tries', skipping
+Unknown setting 'show_data_lake_catalogs_in_system_tables', skipping
+Unknown setting 'enable_producing_buckets_out_of_order_in_aggregation', skipping
+Unknown setting 'enable_full_text_index', skipping
+Unknown setting 'use_text_index_tokens_cache', skipping
+Unknown setting 'use_text_index_header_cache', skipping
+Unknown setting 'type_json_allow_duplicated_key_with_literal_and_nested_object', skipping
+Unknown setting 'max_dynamic_subcolumns_in_json_type_parsing', skipping
+> CREATE TABLE it_spike_d5.slow_dst (id UInt64) ENGINE = MergeTree ORDER BY id
+Unknown setting 'dynamic_disk_allow_from_env', skipping
+Unknown setting 'dynamic_disk_allow_include', skipping
+Unknown setting 'dynamic_disk_allow_from_zk', skipping
+Unknown setting 's3_allow_server_credentials_in_user_queries', skipping
+Unknown setting 'execute_exists_as_scalar_subquery', skipping
+Unknown setting 'distributed_cache_write_request_max_tries', skipping
+Unknown setting 'show_data_lake_catalogs_in_system_tables', skipping
+Unknown setting 'enable_producing_buckets_out_of_order_in_aggregation', skipping
+Unknown setting 'enable_full_text_index', skipping
+Unknown setting 'use_text_index_tokens_cache', skipping
+Unknown setting 'use_text_index_header_cache', skipping
+Unknown setting 'type_json_allow_duplicated_key_with_literal_and_nested_object', skipping
+Unknown setting 'max_dynamic_subcolumns_in_json_type_parsing', skipping
+> CREATE MATERIALIZED VIEW it_spike_d5.slow_mv TO it_spike_d5.slow_dst AS SELECT id FROM it_spike_d5.slow_src WHERE sleepEachRow(0.5) = 0
+Unknown setting 'dynamic_disk_allow_from_env', skipping
+Unknown setting 'dynamic_disk_allow_include', skipping
+Unknown setting 'dynamic_disk_allow_from_zk', skipping
+Unknown setting 's3_allow_server_credentials_in_user_queries', skipping
+Unknown setting 'execute_exists_as_scalar_subquery', skipping
+Unknown setting 'distributed_cache_write_request_max_tries', skipping
+Unknown setting 'show_data_lake_catalogs_in_system_tables', skipping
+Unknown setting 'enable_producing_buckets_out_of_order_in_aggregation', skipping
+Unknown setting 'enable_full_text_index', skipping
+Unknown setting 'use_text_index_tokens_cache', skipping
+Unknown setting 'use_text_index_header_cache', skipping
+Unknown setting 'type_json_allow_duplicated_key_with_literal_and_nested_object', skipping
+Unknown setting 'max_dynamic_subcolumns_in_json_type_parsing', skipping
+> INSERT INTO it_spike_d5.slow_src SETTINGS async_insert = 1, async_insert_use_adaptive_busy_timeout = 0, async_insert_busy_timeout_ms = 8000, async_insert_busy_timeout_max_ms = 8000, wait_for_async_insert = 0 VALUES (1),(2),(3),(4),(5),(6)
+Unknown setting 'dynamic_disk_allow_from_env', skipping
+Unknown setting 'dynamic_disk_allow_include', skipping
+Unknown setting 'dynamic_disk_allow_from_zk', skipping
+Unknown setting 's3_allow_server_credentials_in_user_queries', skipping
+Unknown setting 'execute_exists_as_scalar_subquery', skipping
+Unknown setting 'distributed_cache_write_request_max_tries', skipping
+Unknown setting 'show_data_lake_catalogs_in_system_tables', skipping
+Unknown setting 'enable_producing_buckets_out_of_order_in_aggregation', skipping
+Unknown setting 'enable_full_text_index', skipping
+Unknown setting 'use_text_index_tokens_cache', skipping
+Unknown setting 'use_text_index_header_cache', skipping
+Unknown setting 'type_json_allow_duplicated_key_with_literal_and_nested_object', skipping
+Unknown setting 'max_dynamic_subcolumns_in_json_type_parsing', skipping
+Unknown setting 'dynamic_disk_allow_from_env', skipping
+Unknown setting 'dynamic_disk_allow_include', skipping
+Unknown setting 'dynamic_disk_allow_from_zk', skipping
+Unknown setting 's3_allow_server_credentials_in_user_queries', skipping
+Unknown setting 'execute_exists_as_scalar_subquery', skipping
+Unknown setting 'distributed_cache_write_request_max_tries', skipping
+Unknown setting 'show_data_lake_catalogs_in_system_tables', skipping
+Unknown setting 'enable_producing_buckets_out_of_order_in_aggregation', skipping
+Unknown setting 'enable_full_text_index', skipping
+Unknown setting 'use_text_index_tokens_cache', skipping
+Unknown setting 'use_text_index_header_cache', skipping
+Unknown setting 'type_json_allow_duplicated_key_with_literal_and_nested_object', skipping
+Unknown setting 'max_dynamic_subcolumns_in_json_type_parsing', skipping
+Received exception from server (version 26.6.1):
+Code: 497. DB::Exception: Received from <cloud-service>:9440. DB::Exception: chm_it: Not enough privileges. To execute this query, it's necessary to have the grant SYSTEM FLUSH ASYNC INSERT QUEUE ON *.*. (ACCESS_DENIED)
+(query: SYSTEM FLUSH ASYNC INSERT QUEUE)
+> SELECT query_kind, round(elapsed, 2) AS elapsed, is_initial_query, substr(query, 1, 50) AS q FROM clusterAllReplicas('default', system.processes) WHERE query_kind != 'Select'
+Unknown setting 'dynamic_disk_allow_from_env', skipping
+Unknown setting 'dynamic_disk_allow_include', skipping
+Unknown setting 'dynamic_disk_allow_from_zk', skipping
+Unknown setting 's3_allow_server_credentials_in_user_queries', skipping
+Unknown setting 'execute_exists_as_scalar_subquery', skipping
+Unknown setting 'distributed_cache_write_request_max_tries', skipping
+Unknown setting 'show_data_lake_catalogs_in_system_tables', skipping
+Unknown setting 'enable_producing_buckets_out_of_order_in_aggregation', skipping
+Unknown setting 'enable_full_text_index', skipping
+Unknown setting 'use_text_index_tokens_cache', skipping
+Unknown setting 'use_text_index_header_cache', skipping
+Unknown setting 'type_json_allow_duplicated_key_with_literal_and_nested_object', skipping
+Unknown setting 'max_dynamic_subcolumns_in_json_type_parsing', skipping
+   ┌─query_kind─┬─elapsed─┬─is_initial_query─┬─q────────────────────────────────────────────────┐
+1. │ Drop       │    0.04 │                1 │ DROP DATABASE IF EXISTS it_b471d47b0578f082 SYNC │
+2. │ Drop       │    0.04 │                1 │ DROP DATABASE IF EXISTS it_b471d47b0578f082 SYNC │
+3. │ Insert     │    0.01 │                1 │ INSERT INTO it_spike_b.p_mt VALUES               │
+   └────────────┴─────────┴──────────────────┴──────────────────────────────────────────────────┘
+> SELECT count() FROM it_spike_d5.slow_dst
+Unknown setting 'dynamic_disk_allow_from_env', skipping
+Unknown setting 'dynamic_disk_allow_include', skipping
+Unknown setting 'dynamic_disk_allow_from_zk', skipping
+Unknown setting 's3_allow_server_credentials_in_user_queries', skipping
+Unknown setting 'execute_exists_as_scalar_subquery', skipping
+Unknown setting 'distributed_cache_write_request_max_tries', skipping
+Unknown setting 'show_data_lake_catalogs_in_system_tables', skipping
+Unknown setting 'enable_producing_buckets_out_of_order_in_aggregation', skipping
+Unknown setting 'enable_full_text_index', skipping
+Unknown setting 'use_text_index_tokens_cache', skipping
+Unknown setting 'use_text_index_header_cache', skipping
+Unknown setting 'type_json_allow_duplicated_key_with_literal_and_nested_object', skipping
+Unknown setting 'max_dynamic_subcolumns_in_json_type_parsing', skipping
+   ┌─count()─┐
+1. │       0 │
+   └─────────┘

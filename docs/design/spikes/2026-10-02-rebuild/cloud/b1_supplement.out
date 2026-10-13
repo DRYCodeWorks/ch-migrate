@@ -1,0 +1,60 @@
+Unknown setting 'dynamic_disk_allow_from_env', skipping
+Unknown setting 'dynamic_disk_allow_include', skipping
+Unknown setting 'dynamic_disk_allow_from_zk', skipping
+Unknown setting 's3_allow_server_credentials_in_user_queries', skipping
+Unknown setting 'execute_exists_as_scalar_subquery', skipping
+Unknown setting 'distributed_cache_write_request_max_tries', skipping
+Unknown setting 'show_data_lake_catalogs_in_system_tables', skipping
+Unknown setting 'enable_producing_buckets_out_of_order_in_aggregation', skipping
+Unknown setting 'enable_full_text_index', skipping
+Unknown setting 'use_text_index_tokens_cache', skipping
+Unknown setting 'use_text_index_header_cache', skipping
+Unknown setting 'type_json_allow_duplicated_key_with_literal_and_nested_object', skipping
+Unknown setting 'max_dynamic_subcolumns_in_json_type_parsing', skipping
+-- Supplemental Cloud diagnostic after original preload failed with SETTING_CONSTRAINT_VIOLATION 452.
+-- Identical 5M-row SELECT without only the prohibited session setting; not part of original spike verdict.
+INSERT INTO it_spike_b.t SELECT number, toDateTime('2026-01-01 00:00:00') + intDiv(number, 50000) * 3600 * 24, repeat('x', 40) FROM numbers(5000000);
+ALTER TABLE it_spike_b.t_snap ATTACH PARTITION 202601 FROM it_spike_b.t;
+ALTER TABLE it_spike_b.t_snap ATTACH PARTITION 202602 FROM it_spike_b.t;
+ALTER TABLE it_spike_b.t_snap ATTACH PARTITION 202603 FROM it_spike_b.t;
+ALTER TABLE it_spike_b.t_snap ATTACH PARTITION 202604 FROM it_spike_b.t;
+SELECT count() AS attached_rows FROM it_spike_b.t_snap;
+   ┌─attached_rows─┐
+1. │       5000000 │ -- 5.00 million
+   └───────────────┘
+ALTER TABLE it_spike_b.diff_order ATTACH PARTITION 202601 FROM it_spike_b.t;
+Received exception from server (version 26.6.1):
+Code: 36. DB::Exception: Received from <cloud-service>:9440. DB::Exception: Tables have different ordering. (BAD_ARGUMENTS)
+(query: ALTER TABLE it_spike_b.diff_order ATTACH PARTITION 202601 FROM it_spike_b.t;)
+ALTER TABLE it_spike_b.diff_partkey ATTACH PARTITION 202601 FROM it_spike_b.t;
+Received exception from server (version 26.6.1):
+Code: 36. DB::Exception: Received from <cloud-service>:9440. DB::Exception: Tables have different partition key. (BAD_ARGUMENTS)
+(query: ALTER TABLE it_spike_b.diff_partkey ATTACH PARTITION 202601 FROM it_spike_b.t;)
+ALTER TABLE it_spike_b.diff_coltype ATTACH PARTITION 202601 FROM it_spike_b.t;
+Received exception from server (version 26.6.1):
+Code: 122. DB::Exception: Received from <cloud-service>:9440. DB::Exception: Tables have different structure. (INCOMPATIBLE_COLUMNS)
+(query: ALTER TABLE it_spike_b.diff_coltype ATTACH PARTITION 202601 FROM it_spike_b.t;)
+ALTER TABLE it_spike_b.diff_colorder ATTACH PARTITION 202601 FROM it_spike_b.t;
+ALTER TABLE it_spike_b.diff_extracol ATTACH PARTITION 202601 FROM it_spike_b.t;
+Received exception from server (version 26.6.1):
+Code: 122. DB::Exception: Received from <cloud-service>:9440. DB::Exception: Tables have different structure. (INCOMPATIBLE_COLUMNS)
+(query: ALTER TABLE it_spike_b.diff_extracol ATTACH PARTITION 202601 FROM it_spike_b.t;)
+ALTER TABLE it_spike_b.diff_index ATTACH PARTITION 202601 FROM it_spike_b.t;
+ALTER TABLE it_spike_b.diff_settings ATTACH PARTITION 202601 FROM it_spike_b.t;
+ALTER TABLE it_spike_b.diff_engine ATTACH PARTITION 202601 FROM it_spike_b.t;
+ALTER TABLE it_spike_b.diff_ttl ATTACH PARTITION 202601 FROM it_spike_b.t;
+ALTER TABLE it_spike_b.diff_codec ATTACH PARTITION 202601 FROM it_spike_b.t;
+SELECT table,sum(rows) FROM system.parts WHERE database='it_spike_b' AND table LIKE 'diff_%' AND active GROUP BY table ORDER BY table;
+   ┌─table─────────┬─sum(rows)─┐
+1. │ diff_codec    │   1550000 │
+2. │ diff_colorder │   1550000 │
+3. │ diff_engine   │   1550000 │
+4. │ diff_index    │   1550000 │
+5. │ diff_settings │   1550000 │
+6. │ diff_ttl      │   1550000 │
+   └───────────────┴───────────┘
+SELECT hostName(), count() FROM clusterAllReplicas('default', it_spike_b.t_snap) GROUP BY hostName() SETTINGS skip_unavailable_shards=1;
+   ┌─hostName()─────────────────────────┬─count()─┐
+1. │ replica-a │ 5000000 │
+2. │ replica-b │ 5000000 │
+   └────────────────────────────────────┴─────────┘

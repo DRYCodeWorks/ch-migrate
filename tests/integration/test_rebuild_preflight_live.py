@@ -17,7 +17,9 @@ def test_preflight_accepts_synchronous_default_writer(project):
     project.client.command(f"INSERT INTO {project.database}.events VALUES (1, 2)")
     project.client.command("SYSTEM FLUSH LOGS")
     result = inspect_rebuild(project.client, request)
-    assert not [item for item in result.findings if item.severity == "refusal"]
+    refusals = {item.code for item in result.findings if item.severity == "refusal"}
+    # Cloud refuses rebuild outright (DRY-1445); every other check must still accept the writer.
+    assert refusals == ({"cloud_unsupported"} if project.cloud else set())
     assert result.part_count == 1
     assert result.partition_parts == {"all": 1}
     assert result.insert_rows_per_second == pytest.approx(1 / 3600)

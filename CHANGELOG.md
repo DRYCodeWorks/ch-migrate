@@ -20,7 +20,7 @@ Changes are recorded in [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 - `--exchange` remains available but warns that its copy cannot preserve concurrent writes.
 
 - Rebuild dependent checks against the replacement schema, safe cleanup on pre-copy validation rejection, and post-swap dictionary reloads. Source/TO materialized views and inner-engine views keep their existing definitions.
-- Guarded online `rebuild_table`: same-database snapshot/staging helpers, durable partition checkpoints, all-replica swap barriers, a retained rollback table, and UUID-attributed async rejection reporting.
+- Guarded online `rebuild_table`: same-database snapshot/staging helpers, durable partition checkpoints, all-replica swap barriers, a retained rollback table, and UUID-attributed async rejection reporting. Self-hosted only: on ClickHouse Cloud, `plan` reports and `up` refuses it with `cloud_unsupported` before creating anything, because Cloud refuses explicit table UUIDs, `SYSTEM STOP MERGES` and `SYSTEM FLUSH ASYNC INSERT QUEUE`.
 - Non-takeover rebuild locks with independent heartbeats. Interrupted owners require explicit operator reconciliation and release before checkpoint resume; heartbeat expiry never authorizes a competing runner.
 - Read-only `plan ENV [--json]`: ordered pending statements, classifications, exact available column bytes versus whole-part ceilings, dependencies, lint gate status, shared rebuild preflight, and a versioned JSON schema.
 - Rebuild preflight checks replicas, physical-transfer definitions, writer profiles and rotated logs; reports per-host capacity and mutation hazards; and requires explicit acknowledgement of unacknowledged async-write loss.

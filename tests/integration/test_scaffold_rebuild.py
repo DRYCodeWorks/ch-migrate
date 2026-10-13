@@ -54,7 +54,15 @@ def test_scaffold_rebuild_round_trip_uses_only_sql_edits(project):
     human = project.run("plan", "it")
     assert human.exit_code == 0, human.output
     assert statement["suggested_command"] in human.output
+    refusals = {
+        item["code"] for item in statement["rebuild"]["findings"] if item["severity"] == "refusal"
+    }
+    # Cloud refuses rebuild before any helper, lock or swap exists (DRY-1445).
+    assert refusals == ({"cloud_unsupported"} if project.cloud else set())
     applied = project.run("up", "it", "--timeout", "30")
+    if project.cloud:
+        _assert_cloud_refusal(project, applied, before)
+        return
     assert applied.exit_code == 0, applied.output
     assert "ORDER BY (k, id)" in project.client.command(f"SHOW CREATE TABLE {table}")
     assert (
@@ -72,3 +80,21 @@ def test_scaffold_rebuild_round_trip_uses_only_sql_edits(project):
         ).result_rows[0]
         == before
     )
+
+
+def _assert_cloud_refusal(project, applied, before):
+    assert applied.exit_code != 0, applied.output
+    assert "does not run on ClickHouse Cloud" in applied.output
+    table = f"{project.database}.t"
+    assert "ORDER BY id" in project.client.command(f"SHOW CREATE TABLE {table}")
+    assert (
+        project.client.query(
+            f"SELECT count(), sum(cityHash64(id, k, value)) FROM {table}"
+        ).result_rows[0]
+        == before
+    )
+    leftovers = project.client.query(
+        "SELECT name FROM system.tables WHERE database = {db:String} AND name LIKE '%chm%'",
+        parameters={"db": project.database},
+    ).result_rows
+    assert leftovers == []

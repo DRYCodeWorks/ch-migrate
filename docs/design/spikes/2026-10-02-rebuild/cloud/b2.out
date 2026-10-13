@@ -1,0 +1,91 @@
+Unknown setting 'dynamic_disk_allow_from_env', skipping
+Unknown setting 'dynamic_disk_allow_include', skipping
+Unknown setting 'dynamic_disk_allow_from_zk', skipping
+Unknown setting 's3_allow_server_credentials_in_user_queries', skipping
+Unknown setting 'execute_exists_as_scalar_subquery', skipping
+Unknown setting 'distributed_cache_write_request_max_tries', skipping
+Unknown setting 'show_data_lake_catalogs_in_system_tables', skipping
+Unknown setting 'enable_producing_buckets_out_of_order_in_aggregation', skipping
+Unknown setting 'enable_full_text_index', skipping
+Unknown setting 'use_text_index_tokens_cache', skipping
+Unknown setting 'use_text_index_header_cache', skipping
+Unknown setting 'type_json_allow_duplicated_key_with_literal_and_nested_object', skipping
+Unknown setting 'max_dynamic_subcolumns_in_json_type_parsing', skipping
+SET send_logs_level = 'none';
+-- Unpartitioned (PARTITION BY tuple())
+CREATE TABLE it_spike_b.u (id UInt64, v String) ENGINE = MergeTree ORDER BY id;
+INSERT INTO it_spike_b.u SELECT number, toString(number) FROM numbers(1000);
+INSERT INTO it_spike_b.u SELECT number, toString(number) FROM numbers(1000, 1000);
+SELECT partition, partition_id, count() FROM system.parts WHERE database='it_spike_b' AND table='u' AND active GROUP BY ALL;
+   ┌─partition─┬─partition_id─┬─count()─┐
+1. │ tuple()   │ all          │       2 │
+   └───────────┴──────────────┴─────────┘
+CREATE TABLE it_spike_b.u_snap AS it_spike_b.u;
+ALTER TABLE it_spike_b.u_snap ATTACH PARTITION tuple() FROM it_spike_b.u;
+SELECT 'u_snap after tuple()', count() FROM it_spike_b.u_snap;
+   ┌─'u_snap after tuple()'─┬─count()─┐
+1. │ u_snap after tuple()   │    2000 │
+   └────────────────────────┴─────────┘
+CREATE TABLE it_spike_b.u_snap2 AS it_spike_b.u;
+ALTER TABLE it_spike_b.u_snap2 ATTACH PARTITION ID 'all' FROM it_spike_b.u;
+SELECT 'u_snap2 after ID all', count() FROM it_spike_b.u_snap2;
+   ┌─'u_snap2 after ID all'─┬─count()─┐
+1. │ u_snap2 after ID all   │    2000 │
+   └────────────────────────┴─────────┘
+CREATE TABLE it_spike_b.u_snap3 AS it_spike_b.u;
+ALTER TABLE it_spike_b.u_snap3 ATTACH PARTITION ALL FROM it_spike_b.u;
+SELECT 'u_snap3 after ALL', count() FROM it_spike_b.u_snap3;
+   ┌─'u_snap3 after ALL'─┬─count()─┐
+1. │ u_snap3 after ALL   │    2000 │
+   └─────────────────────┴─────────┘
+-- ALL on a partitioned table
+CREATE TABLE it_spike_b.t_all AS it_spike_b.t;
+ALTER TABLE it_spike_b.t_all ATTACH PARTITION ALL FROM it_spike_b.t;
+SELECT 't_all after ATTACH PARTITION ALL', count() FROM it_spike_b.t_all;
+   ┌─'t_all after ATTACH PARTITION ALL'─┬─count()─┐
+1. │ t_all after ATTACH PARTITION ALL   │       0 │
+   └────────────────────────────────────┴─────────┘
+-- MOVE PARTITION TO TABLE (MergeTree -> MergeTree)
+CREATE TABLE it_spike_b.u_stage AS it_spike_b.u;
+INSERT INTO it_spike_b.u_stage SELECT number + 10000, 'staged' FROM numbers(500);
+CREATE TABLE it_spike_b.u_dest AS it_spike_b.u;
+INSERT INTO it_spike_b.u_dest SELECT number + 20000, 'mv-written' FROM numbers(7);
+ALTER TABLE it_spike_b.u_stage MOVE PARTITION tuple() TO TABLE it_spike_b.u_dest;
+SELECT 'after MOVE tuple()', (SELECT count() FROM it_spike_b.u_stage) AS stage, (SELECT count() FROM it_spike_b.u_dest) AS dest;
+   ┌─'after MOVE tuple()'─┬─stage─┬─dest─┐
+1. │ after MOVE tuple()   │     0 │  507 │
+   └──────────────────────┴───────┴──────┘
+INSERT INTO it_spike_b.u_stage SELECT number + 30000, 'staged2' FROM numbers(5);
+ALTER TABLE it_spike_b.u_stage MOVE PARTITION ALL TO TABLE it_spike_b.u_dest;
+Received exception from server (version 26.6.1):
+Code: 344. DB::Exception: Received from <cloud-service>:9440. DB::Exception: Only support DROP/DETACH/ATTACH PARTITION ALL currently. (SUPPORT_IS_DISABLED)
+(query: ALTER TABLE it_spike_b.u_stage MOVE PARTITION ALL TO TABLE it_spike_b.u_dest;)
+ALTER TABLE it_spike_b.u_stage MOVE PARTITION ID 'all' TO TABLE it_spike_b.u_dest;
+SELECT 'after MOVE ID all', (SELECT count() FROM it_spike_b.u_stage) AS stage, (SELECT count() FROM it_spike_b.u_dest) AS dest;
+   ┌─'after MOVE ID all'─┬─stage─┬─dest─┐
+1. │ after MOVE ID all   │     0 │  512 │
+   └─────────────────────┴───────┴──────┘
+-- MOVE between different engine families
+CREATE TABLE it_spike_b.p_mt (id UInt64, ts DateTime, payload String) ENGINE = MergeTree PARTITION BY toYYYYMM(ts) ORDER BY id;
+CREATE TABLE it_spike_b.p_rmt (id UInt64, ts DateTime, payload String) ENGINE = ReplacingMergeTree PARTITION BY toYYYYMM(ts) ORDER BY id;
+INSERT INTO it_spike_b.p_mt VALUES (1, '2026-01-05', 'a');
+ALTER TABLE it_spike_b.p_mt MOVE PARTITION 202601 TO TABLE it_spike_b.p_rmt;
+SELECT 'MT->RMT move', (SELECT count() FROM it_spike_b.p_mt), (SELECT count() FROM it_spike_b.p_rmt);
+   ┌─'MT->RMT move'─┬─_subquery_1─┬─_subquery_2─┐
+1. │ MT->RMT move   │           0 │           1 │
+   └────────────────┴─────────────┴─────────────┘
+-- REPLACE PARTITION (idempotent overwrite)
+CREATE TABLE it_spike_b.p_rep AS it_spike_b.p_mt;
+INSERT INTO it_spike_b.p_mt VALUES (2, '2026-01-06', 'it_spike_b');
+ALTER TABLE it_spike_b.p_rep REPLACE PARTITION 202601 FROM it_spike_b.p_mt;
+ALTER TABLE it_spike_b.p_rep REPLACE PARTITION 202601 FROM it_spike_b.p_mt;
+SELECT 'REPLACE twice', count() FROM it_spike_b.p_rep;
+   ┌─'REPLACE twice'─┬─count()─┐
+1. │ REPLACE twice   │       1 │
+   └─────────────────┴─────────┘
+-- MOVE PARTITION to a table with different ORDER BY
+CREATE TABLE it_spike_b.p_diff (id UInt64, ts DateTime, payload String) ENGINE = MergeTree PARTITION BY toYYYYMM(ts) ORDER BY (payload, id);
+ALTER TABLE it_spike_b.p_mt MOVE PARTITION 202601 TO TABLE it_spike_b.p_diff;
+Received exception from server (version 26.6.1):
+Code: 36. DB::Exception: Received from <cloud-service>:9440. DB::Exception: Tables have different ordering. (BAD_ARGUMENTS)
+(query: ALTER TABLE it_spike_b.p_mt MOVE PARTITION 202601 TO TABLE it_spike_b.p_diff;)

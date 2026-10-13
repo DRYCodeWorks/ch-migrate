@@ -1,0 +1,137 @@
+Unknown setting 'dynamic_disk_allow_from_env', skipping
+Unknown setting 'dynamic_disk_allow_include', skipping
+Unknown setting 'dynamic_disk_allow_from_zk', skipping
+Unknown setting 's3_allow_server_credentials_in_user_queries', skipping
+Unknown setting 'execute_exists_as_scalar_subquery', skipping
+Unknown setting 'distributed_cache_write_request_max_tries', skipping
+Unknown setting 'show_data_lake_catalogs_in_system_tables', skipping
+Unknown setting 'enable_producing_buckets_out_of_order_in_aggregation', skipping
+Unknown setting 'enable_full_text_index', skipping
+Unknown setting 'use_text_index_tokens_cache', skipping
+Unknown setting 'use_text_index_header_cache', skipping
+Unknown setting 'type_json_allow_duplicated_key_with_literal_and_nested_object', skipping
+Unknown setting 'max_dynamic_subcolumns_in_json_type_parsing', skipping
+DROP DATABASE IF EXISTS it_spike_a SYNC;
+CREATE DATABASE it_spike_a ENGINE = Shared;
+CREATE TABLE it_spike_a.t     (id UInt64, src String) ENGINE = MergeTree ORDER BY id;
+CREATE TABLE it_spike_a.t_new (id UInt64, src String) ENGINE = MergeTree ORDER BY (src, id);
+CREATE TABLE it_spike_a.feeder (id UInt64, src String) ENGINE = MergeTree ORDER BY id;
+CREATE TABLE it_spike_a.sink_src (id UInt64, src String, via String) ENGINE = MergeTree ORDER BY id;
+-- MV whose SOURCE is t
+CREATE MATERIALIZED VIEW it_spike_a.mv_src TO it_spike_a.sink_src AS SELECT id, src, 'mv_src' AS via FROM it_spike_a.t;
+-- MV whose TARGET is t
+CREATE MATERIALIZED VIEW it_spike_a.mv_tgt TO it_spike_a.t AS SELECT id, src FROM it_spike_a.feeder;
+-- the dual-write MV: source t, target t_new
+CREATE MATERIALIZED VIEW it_spike_a.t_dual TO it_spike_a.t_new AS SELECT id, src FROM it_spike_a.t;
+SELECT name, uuid FROM system.tables WHERE database = 'it_spike_a' AND name IN ('t','t_new') ORDER BY name;
+   ┌─name──┬─uuid─────────────────────────────────┐
+1. │ t     │ 8c8cc67e-fde0-4cb9-baa2-006f0d4d52a1 │
+2. │ t_new │ d85ab0f6-f249-48c2-880f-a70aad286a71 │
+   └───────┴──────────────────────────────────────┘
+SELECT name, dependencies_table, loading_dependencies_table, loading_dependent_table FROM system.tables WHERE database='it_spike_a' ORDER BY name;
+   ┌─name─────┬─dependencies_table──┬─loading_dependencies_table─┬─loading_dependent_table─┐
+1. │ feeder   │ ['mv_tgt']          │ []                         │ []                      │
+2. │ mv_src   │ []                  │ []                         │ []                      │
+3. │ mv_tgt   │ []                  │ []                         │ []                      │
+4. │ sink_src │ []                  │ []                         │ []                      │
+5. │ t        │ ['t_dual','mv_src'] │ []                         │ []                      │
+6. │ t_dual   │ []                  │ []                         │ []                      │
+7. │ t_new    │ []                  │ []                         │ []                      │
+   └──────────┴─────────────────────┴────────────────────────────┴─────────────────────────┘
+INSERT INTO it_spike_a.t VALUES (1, 'pre-direct');
+INSERT INTO it_spike_a.feeder VALUES (2, 'pre-feeder');
+EXCHANGE TABLES it_spike_a.t AND it_spike_a.t_new;
+SELECT name, uuid FROM system.tables WHERE database = 'it_spike_a' AND name IN ('t','t_new') ORDER BY name;
+   ┌─name──┬─uuid─────────────────────────────────┐
+1. │ t     │ d85ab0f6-f249-48c2-880f-a70aad286a71 │
+2. │ t_new │ 8c8cc67e-fde0-4cb9-baa2-006f0d4d52a1 │
+   └───────┴──────────────────────────────────────┘
+SELECT name, dependencies_table FROM system.tables WHERE database='it_spike_a' ORDER BY name;
+   ┌─name─────┬─dependencies_table──┐
+1. │ feeder   │ ['mv_tgt']          │
+2. │ mv_src   │ []                  │
+3. │ mv_tgt   │ []                  │
+4. │ sink_src │ []                  │
+5. │ t        │ ['mv_src','t_dual'] │
+6. │ t_dual   │ []                  │
+7. │ t_new    │ []                  │
+   └──────────┴─────────────────────┘
+SHOW CREATE TABLE it_spike_a.mv_src FORMAT TSVRaw;
+CREATE MATERIALIZED VIEW it_spike_a.mv_src TO it_spike_a.sink_src
+(
+    `id` UInt64,
+    `src` String,
+    `via` String
+)
+AS SELECT
+    id,
+    src,
+    'mv_src' AS via
+FROM it_spike_a.t
+SHOW CREATE TABLE it_spike_a.mv_tgt FORMAT TSVRaw;
+CREATE MATERIALIZED VIEW it_spike_a.mv_tgt TO it_spike_a.t
+(
+    `id` UInt64,
+    `src` String
+)
+AS SELECT
+    id,
+    src
+FROM it_spike_a.feeder
+SHOW CREATE TABLE it_spike_a.t_dual FORMAT TSVRaw;
+CREATE MATERIALIZED VIEW it_spike_a.t_dual TO it_spike_a.t_new
+(
+    `id` UInt64,
+    `src` String
+)
+AS SELECT
+    id,
+    src
+FROM it_spike_a.t
+INSERT INTO it_spike_a.t VALUES (3, 'post-direct-into-name-t');
+INSERT INTO it_spike_a.t_new VALUES (4, 'post-direct-into-name-t_new');
+INSERT INTO it_spike_a.feeder VALUES (5, 'post-feeder');
+SELECT * FROM (SELECT 'name t' AS tbl, id, src FROM it_spike_a.t UNION ALL SELECT 'name t_new' AS tbl, id, src FROM it_spike_a.t_new) ORDER BY tbl, id;
+   ┌─tbl────────┬─id─┬─src─────────────────────────┐
+1. │ name t     │  1 │ pre-direct                  │
+2. │ name t     │  2 │ pre-feeder                  │
+3. │ name t     │  3 │ post-direct-into-name-t     │
+4. │ name t     │  5 │ post-feeder                 │
+5. │ name t_new │  1 │ pre-direct                  │
+6. │ name t_new │  2 │ pre-feeder                  │
+7. │ name t_new │  3 │ post-direct-into-name-t     │
+8. │ name t_new │  4 │ post-direct-into-name-t_new │
+9. │ name t_new │  5 │ post-feeder                 │
+   └────────────┴────┴─────────────────────────────┘
+SELECT 'sink_src' AS tbl, id, src, via FROM it_spike_a.sink_src ORDER BY id;
+   ┌─tbl──────┬─id─┬─src─────────────────────┬─via────┐
+1. │ sink_src │  1 │ pre-direct              │ mv_src │
+2. │ sink_src │  2 │ pre-feeder              │ mv_src │
+3. │ sink_src │  3 │ post-direct-into-name-t │ mv_src │
+4. │ sink_src │  5 │ post-feeder             │ mv_src │
+   └──────────┴────┴─────────────────────────┴────────┘
+Unknown setting 'dynamic_disk_allow_from_env', skipping
+Unknown setting 'dynamic_disk_allow_include', skipping
+Unknown setting 'dynamic_disk_allow_from_zk', skipping
+Unknown setting 's3_allow_server_credentials_in_user_queries', skipping
+Unknown setting 'execute_exists_as_scalar_subquery', skipping
+Unknown setting 'distributed_cache_write_request_max_tries', skipping
+Unknown setting 'show_data_lake_catalogs_in_system_tables', skipping
+Unknown setting 'enable_producing_buckets_out_of_order_in_aggregation', skipping
+Unknown setting 'enable_full_text_index', skipping
+Unknown setting 'use_text_index_tokens_cache', skipping
+Unknown setting 'use_text_index_header_cache', skipping
+Unknown setting 'type_json_allow_duplicated_key_with_literal_and_nested_object', skipping
+Unknown setting 'max_dynamic_subcolumns_in_json_type_parsing', skipping
+SELECT * FROM (SELECT 'name t (uuid c202..)' AS tbl, id, src FROM it_spike_a.t UNION ALL SELECT 'name t_new (uuid 74a5..)' AS tbl, id, src FROM it_spike_a.t_new) ORDER BY tbl, id;
+   ┌─tbl──────────────────────┬─id─┬─src─────────────────────────┐
+1. │ name t (uuid c202..)     │  1 │ pre-direct                  │
+2. │ name t (uuid c202..)     │  2 │ pre-feeder                  │
+3. │ name t (uuid c202..)     │  3 │ post-direct-into-name-t     │
+4. │ name t (uuid c202..)     │  5 │ post-feeder                 │
+5. │ name t_new (uuid 74a5..) │  1 │ pre-direct                  │
+6. │ name t_new (uuid 74a5..) │  2 │ pre-feeder                  │
+7. │ name t_new (uuid 74a5..) │  3 │ post-direct-into-name-t     │
+8. │ name t_new (uuid 74a5..) │  4 │ post-direct-into-name-t_new │
+9. │ name t_new (uuid 74a5..) │  5 │ post-feeder                 │
+   └──────────────────────────┴────┴─────────────────────────────┘

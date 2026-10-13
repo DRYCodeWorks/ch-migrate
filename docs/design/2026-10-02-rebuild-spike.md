@@ -87,7 +87,34 @@ Never drop `t_dual` before `EXCHANGE`: rows inserted in between would be lost.
 **Gotcha:** `CREATE TABLE t_snap AS t` fails with `REPLICA_ALREADY_EXISTS` when `t` has an explicit
 Keeper path. Generate DDL with a distinct path for each helper table.
 
-## C. ClickHouse Cloud: unverified
+## C. ClickHouse Cloud
+
+### Cloud results (2026-10-13)
+
+These experiments ran against the DRY Cloud test service (ClickHouse 26.6.1.2326,
+two replicas, Shared database) with only the host, the database names (`it_spike_*`)
+and cluster-wide reads of per-node system tables changed. Redacted output is in
+`spikes/2026-10-02-rebuild/cloud/`.
+
+| Experiment | Cloud | Same as self-hosted? |
+|---|---|---|
+| A: views across `EXCHANGE` | Source and `TO` views follow the name; `dependencies_table` unchanged; the sink got each id once. | Same |
+| B1: `ATTACH PARTITION FROM` | 5M rows attached and visible on both replicas. ORDER BY or partition-key mismatch is rejected (36); a type change or extra column is rejected (122); column order, skip index, granularity, codec, TTL and MergeTree → ReplacingMergeTree are accepted. The script's preload setting `max_partitions_per_insert_block` is constraint-locked (452), so the counts come from a re-run without it. | Same |
+| B2: unpartitioned, `MOVE PARTITION` | `ATTACH` with `tuple()`, `ID 'all'` and `ALL` works; `MOVE` with `tuple()` and `ID 'all'` works; `MOVE PARTITION ALL` is rejected (344); a different ORDER BY on `MOVE` is rejected (36). | Same |
+| B3: replicated helpers | An explicit `ReplicatedMergeTree('<path>', '<replica>')` is rejected (80) in a Shared database. Between SharedMergeTree tables, `ATTACH` and `MOVE` give identical counts on both replicas. | Different engine DDL; same transfer behaviour |
+| D4: insert in flight across `EXCHANGE` + `DROP t_dual SYNC` | All 15,000 ids reached the new table, the old table and the downstream sink. `EXCHANGE` took 5–62 ms; `DROP ... SYNC` waited 13 s for the insert. | Same |
+| D5: async inserts at the swap | Queued `wait=0` rows were acknowledged and lost; queued `wait=1` inserts got 741. `SYSTEM FLUSH ASYNC INSERT QUEUE` is denied (497, needs `ON *.*`). | Same loss mechanism; the flush is unavailable |
+| E: end to end with writers | Preload, writers, snapshot, copy and move ran; step 5 stopped at the denied queue flush, so no post-swap result exists. | Not completed |
+
+**Outcome:** the physical mechanics (`EXCHANGE`, `ATTACH`/`MOVE PARTITION`, view
+name-following, the in-flight insert barrier) behave as they do on self-hosted.
+The guarded rebuild still cannot run on Cloud. Cloud refuses explicit table UUIDs
+(36; `database_replicated_allow_explicit_uuid` is read-only), `SYSTEM STOP MERGES`
+and `SYSTEM FLUSH ASYNC INSERT QUEUE`. Until Dan decides between the options in
+`2026-10-13-rebuild-on-cloud.md`, `plan` reports and `up` refuses a rebuild on a
+Shared database with `cloud_unsupported`, before anything is created (DRY-1445).
+
+### Before the Cloud run (2026-10-02)
 
 - No ClickHouse doc says whether SharedMergeTree supports `ATTACH PARTITION FROM` or `MOVE
   PARTITION TO TABLE`.
