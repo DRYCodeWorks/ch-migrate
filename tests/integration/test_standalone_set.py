@@ -31,4 +31,5 @@ def test_standalone_set_requires_upgrade_env_then_preserves_setting(project):
     assert upgraded.exit_code == 0, upgraded.output
     applied = project.run("up", "it")
     assert applied.exit_code == 0, applied.output
-    assert project.client.query(f"SELECT value FROM {project.database}.probe").result_rows == [(3,)]
+    probe = project.everywhere(f"{project.database}.probe")
+    assert project.client.query(f"SELECT value FROM {probe}").result_rows == [(3,)]

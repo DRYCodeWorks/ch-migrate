@@ -20,7 +20,7 @@ def test_version_table_interrupted_delete_does_not_replay(project):
     first = project.run("up", "it", "-r", "aaaa")
     assert first.exit_code == 0, first.output
     table = f"{project.database}.alembic_version"
-    project.client.command(f"SYSTEM STOP MERGES {table}")
+    project.stop_merges(table)
     process = _start_up(project)
     try:
         _wait_for(lambda: set(_heads(project)) == {"aaaa", "bbbb"})
@@ -260,8 +260,9 @@ def _heads(project):
 
 
 def _probe_counts(project):
+    probe = project.everywhere(f"{project.database}.probe")
     return project.client.query(
-        f"SELECT revision, count() FROM {project.database}.probe GROUP BY revision ORDER BY revision"
+        f"SELECT revision, count() FROM {probe} GROUP BY revision ORDER BY revision"
     ).result_rows
 
 

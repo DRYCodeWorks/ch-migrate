@@ -59,7 +59,7 @@ def test_mutation_failure_leaves_head_and_prints_operator_kill(project):
 def test_mutation_timeout_preserves_work_and_resumes(project):
     _seed(project)
     _upgrade_sql(project, "ALTER TABLE {db}.counter UPDATE x = x + 1 WHERE id = 1")
-    project.client.command(f"SYSTEM STOP MERGES {project.database}.counter")
+    project.stop_merges(f"{project.database}.counter")
     try:
         result = project.run("up", "it", "--timeout", "0.5")
         assert result.exit_code == 1, result.output
@@ -82,7 +82,7 @@ def test_mutation_timeout_preserves_work_and_resumes(project):
 def test_mutation_sigkill_rerun_attaches_without_second_increment(project, trial):
     _seed(project)
     _upgrade_sql(project, "ALTER TABLE {db}.counter UPDATE x = x + 1 WHERE id = 1")
-    project.client.command(f"SYSTEM STOP MERGES {project.database}.counter")
+    project.stop_merges(f"{project.database}.counter")
     try:
         with _running(project, ("up", "it")) as (first, first_log):
             rows = _until(lambda: _mutations(project), "mutation was not submitted")
@@ -124,7 +124,7 @@ MigrationWaiter._after = crash
 from ch_migrate.cli import main
 main()
 """
-    project.client.command(f"SYSTEM STOP MERGES {project.database}.counter")
+    project.stop_merges(f"{project.database}.counter")
     try:
         with _running(project, ("up", "it"), code) as (crashed, log):
             assert crashed.wait(timeout=30) == -9, log.read_text()
@@ -165,7 +165,7 @@ def test_mutation_expired_ownership_refuses_instead_of_replaying(project):
         " SETTINGS finished_mutations_to_keep=1, old_parts_lifetime=0, cleanup_delay_period=1, cleanup_delay_period_random_add=0",
     )
     _upgrade_sql(project, "ALTER TABLE {db}.counter UPDATE x = x + 1 WHERE id = 1")
-    project.client.command(f"SYSTEM STOP MERGES {project.database}.counter")
+    project.stop_merges(f"{project.database}.counter")
     try:
         timed_out = project.run("up", "it", "--timeout", "0.4")
         assert timed_out.exit_code == 1
@@ -189,7 +189,7 @@ def test_mutation_expired_ownership_refuses_instead_of_replaying(project):
 def test_mutation_changed_sql_refuses_replay(project):
     _seed(project)
     path = _upgrade_sql(project, "ALTER TABLE {db}.counter UPDATE x = x + 1 WHERE id = 1")
-    project.client.command(f"SYSTEM STOP MERGES {project.database}.counter")
+    project.stop_merges(f"{project.database}.counter")
     try:
         assert project.run("up", "it", "--timeout", "0.4").exit_code == 1
         before = {row[0] for row in _mutations(project)}
@@ -209,7 +209,7 @@ def test_mutation_completed_prefix_is_not_repeated_and_downgrade_resets(project)
         project,
         "INSERT INTO {db}.audit VALUES (1);\n-- ch-migrate: allow-non-idempotent increment once\nALTER TABLE {db}.counter UPDATE x = x + 1 WHERE id = 1",
     )
-    project.client.command(f"SYSTEM STOP MERGES {project.database}.counter")
+    project.stop_merges(f"{project.database}.counter")
     try:
         assert project.run("up", "it", "--timeout", "0.4").exit_code == 1
     finally:
@@ -300,7 +300,7 @@ def test_mutation_polling_preserves_session_settings(project):
         "-- ch-migrate: allow-non-idempotent record the preserved session setting\n"
         "INSERT INTO {db}.observed SELECT getSetting('max_threads')",
     )
-    project.client.command(f"SYSTEM STOP MERGES {project.database}.counter")
+    project.stop_merges(f"{project.database}.counter")
     try:
         with _running(project, ("up", "it")) as (process, log):
             mutation = _until(lambda: _mutations(project), "mutation was not submitted")[0][0]
@@ -348,7 +348,7 @@ def test_mutation_raw_bind_paths_are_waited(project, mode):
 def test_mutation_replaced_table_refuses_resume(project):
     _seed(project)
     _upgrade_sql(project, "ALTER TABLE {db}.counter UPDATE x=x+1 WHERE id=1")
-    project.client.command(f"SYSTEM STOP MERGES {project.database}.counter")
+    project.stop_merges(f"{project.database}.counter")
     result = project.run("up", "it", "--timeout", "0.4")
     assert result.exit_code == 1
     project.client.command(f"DROP TABLE {project.database}.counter SYNC")
@@ -365,7 +365,7 @@ def test_mutation_replaced_table_refuses_resume(project):
 def test_mutation_healthy_foreign_predecessor_is_waited_before_submission(project):
     _seed(project)
     _upgrade_sql(project, "ALTER TABLE {db}.counter UPDATE x=x+1 WHERE id=1")
-    project.client.command(f"SYSTEM STOP MERGES {project.database}.counter")
+    project.stop_merges(f"{project.database}.counter")
     project.client.command(f"ALTER TABLE {project.database}.counter UPDATE x=x+10 WHERE id=1")
     original = {row[0] for row in _mutations(project)}
     try:
@@ -415,8 +415,8 @@ def test_mutation_timeout_budget_is_not_reset_for_next_statement(project):
         "-- ch-migrate: allow-non-idempotent second controlled update\n"
         "ALTER TABLE {db}.second UPDATE x=x+1 WHERE id=1",
     )
-    project.client.command(f"SYSTEM STOP MERGES {project.database}.counter")
-    project.client.command(f"SYSTEM STOP MERGES {project.database}.second")
+    project.stop_merges(f"{project.database}.counter")
+    project.stop_merges(f"{project.database}.second")
     try:
         with _running(project, ("up", "it", "--timeout", "1.5")) as (process, log):
             mutation = _until(lambda: _mutations(project), "first statement did not start")[0][0]
@@ -474,7 +474,8 @@ main()
     resumed = project.run("up", "it")
     assert resumed.exit_code == 0, resumed.output
     assert _heads(project) == ["bbbb"]
-    assert project.client.command(f"SELECT count() FROM {project.database}.audit") == 1
+    audit = project.everywhere(f"{project.database}.audit")
+    assert project.client.command(f"SELECT count() FROM {audit}") == 1
 
 
 def test_mutation_transport_loss_is_not_treated_as_server_rejection(project):
@@ -500,12 +501,10 @@ main()
     assert "Read-only inspection:" in resumed.output
     assert _heads(project) == ["aaaa"]
     project.client.command("SYSTEM FLUSH LOGS")
-    requests = project.client.query(
-        "SELECT count() FROM system.query_log WHERE type = 'QueryStart' "
-        "AND startsWith(query, {prefix:String})",
-        parameters={"prefix": f"CREATE TABLE IF NOT EXISTS {project.database}.uncertain"},
-    ).result_rows[0][0]
-    assert requests == 1
+    # The client's text continues with the column list; a Shared database also logs its own
+    # re-execution of the CREATE, under another query_id, with `UUID '...'` inserted there.
+    prefix = f"CREATE TABLE IF NOT EXISTS {project.database}.uncertain ("
+    assert _requests_started(project, prefix) == 1
 
 
 def test_mutation_trailing_foreign_failure_does_not_hold_owned_completion(project):
@@ -537,7 +536,7 @@ def test_mutation_ttl_resume_does_not_materialize_twice(project):
     project.write_revision("aaaa", {"upgrade": 'op.execute("SELECT 1")'})
     assert project.run("up", "it").exit_code == 0
     _upgrade_sql(project, "ALTER TABLE {db}.expiry MODIFY TTL ts + INTERVAL 100 YEAR")
-    project.client.command(f"SYSTEM STOP MERGES {project.database}.expiry")
+    project.stop_merges(f"{project.database}.expiry")
     try:
         timed_out = project.run("up", "it", "--timeout", "0.4")
         assert timed_out.exit_code == 1, timed_out.output
@@ -558,7 +557,7 @@ def test_mutation_terminal_progress_uses_a_live_line(project):
 
     _seed(project)
     _upgrade_sql(project, "ALTER TABLE {db}.counter UPDATE x=x+1 WHERE id=1")
-    project.client.command(f"SYSTEM STOP MERGES {project.database}.counter")
+    project.stop_merges(f"{project.database}.counter")
     master, slave = pty.openpty()
     process = None
     try:
@@ -672,9 +671,26 @@ def _upgrade_sql(project, sql):
 def _mutations(project, table="counter"):
     return project.client.query(
         "SELECT mutation_id, command, is_done, parts_to_do, latest_fail_reason FROM system.mutations "
-        "WHERE database = {db:String} AND table = {table:String} ORDER BY mutation_id",
+        "WHERE database = {db:String} AND table = {table:String} AND "
+        + project.REWRITES_PARTS
+        + " ORDER BY mutation_id",
         parameters={"db": project.database, "table": table},
     ).result_rows
+
+
+def _requests_started(project, prefix):
+    """Requests whose logged text starts with `prefix`, counted on every replica."""
+    deadline = time.monotonic() + 30
+    while True:
+        count = project.client.query(
+            f"SELECT uniqExact(query_id) FROM {project.query_log()} WHERE type = 'QueryStart' "
+            "AND startsWith(query, {prefix:String})",
+            parameters={"prefix": prefix},
+            settings={"skip_unavailable_shards": 1},
+        ).result_rows[0][0]
+        if count or time.monotonic() > deadline:
+            return count
+        time.sleep(1)
 
 
 def _heads(project):

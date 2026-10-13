@@ -103,5 +103,6 @@ ignore_missing_imports = true
 markers = [
     "integration: tests against a real, isolated ClickHouse server",
     "cluster: tests against an owned one-shard, two-replica ClickHouse cluster",
+    "cloud: checks that only run against a ClickHouse Cloud CH_MIGRATE_IT_URL",
 ]
 addopts = "-m 'not integration'"

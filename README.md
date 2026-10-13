@@ -1025,6 +1025,28 @@ anonymous volumes, and network, and never operate on external servers. Cluster
 tests skip when `CH_MIGRATE_IT_URL` is set. The integration CI job runs cluster
 tests on Python 3.12 only, and single-server tests on 3.10 and 3.14.
 
+### Against a ClickHouse Cloud test service
+
+Point `CH_MIGRATE_IT_URL` at a dedicated Cloud test service
+(`https://<user>:<url-encoded password>@<service>:8443`), loading the password
+from your secret store at run time. Use a user that can create and drop `it_*`
+databases, users and roles. The fixture waits up to 300 seconds for an idle
+service to wake.
+
+```bash
+uv run --locked pytest -q -m "integration and not cluster"   # the full single-server suite
+uv run --locked pytest -q -m "integration and cloud"         # Cloud-only checks
+```
+
+Tests marked `cloud` run only when the URL is a Cloud service (Shared
+databases); they check that a migration's `SET` reaches every later statement
+whichever replica serves it, version-table round trips on SharedMergeTree, and
+mutation waiting. Cluster tests skip. Cloud grants no user `SYSTEM STOP MERGES`,
+so tests that hold a mutation pending skip with that reason; the self-hosted
+suite still covers them. Each test drops its own database. After an interrupted
+run, `scripts/cloud_sweep.py [--dry-run]` drops `it_*` databases no query has
+touched for 24 hours, with their test users and roles.
+
 ### Continuous-writer rebuild acceptance
 
 Run all five local variants five times, stopping on the first failure:

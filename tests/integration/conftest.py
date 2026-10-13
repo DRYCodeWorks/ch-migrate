@@ -79,6 +79,15 @@ class MigrationProject:
     root: Path
     client: object = field(repr=False)
     database: str
+    cloud: bool = False
+
+    # SharedMergeTree lists metadata-only ALTERs in system.mutations with no block numbers
+    # (DRY-1446). They rewrite no parts, so tests count only part-rewriting mutations.
+    # Needs {db:String} and {table:String} parameters.
+    REWRITES_PARTS = (
+        "NOT (empty(block_numbers.number) AND startsWith((SELECT engine FROM system.tables "
+        "WHERE database = {db:String} AND name = {table:String}), 'Shared'))"
+    )
 
     @property
     def sql_dir(self):
@@ -108,6 +117,33 @@ class MigrationProject:
         path.write_text(source)
         return path
 
+    def stop_merges(self, table):
+        """Hold mutations pending. ClickHouse Cloud grants this to no user, so such tests skip."""
+        if self.cloud:
+            pytest.skip("ClickHouse Cloud cannot grant SYSTEM STOP MERGES to hold a mutation")
+        self.client.command(f"SYSTEM STOP MERGES {table}")
+
+    def engine(self, name):
+        """The engine name the server reports: Cloud's Shared databases use Shared* engines."""
+        return "Shared" + name if self.cloud else name
+
+    def query_log(self):
+        """Every replica's query log; on Cloud each node keeps only the queries it served."""
+        if self.cloud:
+            return "clusterAllReplicas('default', merge('system', '^query_log'))"
+        return "system.query_log"
+
+    def everywhere(self, table):
+        """FROM source for a Memory table: on Cloud its rows live only on the writing replica."""
+        if self.cloud:
+            return f"clusterAllReplicas('default', {table})"
+        return table
+
+    @staticmethod
+    def new_password():
+        # Cloud's password policy needs an uppercase letter and a special character.
+        return "Chm!" + secrets.token_hex(24)
+
 
 @pytest.fixture(scope="session")
 def clickhouse_server(request):
@@ -132,6 +168,25 @@ def clickhouse_server(request):
     server = ClickHouseServer("127.0.0.1", port, "default", password)
     _wait_for_ping(server)
     return server
+
+
+@pytest.fixture(scope="session")
+def server_is_cloud(clickhouse_server):
+    """ClickHouse Cloud services create Shared databases; self-hosted servers cannot."""
+    client = clickhouse_server.connect()
+    try:
+        return bool(client.command("SELECT count() FROM system.databases WHERE engine = 'Shared'"))
+    finally:
+        client.close()
+
+
+@pytest.fixture(autouse=True)
+def cloud_scope(request):
+    """Run `cloud`-marked tests only against a ClickHouse Cloud CH_MIGRATE_IT_URL."""
+    if request.node.get_closest_marker("cloud") is None:
+        return
+    if not os.environ.get("CH_MIGRATE_IT_URL") or not request.getfixturevalue("server_is_cloud"):
+        pytest.skip("ClickHouse Cloud-only check; CH_MIGRATE_IT_URL is not a Cloud service")
 
 
 @pytest.fixture(scope="session")
@@ -214,7 +269,9 @@ def project(clickhouse_server, tmp_path, monkeypatch, request):
     (tmp_path / "config.yaml").write_text(yaml.safe_dump(config))
     request.addfinalizer(lambda: client.command(f"DROP DATABASE IF EXISTS {database} SYNC"))
     client.command(f"CREATE DATABASE {database}")
-    return MigrationProject(tmp_path, client, database)
+    return MigrationProject(
+        tmp_path, client, database, cloud=request.getfixturevalue("server_is_cloud")
+    )
 
 
 def _server_from_url(url):

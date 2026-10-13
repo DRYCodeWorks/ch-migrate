@@ -24,6 +24,8 @@ def test_preflight_accepts_synchronous_default_writer(project):
 
 
 def test_preflight_detects_inherited_fire_and_forget_profile(project, clickhouse_server):
+    if project.cloud:
+        pytest.skip("ClickHouse Cloud forbids changing log_query_settings in a settings profile")
     request = _source(project)
     name = "writer_" + secrets.token_hex(6)
     password = secrets.token_hex(24)
@@ -98,7 +100,7 @@ def test_preflight_refuses_pending_mutation_and_partition_change(project):
     request = _source(project)
     table = f"{project.database}.events"
     project.client.command(f"INSERT INTO {table} VALUES (1, 2)")
-    project.client.command(f"SYSTEM STOP MERGES {table}")
+    project.stop_merges(table)
     try:
         project.client.command(
             f"ALTER TABLE {table} UPDATE value = value + 1 WHERE 1 SETTINGS mutations_sync = 0"

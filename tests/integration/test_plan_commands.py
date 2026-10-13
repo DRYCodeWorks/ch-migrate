@@ -2,6 +2,7 @@
 
 import json
 import secrets
+import time
 from pathlib import Path
 
 import pytest
@@ -159,7 +160,7 @@ def test_plan_narrows_only_proven_partition_predicates(project, predicate, parti
     _assert_size(size, _column_stats(project, "events", partition=partition))
 
 
-def test_plan_reports_actual_mv_and_dictionary_dependents(project):
+def test_plan_reports_actual_mv_and_dictionary_dependents(project, request):
     database = project.database
     source = f"{database}.source"
     project.client.command(
@@ -172,10 +173,11 @@ def test_plan_reports_actual_mv_and_dictionary_dependents(project):
         f"CREATE MATERIALIZED VIEW {database}.source_mv TO {database}.sink "
         f"AS SELECT id FROM {source}"
     )
+    dictionary_user = _dictionary_source_user(project, request)
     project.client.command(
         f"CREATE DICTIONARY {database}.source_dict (id UInt64, value UInt64) "
         "PRIMARY KEY id "
-        f"SOURCE(CLICKHOUSE(DB '{database}' TABLE 'source')) "
+        f"SOURCE(CLICKHOUSE(DB '{database}' TABLE 'source' {dictionary_user})) "
         "LIFETIME(MIN 0 MAX 0) LAYOUT(FLAT())"
     )
     _revision(project, "deps", None, f"ALTER TABLE {source} DROP COLUMN IF EXISTS value")
@@ -229,10 +231,13 @@ def test_plan_under_read_only_user_emits_only_inspection_queries(project, monkey
     project.client.command(f"INSERT INTO {table} VALUES (1, 5)")
     _revision(project, "inspect", None, f"ALTER TABLE {table} MODIFY COLUMN x UInt32")
     user = "plan_audit_" + secrets.token_hex(6)
-    password = secrets.token_hex(24)
+    password = project.new_password()
     project.client.command(f"CREATE USER {user} IDENTIFIED WITH sha256_password BY '{password}'")
     try:
-        project.client.command(f"GRANT SELECT, SHOW TABLES, SHOW DATABASES ON *.* TO {user}")
+        # Cloud's admin may grant *.* only within its own grants (CURRENT GRANTS).
+        project.client.command(
+            f"GRANT CURRENT GRANTS(SELECT, SHOW TABLES, SHOW DATABASES ON *.*) TO {user}"
+        )
         config_path = project.root / "config.yaml"
         config = yaml.safe_load(config_path.read_text())
         config["environments"]["it"]["migration_user"] = user
@@ -243,11 +248,7 @@ def test_plan_under_read_only_user_emits_only_inspection_queries(project, monkey
         assert document["migrations"][0]["statements"][0]["classification"]["kind"] == "mutation"
         assert project.client.command(f"EXISTS TABLE {database}.alembic_version") == 0
         project.client.command("SYSTEM FLUSH LOGS")  # Audit observer; not the plan user.
-        rows = project.client.query(
-            "SELECT DISTINCT query_kind FROM system.query_log "
-            "WHERE type = 'QueryFinish' AND user = {audit_user:String}",
-            parameters={"audit_user": user},
-        ).result_rows
+        rows = _plan_user_query_kinds(project, user)
         assert rows, "Plan user has no QueryFinish entries; read-only audit is inconclusive"
         assert {row[0] for row in rows} <= {"Select", "Show", "Describe", "Explain"}, rows
     finally:
@@ -272,6 +273,32 @@ def _revision(project, revision, parent, sql):
     project.write_revision(
         revision, {"upgrade": f"from alembic import op\nop.execute({sql!r})"}, parent
     )
+
+
+def _dictionary_source_user(project, request):
+    """Cloud requires a non-default dictionary source user; use a throwaway SELECT-only one."""
+    if not project.cloud:
+        return ""
+    user, password = project.database + "_dict", project.new_password()
+    request.addfinalizer(lambda: project.client.command(f"DROP USER IF EXISTS {user}"))
+    project.client.command(f"CREATE USER {user} IDENTIFIED WITH sha256_password BY '{password}'")
+    project.client.command(f"GRANT SELECT ON {project.database}.source TO {user}")
+    return f"USER '{user}' PASSWORD '{password}'"
+
+
+def _plan_user_query_kinds(project, user):
+    # On Cloud the plan's queries may land on another replica, whose log flushes on its own timer.
+    deadline = time.monotonic() + 30
+    while True:
+        rows = project.client.query(
+            f"SELECT DISTINCT query_kind FROM {project.query_log()} "
+            "WHERE type = 'QueryFinish' AND user = {audit_user:String}",
+            parameters={"audit_user": user},
+            settings={"skip_unavailable_shards": 1},
+        ).result_rows
+        if rows or time.monotonic() > deadline:
+            return rows
+        time.sleep(1)
 
 
 def _column_stats(project, table, column=None, partition=None):
