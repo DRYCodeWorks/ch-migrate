@@ -188,13 +188,17 @@ def test_ddl_queue_is_not_used_for_single_node_migrations(project):
             "upgrade": 'op.execute(f"CREATE TABLE IF NOT EXISTS {db}.owned (id UInt64) ENGINE=Memory")'
         },
     )
+    started = project.client.command("SELECT toString(now64(6))")
     result = project.run("up", "it")
     assert result.exit_code == 0, result.output
-    project.client.command("SYSTEM FLUSH LOGS")
+    project.flush_logs()
+    # Earlier tests on a shared server (Cloud's ON CLUSTER commands) also read the queue.
     reads = project.client.query(
-        "SELECT count() FROM system.query_log WHERE type='QueryStart' "
+        f"SELECT count() FROM {project.query_log()} WHERE type='QueryStart' "
+        "AND event_time_microseconds >= toDateTime64({started:String}, 6) "
         "AND position(query, 'FROM system.distributed_ddl_queue') > 0 "
-        "AND position(query, 'system.query_log') = 0"
+        "AND position(query, 'system.query_log') = 0",
+        parameters={"started": started},
     ).result_rows[0][0]
     assert reads == 0
 

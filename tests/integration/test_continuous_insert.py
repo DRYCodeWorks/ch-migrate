@@ -276,9 +276,11 @@ def _insert_times(project, writer, window):
     if not writer.mode.startswith("async"):
         return _server_intervals(project, writer.returned, window)
     project.flush_logs()
+    # As for synchronous inserts, an async insert is in flight from queueing to the end of its
+    # flush. The logged flush time can follow the snapshot that already holds its rows.
     rows = project.client.query(
-        "SELECT query_id, status, flush_time_microseconds >= toDateTime64({start:String}, 6) "
-        "AND flush_time_microseconds <= toDateTime64({end:String}, 6) "
+        "SELECT query_id, status, event_time_microseconds <= toDateTime64({end:String}, 6) "
+        "AND flush_time_microseconds >= toDateTime64({start:String}, 6) "
         f"FROM {project.everywhere('system.asynchronous_insert_log')} WHERE database = {{db:String}} "
         "AND table = 'events' AND has({ids:Array(String)}, query_id)",
         parameters={"db": project.database, "ids": list(writer.attempts), **window},
