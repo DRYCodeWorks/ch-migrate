@@ -1,0 +1,224 @@
+[('202607', 2, 2000000), ('202608', 2, 2000000), ('202609', 2, 2000000)]
+[14:28:37] SIGKILL rebuild python (moved=1, stage query written_rows=325521)
+Unknown setting 'dynamic_disk_allow_from_env', skipping
+Unknown setting 'dynamic_disk_allow_include', skipping
+Unknown setting 'dynamic_disk_allow_from_zk', skipping
+Unknown setting 's3_allow_server_credentials_in_user_queries', skipping
+Unknown setting 'execute_exists_as_scalar_subquery', skipping
+Unknown setting 'distributed_cache_write_request_max_tries', skipping
+Unknown setting 'show_data_lake_catalogs_in_system_tables', skipping
+Unknown setting 'enable_producing_buckets_out_of_order_in_aggregation', skipping
+Unknown setting 'enable_full_text_index', skipping
+Unknown setting 'use_text_index_tokens_cache', skipping
+Unknown setting 'use_text_index_header_cache', skipping
+Unknown setting 'type_json_allow_duplicated_key_with_literal_and_nested_object', skipping
+Unknown setting 'max_dynamic_subcolumns_in_json_type_parsing', skipping
+right after kill: server-side stage query still running?	rebuild-stage-202608	4.46	358289
+Unknown setting 'dynamic_disk_allow_from_env', skipping
+Unknown setting 'dynamic_disk_allow_include', skipping
+Unknown setting 'dynamic_disk_allow_from_zk', skipping
+Unknown setting 's3_allow_server_credentials_in_user_queries', skipping
+Unknown setting 'execute_exists_as_scalar_subquery', skipping
+Unknown setting 'distributed_cache_write_request_max_tries', skipping
+Unknown setting 'show_data_lake_catalogs_in_system_tables', skipping
+Unknown setting 'enable_producing_buckets_out_of_order_in_aggregation', skipping
+Unknown setting 'enable_full_text_index', skipping
+Unknown setting 'use_text_index_tokens_cache', skipping
+Unknown setting 'use_text_index_header_cache', skipping
+Unknown setting 'type_json_allow_duplicated_key_with_literal_and_nested_object', skipping
+Unknown setting 'max_dynamic_subcolumns_in_json_type_parsing', skipping
+ledger	uuids		recorded	{"old": "ee510e37-5327-4b71-bb36-023fdc64cce1", "new": "61b0e8a4-767d-490e-9f68-4b287704c9cb"}
+ledger	snapshot		done	{"202608": 2024237, "202607": 2023158, "202609": 2022135}
+ledger	copy	202607	staged	2023158
+ledger	copy	202607	moved	2023158
+Unknown setting 'dynamic_disk_allow_from_env', skipping
+Unknown setting 'dynamic_disk_allow_include', skipping
+Unknown setting 'dynamic_disk_allow_from_zk', skipping
+Unknown setting 's3_allow_server_credentials_in_user_queries', skipping
+Unknown setting 'execute_exists_as_scalar_subquery', skipping
+Unknown setting 'distributed_cache_write_request_max_tries', skipping
+Unknown setting 'show_data_lake_catalogs_in_system_tables', skipping
+Unknown setting 'enable_producing_buckets_out_of_order_in_aggregation', skipping
+Unknown setting 'enable_full_text_index', skipping
+Unknown setting 'use_text_index_tokens_cache', skipping
+Unknown setting 'use_text_index_header_cache', skipping
+Unknown setting 'type_json_allow_duplicated_key_with_literal_and_nested_object', skipping
+Unknown setting 'max_dynamic_subcolumns_in_json_type_parsing', skipping
+Received exception from server (version 26.6.1):
+Code: 215. DB::Exception: Received from [cloud-host]:9440. DB::Exception: Column 'it_spike_e.t_stage._partition_id' is not under aggregate function and not in GROUP BY keys. In query SELECT 't_stage rows per partition', _partition_id, count() FROM it_spike_e.t_stage GROUP BY 1. (NOT_AN_AGGREGATE)
+(query: SELECT 't_stage rows per partition', _partition_id, count() FROM it_spike_e.t_stage GROUP BY 1 FORMAT TSV)
+Unknown setting 'dynamic_disk_allow_from_env', skipping
+Unknown setting 'dynamic_disk_allow_include', skipping
+Unknown setting 'dynamic_disk_allow_from_zk', skipping
+Unknown setting 's3_allow_server_credentials_in_user_queries', skipping
+Unknown setting 'execute_exists_as_scalar_subquery', skipping
+Unknown setting 'distributed_cache_write_request_max_tries', skipping
+Unknown setting 'show_data_lake_catalogs_in_system_tables', skipping
+Unknown setting 'enable_producing_buckets_out_of_order_in_aggregation', skipping
+Unknown setting 'enable_full_text_index', skipping
+Unknown setting 'use_text_index_tokens_cache', skipping
+Unknown setting 'use_text_index_header_cache', skipping
+Unknown setting 'type_json_allow_duplicated_key_with_literal_and_nested_object', skipping
+Unknown setting 'max_dynamic_subcolumns_in_json_type_parsing', skipping
+after 2s: server-side stage query	rebuild-stage-202608	7.46	653201
+[14:28:40] re-running rebuild
+Traceback (most recent call last):
+  File "/private/tmp/chm-cloud-spike/e2e.py", line 259, in <module>
+    rebuild(sys.argv[2])
+    ~~~~~~~^^^^^^^^^^^^^
+  File "/private/tmp/chm-cloud-spike/e2e.py", line 208, in rebuild
+    step4(c, fh)
+    ~~~~~^^^^^^^
+  File "/private/tmp/chm-cloud-spike/e2e.py", line 175, in step4
+    assert staged == expected, (p, staged, expected)
+           ^^^^^^^^^^^^^^^^^^
+AssertionError: ('202608', 4048474, 2024237)
+[14:29:03] rebuild finished; writers keep going 3s
+Unknown setting 'dynamic_disk_allow_from_env', skipping
+Unknown setting 'dynamic_disk_allow_include', skipping
+Unknown setting 'dynamic_disk_allow_from_zk', skipping
+Unknown setting 's3_allow_server_credentials_in_user_queries', skipping
+Unknown setting 'execute_exists_as_scalar_subquery', skipping
+Unknown setting 'distributed_cache_write_request_max_tries', skipping
+Unknown setting 'show_data_lake_catalogs_in_system_tables', skipping
+Unknown setting 'enable_producing_buckets_out_of_order_in_aggregation', skipping
+Unknown setting 'enable_full_text_index', skipping
+Unknown setting 'use_text_index_tokens_cache', skipping
+Unknown setting 'use_text_index_header_cache', skipping
+Unknown setting 'type_json_allow_duplicated_key_with_literal_and_nested_object', skipping
+Unknown setting 'max_dynamic_subcolumns_in_json_type_parsing', skipping
+ledger	uuids		recorded	{"old": "ee510e37-5327-4b71-bb36-023fdc64cce1", "new": "61b0e8a4-767d-490e-9f68-4b287704c9cb"}
+ledger	snapshot		done	{"202608": 2024237, "202607": 2023158, "202609": 2022135}
+ledger	copy	202607	staged	2023158
+ledger	copy	202607	moved	2023158
+Unknown setting 'dynamic_disk_allow_from_env', skipping
+Unknown setting 'dynamic_disk_allow_include', skipping
+Unknown setting 'dynamic_disk_allow_from_zk', skipping
+Unknown setting 's3_allow_server_credentials_in_user_queries', skipping
+Unknown setting 'execute_exists_as_scalar_subquery', skipping
+Unknown setting 'distributed_cache_write_request_max_tries', skipping
+Unknown setting 'show_data_lake_catalogs_in_system_tables', skipping
+Unknown setting 'enable_producing_buckets_out_of_order_in_aggregation', skipping
+Unknown setting 'enable_full_text_index', skipping
+Unknown setting 'use_text_index_tokens_cache', skipping
+Unknown setting 'use_text_index_header_cache', skipping
+Unknown setting 'type_json_allow_duplicated_key_with_literal_and_nested_object', skipping
+Unknown setting 'max_dynamic_subcolumns_in_json_type_parsing', skipping
+ledger	SharedMergeTree	c568de70-4005-4b90-b834-034c857e3840
+mv_dep	MaterializedView	5b1c63a4-a966-4381-b1f1-d08e4ad765f9
+sink	SharedMergeTree	53f12661-a78b-498d-ae59-2bfc7d1e7f95
+t	SharedMergeTree	ee510e37-5327-4b71-bb36-023fdc64cce1
+t_dual	MaterializedView	ce3ead4f-3b40-4dc4-9717-ff1e27bdd471
+t_new	SharedMergeTree	61b0e8a4-767d-490e-9f68-4b287704c9cb
+t_snap	SharedMergeTree	2453d0d2-3440-494e-b8aa-4fd2edc000d5
+t_stage	SharedMergeTree	e117b8d9-21ec-444d-86db-4f9554a27671
+Unknown setting 'dynamic_disk_allow_from_env', skipping
+Unknown setting 'dynamic_disk_allow_include', skipping
+Unknown setting 'dynamic_disk_allow_from_zk', skipping
+Unknown setting 's3_allow_server_credentials_in_user_queries', skipping
+Unknown setting 'execute_exists_as_scalar_subquery', skipping
+Unknown setting 'distributed_cache_write_request_max_tries', skipping
+Unknown setting 'show_data_lake_catalogs_in_system_tables', skipping
+Unknown setting 'enable_producing_buckets_out_of_order_in_aggregation', skipping
+Unknown setting 'enable_full_text_index', skipping
+Unknown setting 'use_text_index_tokens_cache', skipping
+Unknown setting 'use_text_index_header_cache', skipping
+Unknown setting 'type_json_allow_duplicated_key_with_literal_and_nested_object', skipping
+Unknown setting 'max_dynamic_subcolumns_in_json_type_parsing', skipping
+final sorting key	id
+{
+ "preload_rows": 6000000,
+ "preload_missing": 0,
+ "preload_duplicated": 0,
+ "writer_batches": 1003,
+ "writer_rows_acked": {
+  "sync": 300000,
+  "async": 24200,
+  "async0": 146400
+ },
+ "writer_errors_logged": 0,
+ "missing_acked_ids_by_writer": {},
+ "missing_sample": {},
+ "duplicate_ids_inside_window": 0,
+ "duplicate_ids_outside_window": 0,
+ "outside_sample": [],
+ "final_rows": 6470600,
+ "final_distinct_ids": 6470600,
+ "dependent_mv_sink_ids_not_exactly_once": 0,
+ "sink_rows": 6470600,
+ "window_seconds": 6.286,
+ "step_marks_rel": [
+  "1:start@0.000",
+  "1:end@1.639",
+  "2:start@1.834",
+  "2:end@3.903",
+  "3:start@3.903",
+  "3:end@6.286",
+  "4:start@6.286",
+  "4:stage-start:202607@6.789",
+  "4:moved:202607@30.081",
+  "4:stage-start:202608@30.228",
+  "1:start@39.011",
+  "1:end@39.193",
+  "2:start@39.312",
+  "2:end@39.368",
+  "3:start@39.368",
+  "3:skip@39.402",
+  "4:start@39.402",
+  "4:stage-start:202608@39.705"
+ ]
+}
+Unknown setting 'dynamic_disk_allow_from_env', skipping
+Unknown setting 'dynamic_disk_allow_include', skipping
+Unknown setting 'dynamic_disk_allow_from_zk', skipping
+Unknown setting 's3_allow_server_credentials_in_user_queries', skipping
+Unknown setting 'execute_exists_as_scalar_subquery', skipping
+Unknown setting 'distributed_cache_write_request_max_tries', skipping
+Unknown setting 'show_data_lake_catalogs_in_system_tables', skipping
+Unknown setting 'enable_producing_buckets_out_of_order_in_aggregation', skipping
+Unknown setting 'enable_full_text_index', skipping
+Unknown setting 'use_text_index_tokens_cache', skipping
+Unknown setting 'use_text_index_header_cache', skipping
+Unknown setting 'type_json_allow_duplicated_key_with_literal_and_nested_object', skipping
+Unknown setting 'max_dynamic_subcolumns_in_json_type_parsing', skipping
+Unknown setting 'dynamic_disk_allow_from_env', skipping
+Unknown setting 'dynamic_disk_allow_include', skipping
+Unknown setting 'dynamic_disk_allow_from_zk', skipping
+Unknown setting 's3_allow_server_credentials_in_user_queries', skipping
+Unknown setting 'execute_exists_as_scalar_subquery', skipping
+Unknown setting 'distributed_cache_write_request_max_tries', skipping
+Unknown setting 'show_data_lake_catalogs_in_system_tables', skipping
+Unknown setting 'enable_producing_buckets_out_of_order_in_aggregation', skipping
+Unknown setting 'enable_full_text_index', skipping
+Unknown setting 'use_text_index_tokens_cache', skipping
+Unknown setting 'use_text_index_header_cache', skipping
+Unknown setting 'type_json_allow_duplicated_key_with_literal_and_nested_object', skipping
+Unknown setting 'max_dynamic_subcolumns_in_json_type_parsing', skipping
+stage queries	rebuild-stage-202607	QueryFinish	850	2019960	
+stage queries	rebuild-stage-202608	QueryFinish	1189	2021306	
+stage queries	rebuild-stage-202609	QueryFinish	1090	2019361	
+stage queries	rebuild-stage-202607	QueryFinish	722	2019612	
+stage queries	rebuild-stage-202608	QueryFinish	682	2020759	
+stage queries	rebuild-stage-202609	QueryFinish	758	2019049	
+stage queries	rebuild-stage-202607	QueryFinish	21273	2019811	
+stage queries	rebuild-stage-202608	ExceptionWhileProcessing	8632	833425	Code: 394. DB::Exception: Query was cancelled. (QUERY_WAS_CANCELLED) (version 26
+stage queries	rebuild-stage-202608	QueryFinish	21102	2020106	
+stage queries	rebuild-stage-202609	QueryFinish	21195	2018083	
+stage queries	rebuild-stage-202607	QueryFinish	21878	2023158	
+stage queries	rebuild-stage-202608	QueryFinish	21916	2024237	
+stage queries	rebuild-stage-202608	QueryFinish	21307	2024237	
+Unknown setting 'dynamic_disk_allow_from_env', skipping
+Unknown setting 'dynamic_disk_allow_include', skipping
+Unknown setting 'dynamic_disk_allow_from_zk', skipping
+Unknown setting 's3_allow_server_credentials_in_user_queries', skipping
+Unknown setting 'execute_exists_as_scalar_subquery', skipping
+Unknown setting 'distributed_cache_write_request_max_tries', skipping
+Unknown setting 'show_data_lake_catalogs_in_system_tables', skipping
+Unknown setting 'enable_producing_buckets_out_of_order_in_aggregation', skipping
+Unknown setting 'enable_full_text_index', skipping
+Unknown setting 'use_text_index_tokens_cache', skipping
+Unknown setting 'use_text_index_header_cache', skipping
+Unknown setting 'type_json_allow_duplicated_key_with_literal_and_nested_object', skipping
+Unknown setting 'max_dynamic_subcolumns_in_json_type_parsing', skipping
+FlushError this run	12	36576
+wall_end_epoch=1791916157

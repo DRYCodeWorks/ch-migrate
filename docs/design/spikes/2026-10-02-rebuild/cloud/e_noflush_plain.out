@@ -1,0 +1,90 @@
+[('202607', 2, 2000000), ('202608', 2, 2000000), ('202609', 2, 2000000)]
+rebuild_exit=0
+Unknown setting 'dynamic_disk_allow_from_env', skipping
+Unknown setting 'dynamic_disk_allow_include', skipping
+Unknown setting 'dynamic_disk_allow_from_zk', skipping
+Unknown setting 's3_allow_server_credentials_in_user_queries', skipping
+Unknown setting 'execute_exists_as_scalar_subquery', skipping
+Unknown setting 'distributed_cache_write_request_max_tries', skipping
+Unknown setting 'show_data_lake_catalogs_in_system_tables', skipping
+Unknown setting 'enable_producing_buckets_out_of_order_in_aggregation', skipping
+Unknown setting 'enable_full_text_index', skipping
+Unknown setting 'use_text_index_tokens_cache', skipping
+Unknown setting 'use_text_index_header_cache', skipping
+Unknown setting 'type_json_allow_duplicated_key_with_literal_and_nested_object', skipping
+Unknown setting 'max_dynamic_subcolumns_in_json_type_parsing', skipping
+uuids		recorded
+snapshot		done
+copy	202607	staged
+copy	202607	moved
+copy	202608	staged
+copy	202608	moved
+copy	202609	staged
+copy	202609	moved
+rebuild		done
+{
+ "preload_rows": 6000000,
+ "preload_missing": 0,
+ "preload_duplicated": 0,
+ "writer_batches": 340,
+ "writer_rows_acked": {
+  "sync": 106000,
+  "async": 10200,
+  "async0": 47200
+ },
+ "writer_errors_logged": 0,
+ "missing_acked_ids_by_writer": {
+  "async0": 200
+ },
+ "missing_sample": {
+  "async0": [
+   90028200,
+   90028201,
+   90028202
+  ]
+ },
+ "duplicate_ids_inside_window": 19020,
+ "duplicate_ids_outside_window": 0,
+ "outside_sample": [],
+ "final_rows": 6182220,
+ "final_distinct_ids": 6163200,
+ "dependent_mv_sink_ids_not_exactly_once": 0,
+ "sink_rows": 6163200,
+ "window_seconds": 4.361,
+ "step_marks_rel": [
+  "1:start@0.000",
+  "1:end@0.780",
+  "2:start@0.883",
+  "2:end@3.071",
+  "3:start@3.072",
+  "3:end@4.361",
+  "4:start@4.361",
+  "4:stage-start:202607@4.886",
+  "4:moved:202607@6.167",
+  "4:stage-start:202608@6.331",
+  "4:moved:202608@7.559",
+  "4:stage-start:202609@7.701",
+  "4:moved:202609@9.079",
+  "4:end@9.079",
+  "5:start@9.079",
+  "5:exchanged@9.196",
+  "5:t_dual_dropped@10.768",
+  "5:end@14.848"
+ ]
+}
+Unknown setting 'dynamic_disk_allow_from_env', skipping
+Unknown setting 'dynamic_disk_allow_include', skipping
+Unknown setting 'dynamic_disk_allow_from_zk', skipping
+Unknown setting 's3_allow_server_credentials_in_user_queries', skipping
+Unknown setting 'execute_exists_as_scalar_subquery', skipping
+Unknown setting 'distributed_cache_write_request_max_tries', skipping
+Unknown setting 'show_data_lake_catalogs_in_system_tables', skipping
+Unknown setting 'enable_producing_buckets_out_of_order_in_aggregation', skipping
+Unknown setting 'enable_full_text_index', skipping
+Unknown setting 'use_text_index_tokens_cache', skipping
+Unknown setting 'use_text_index_header_cache', skipping
+Unknown setting 'type_json_allow_duplicated_key_with_literal_and_nested_object', skipping
+Unknown setting 'max_dynamic_subcolumns_in_json_type_parsing', skipping
+Ok	450	86816
+FlushError	1	0
+wall_end_epoch=1791915912

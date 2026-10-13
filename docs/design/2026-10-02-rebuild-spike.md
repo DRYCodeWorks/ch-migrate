@@ -104,15 +104,16 @@ and cluster-wide reads of per-node system tables changed. Redacted output is in
 | B3: replicated helpers | An explicit `ReplicatedMergeTree('<path>', '<replica>')` is rejected (80) in a Shared database. Between SharedMergeTree tables, `ATTACH` and `MOVE` give identical counts on both replicas. | Different engine DDL; same transfer behaviour |
 | D4: insert in flight across `EXCHANGE` + `DROP t_dual SYNC` | All 15,000 ids reached the new table, the old table and the downstream sink. `EXCHANGE` took 5–62 ms; `DROP ... SYNC` waited 13 s for the insert. | Same |
 | D5: async inserts at the swap | Queued `wait=0` rows were acknowledged and lost; queued `wait=1` inserts got 741. `SYSTEM FLUSH ASYNC INSERT QUEUE` is denied (497, needs `ON *.*`). | Same loss mechanism; the flush is unavailable |
-| E: end to end with writers | Preload, writers, snapshot, copy and move ran; step 5 stopped at the denied queue flush, so no post-swap result exists. | Not completed |
+| E: end to end with writers | First run: step 5 stopped at the denied queue flush. Re-run without the flush (`e_noflush_plain.out`): 6M preloaded rows with none missing or duplicated; sync and `wait=1` writers lost nothing; 200 acknowledged `wait=0` rows were lost at the swap; 19,020 duplicate ids all inside the 4.4 s window and none outside; the dependent view's sink got every id exactly once. The kill variant (`e_noflush_kill*.out`) failed in the prototype, not on Cloud: it sent a node-local `KILL QUERY` without waiting, and the server-side copy was still running 2 s later. | Same, once the engine kills `ON CLUSTER` and waits for the copy to stop |
 
 **Outcome:** the physical mechanics (`EXCHANGE`, `ATTACH`/`MOVE PARTITION`, view
 name-following, the in-flight insert barrier) behave as they do on self-hosted.
-The guarded rebuild still cannot run on Cloud. Cloud refuses explicit table UUIDs
-(36; `database_replicated_allow_explicit_uuid` is read-only), `SYSTEM STOP MERGES`
-and `SYSTEM FLUSH ASYNC INSERT QUEUE`. Until Dan decides between the options in
-`2026-10-13-rebuild-on-cloud.md`, `plan` reports and `up` refuses a rebuild on a
-Shared database with `cloud_unsupported`, before anything is created (DRY-1445).
+Cloud refuses explicit table UUIDs (36; `database_replicated_allow_explicit_uuid`
+is read-only), `SYSTEM STOP MERGES` and `SYSTEM FLUSH ASYNC INSERT QUEUE`. Dan
+approved the protocol in `2026-10-13-rebuild-on-cloud.md`: owner-token comments
+with read-back UUIDs, plain TTL-free helpers instead of STOP MERGES, no forced
+flush (the async report becomes a lower bound), and a required
+`writers_on_this_service_only=True` declaration with a grace pause (DRY-1445).
 
 ### Before the Cloud run (2026-10-02)
 

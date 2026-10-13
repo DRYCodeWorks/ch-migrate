@@ -1,15 +1,15 @@
 # Rebuilding tables on ClickHouse Cloud
 
 **Date:** 2026-10-13  
-**Status:** Cloud support chosen and the protocol below approved (Dan, 2026-10-13): all four points, with plain helpers on self-hosted too and the required `writers_on_this_service_only` declaration plus grace period. Implementation is under DRY-1445.
+**Status:** Cloud support chosen and the protocol below approved (Dan, 2026-10-13): all four points, with plain helpers on self-hosted too and the required `writers_on_this_service_only` declaration plus grace period. Implemented under DRY-1445; see [Implementation and Cloud results](#implementation-and-cloud-results).
 
 ## Decision
 
 ClickHouse Cloud supplies a consistent Shared catalog and immutable SharedMergeTree parts. It does **not** supply the three application-level fences used by the current `rebuild_table`: caller-chosen UUIDs, a frozen snapshot-helper part set, or an async-insert queue barrier at `EXCHANGE`. **Dan decided on 2026-10-13 that 1.0 fully supports Cloud, `rebuild_table` included**, as the [accepted 1.0 definition](2026-10-02-ch-migrate-1.0.md#8-oprebuild_table) already promises. The protocol below replaces each fence with one Cloud allows, keeps every fail-closed recovery rule, and lists what Dan is asked to approve.
 
-**Until then:** `plan` reports and `up` refuses a rebuild on a Shared database with
-the preflight finding `cloud_unsupported`, before any lock, helper or swap exists.
-The integration test asserts the table, its rows and its catalog are unchanged.
+**Before implementation:** `plan` reported and `up` refused a rebuild on a Shared
+database with the preflight finding `cloud_unsupported`, before any lock, helper or
+swap existed. That refusal is gone; the undeclared-writers refusal replaces it.
 
 ## What the current engine protects
 
@@ -109,3 +109,61 @@ For a Shared database the engine inspects through cluster `default`: hosts, cata
 2. Plain, TTL-free `snap`/`stage` helpers everywhere, deleting `STOP MERGES`, plus the DRY-1410 re-run.
 3. A Cloud swap without forced flushes, with the async report as an observed lower bound.
 4. The required `writers_on_this_service_only=True` declaration plus grace period on Cloud, or another way to handle other-service writers.
+
+## Implementation and Cloud results
+
+Implemented on `dy/ch-migrate-1.0` (DRY-1445):
+
+| Commit | Change |
+|---|---|
+| `f704685` | Plain, TTL-free helpers; `STOP MERGES` deleted |
+| `e320f57` | The migration session gets its own single-connection pool |
+| `7409914` | Preflight filters and groups the writer log in the server |
+| `1dbe50f` | The Cloud protocol: tokens, no forced flush, declaration and grace |
+| `41b69ce` | Test attribution fixes found during acceptance |
+| `bb3772e` | Stranded-row check (below) |
+
+Two problems surfaced only on Cloud and were fixed before acceptance:
+
+- **The session pool.** Rebuild heartbeats shared clickhouse-connect's default pool with the migration session, so a second connection opened under it. Cloud routes each connection, not each session id, and the next request answered `SESSION_NOT_FOUND`.
+- **The writer log.** Preflight capped all inserts on the service at 10,001 rows before filtering to the table, and refused on a busy service.
+
+### Added after approval: rows stranded at the swap
+
+An insert that resolves the table just before `EXCHANGE` and builds its view chain just after it writes only to the old storage, and the copying view never sees it. This is not Cloud-specific. A probe (`spikes/2026-10-13-exchange-race/probe.py`) ran eight writers against one `EXCHANGE` per trial:
+
+| Server | Writers | Trials with loss | Rows lost and found only in the old storage |
+|---|---|---|---|
+| 26.3 | sync | 0 / 160 | 0 of about 60,000 |
+| 26.3 | async, `wait=1` | 3 / 160 | 24 |
+| Cloud 26.6 | async, `wait=1` | 1 / 40 | 1 |
+
+The same race is the likely cause of a CI failure in which the `async0` report missed one lost batch. That batch's flush logged `Ok`, not `FlushError`, and its rows were not in the live table; the rollback table was not inspected. In all 240 trials where the probe checked it (26.3 sync and `wait=1`, Cloud `wait=1`), `system.part_log` identified the stranded rows exactly: `NewPart` in the old UUID after the swap, from a query with no `NewPart` in the new UUID.
+
+Dan chose detect-and-stop (2026-10-13):
+
+- After the async report, `_stranded` runs that check.
+- Any stranded rows stop the run with their count and query IDs, and the run keeps its lock.
+- The operator copies the rows and releases the lock; the next run records the stop as acknowledged and finishes.
+- Preflight refuses a host without `system.part_log`.
+
+The guarantee is now: no acknowledged row is *silently* lost.
+
+### Acceptance (all at `bb3772e` unless noted)
+
+| Check | Result |
+|---|---|
+| Unit, Python 3.10–3.14 | 727 passed on each |
+| Docker `integration`, cluster included | 191 passed, 4 skipped (Cloud-only) |
+| DRY-1410 continuous writers on Docker, 5 variants × 5 runs | 25 / 25 |
+| Docker node-restart-during-copy (new) | passed |
+| Cloud `(integration and not cluster) or cloud` | 152 passed, 0 failed, 19 skipped |
+| Cloud continuous writers `sync`, `kill`, `async1`, `async0` | 4 / 4 (at `1dbe50f`; included in the full run) |
+| Cloud stranded-row stop and operator resume | passed |
+| Rebuild spike E without the flush | complete; rebuild-spike section C |
+
+The 19 Cloud skips are 17 tests that need `SYSTEM STOP MERGES` to hold a mutation, the Docker-only helper-merge test, and a test that changes `log_query_settings` in a profile.
+
+Remote CI on PR #14 at `bb3772e`: unit jobs passed. The cluster job failed once with `TABLE_IS_READONLY` (242) on a just-created replicated journal in `test_continuous_insert_replicated`, then passed on re-run. That job's `test_cluster_harness` restarts node 2 first; the readonly journal is on node 1, whose embedded Keeper never stopped, so the cause is open.
+
+An earlier `async0` failure mode, duplicates logged 6 ms after the window closed, was a test attribution error. It also occurred at `1d512b7`, in 2 of 20 runs; a third run there failed with the stranded-flush loss above. The test now treats an async insert as in flight from queueing to the end of its flush (`41b69ce`): 25 of 25 runs passed.
