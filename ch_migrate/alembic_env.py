@@ -11,6 +11,7 @@ from typing import Any
 import clickhouse_connect.cc_sqlalchemy.alembic  # noqa: F401 - registers official dialect
 from alembic import context
 from clickhouse_connect.cc_sqlalchemy.alembic.impl import ClickHouseImpl
+from clickhouse_connect.driver.httputil import get_pool_manager
 from dotenv import load_dotenv
 from sqlalchemy import URL, Column, MetaData, String, Table, create_engine, pool
 from sqlalchemy.sql.dml import Delete, Insert, Update
@@ -120,12 +121,21 @@ def _run_offline(env_config: dict[str, Any]) -> None:
 
 
 def _run_online(env_config: dict[str, Any]) -> None:
-    engine = create_engine(_url(env_config), poolclass=pool.NullPool)
+    # The session lives on whichever replica its connection reached: ClickHouse Cloud routes
+    # each TCP connection, not each session id. A pool of its own keeps the session on one
+    # connection; sharing the driver's default pool let other in-process clients (rebuild
+    # heartbeats) open a second connection under it. A dropped connection still fails
+    # closed through session_check.
+    session_pool = get_pool_manager(maxsize=1)
+    engine = create_engine(
+        _url(env_config), poolclass=pool.NullPool, connect_args={"pool_mgr": session_pool}
+    )
     try:
         with engine.connect() as connection:
             _run_connection(connection, env_config)
     finally:
         engine.dispose()
+        session_pool.clear()
 
 
 def _run_connection(connection, env_config: dict[str, Any]) -> None:

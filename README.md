@@ -44,6 +44,12 @@ statement's `SETTINGS` clause when the change should apply only to that query.
 seconds (default `1800`). If that session expires, the next request fails rather
 than silently recreating a session with default settings.
 
+On ClickHouse Cloud a session lives on one replica, and Cloud routes each TCP connection, not
+each session, to a replica. ch-migrate keeps a run on one dedicated connection. If that
+connection drops, for example after a migration pauses client-side for more than Cloud's
+10-second keep-alive, the run stops with `SESSION_NOT_FOUND` instead of continuing without
+your settings.
+
 ## Quick start
 
 Use a dedicated ClickHouse test server. The example uses local HTTP; replace the host and port with your server's address. For HTTPS, set `secure: true` and the HTTPS port (usually `8443`). Never run a trial migration against a shared or production database.
