@@ -177,6 +177,28 @@ def test_version_table_failure_on_other_replica_refuses_up(cluster_project, clic
     assert _failed_mutations(project, cluster.clients[2])
 
 
+def test_version_table_round_trip_restores_previous_head(project):
+    _assert_round_trip(project)
+
+
+def test_version_table_round_trip_restores_previous_head_on_replicas(cluster_project):
+    # ReplicatedMergeTree, like Cloud's SharedMergeTree, drops a re-inserted identical block.
+    _assert_round_trip(cluster_project)
+
+
+def _assert_round_trip(project):
+    """Down then up re-insert version rows written before; neither may be deduplicated away."""
+    _probe_revision(project, "aaaa", None)
+    _probe_revision(project, "bbbb", "aaaa")
+    for command, head in (("up", "bbbb"), ("down", "aaaa"), ("up", "bbbb"), ("down", "aaaa")):
+        result = project.run(command, "it")
+        assert result.exit_code == 0, result.output
+        assert _heads(project) == [head], command
+    replayed = project.run("up", "it")
+    assert replayed.exit_code == 0, replayed.output
+    assert _probe_counts(project) == [("aaaa", 1), ("bbbb", 3)]
+
+
 def _probe_revision(project, revision, parent):
     project.write_revision(
         revision,

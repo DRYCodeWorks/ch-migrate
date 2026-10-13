@@ -6,9 +6,16 @@ import ast
 from types import SimpleNamespace
 from uuid import uuid4
 
+from sqlalchemy import text
 from sqlalchemy.sql.dml import Delete, Insert, Update
 
-from ch_migrate.waiting_sql import mutation_sql, qualified_table, statement_digest
+from ch_migrate.waiting_sql import (
+    mutation_sql,
+    qualified_table,
+    query_settings,
+    sql_string,
+    statement_digest,
+)
 from ch_migrate.waiting_types import UnknownOutcome, WaitingError
 
 
@@ -95,19 +102,29 @@ class VersionWrites:
         self.owner.mutations.wait(step["receipt"], checkpoint)
 
 
+def write_unjournaled(construct, impl):
+    """Apply a version INSERT/UPDATE outside a tracked upgrade, such as a downgrade."""
+    for step in _version_steps(construct, impl):
+        sql = step["sql"]
+        if step["kind"] == "delete":
+            sql = query_settings(sql, {"mutations_sync": "2"})
+        impl._exec(text(sql))
+    return SimpleNamespace(rowcount=1)
+
+
 def _version_steps(construct, impl) -> list[dict]:
     if isinstance(construct, Insert):
         value = _version_value(construct)
-        sql = str(construct.compile(dialect=impl.dialect, compile_kwargs={"literal_binds": True}))
-        return [{"kind": "insert", "value": value, "sql": sql}]
+        return [
+            {"kind": "insert", "value": value, "sql": _insert_sql(impl._version_table_name, value)}
+        ]
     if isinstance(construct, Update):
         value = _version_value(construct)
-        literal = impl._compile_clause(next(iter(construct._values.values())))
         return [
             {
                 "kind": "insert",
                 "value": value,
-                "sql": f"INSERT INTO {impl._version_table_name} (version_num) VALUES ({literal})",
+                "sql": _insert_sql(impl._version_table_name, value),
             },
             {
                 "kind": "delete",
@@ -122,6 +139,17 @@ def _version_steps(construct, impl) -> list[dict]:
             }
         ]
     raise WaitingError("Unsupported version-table transition")
+
+
+def _insert_sql(table: str, value: str) -> str:
+    # Replicated and Shared MergeTree silently drop a block identical to an earlier insert
+    # (DRY-1447), so re-inserting a previous head after `down` left no version row at all.
+    # A token unique to this write keeps every intentional version row.
+    token = sql_string("chm_version_" + uuid4().hex)
+    return (
+        f"INSERT INTO {table} (version_num) SETTINGS insert_deduplication_token = {token}, "
+        f"async_insert = 0 VALUES ({sql_string(value)})"
+    )
 
 
 def _version_value(construct) -> str:
