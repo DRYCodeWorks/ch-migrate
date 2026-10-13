@@ -56,6 +56,7 @@ def inspect_rebuild(client: Any, request: RebuildRequest) -> RebuildAssessment:
     rate, writers = _writer_log(scope, request)
     findings.extend(_writer_findings(scope, request, writers))
     findings.extend(_dedup_findings(scope, request))
+    findings.extend(_part_log_findings(scope))
     return RebuildAssessment(
         tuple(findings),
         storage.bytes_on_disk,
@@ -117,6 +118,27 @@ def _cloud_findings(request: RebuildRequest) -> list[PreflightFinding]:
             "warning",
             "Declared that every writer uses this service; ch-migrate cannot verify that.",
             {"engine": request.source.engine},
+        )
+    ]
+
+
+def _part_log_findings(scope: _Scope) -> list[PreflightFinding]:
+    """After the swap, part_log is the only evidence of rows stranded in the old table."""
+    hosts = scope.rows(
+        "SELECT materialize(hostName()) AS host, countIf(database = 'system' AND name = 'part_log') "
+        f"FROM {scope.table('tables')} GROUP BY host"
+    )
+    missing = sorted(str(host) for host, present in hosts if not present)
+    if not missing:
+        return []
+    return [
+        PreflightFinding(
+            "part_log_unavailable",
+            "refusal",
+            "system.part_log is missing; the rebuild could not detect rows that reach only "
+            "the old table at the swap. Enable part_log, or run SYSTEM FLUSH LOGS if it is "
+            "configured but not yet created.",
+            {"hosts": missing},
         )
     ]
 

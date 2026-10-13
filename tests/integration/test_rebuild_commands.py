@@ -331,6 +331,50 @@ def test_rebuild_after_exchange_resumes_cleanup_only(project, clickhouse_server)
     assert _heads(project) == ["bbbb"]
 
 
+def test_rows_stranded_in_old_storage_stop_for_the_operator(project, clickhouse_server):
+    """A write that reaches only the old storage after the swap stops the run until released."""
+    before = _seed(project, 2000)
+    _revision(project)
+    db, rollback = project.database, "events__chm_old_bbbb"
+    insert = f"INSERT INTO {db}.{rollback} VALUES (9000000, '2026-02-02', 1, 'stranded')"
+    with _hold_command(project, clickhouse_server, "SELECT query_id, sum(rows) FROM") as gate:
+        blocked, release = gate
+        with _running(project) as (process, log):
+            # Cloud reaches the check only after its async-log reads settle (40 s seen).
+            assert blocked.wait(180), log.read_text()
+            # Stands in for an insert that resolved the old table just before EXCHANGE.
+            project.client.command(insert)
+            project.flush_logs()
+            release.set()
+            assert process.wait(timeout=90) != 0
+    assert "reached only" in log.read_text(), log.read_text()
+    assert _heads(project) == ["aaaa"] and _locks(project)
+    refused = project.run("up", "it", "--timeout", project.budget(5))
+    assert refused.exit_code != 0, refused.output
+    project.client.command(
+        f"INSERT INTO {db}.events SELECT * FROM {db}.{rollback} WHERE id = 9000000"
+    )
+    project.client.command(f"DROP TABLE {db}._chm_rebuild_lock_events SYNC")
+    resumed = project.run("up", "it", "--timeout", project.budget(30))
+    assert resumed.exit_code == 0, resumed.output
+    stranded = _rebuild_result(project)["stranded"]
+    assert stranded["rows"] == 1 and stranded["acknowledged"]
+    assert stranded["query_ids"] == [
+        project.client.command(
+            # part_log names the flush query when the server buffers the insert asynchronously.
+            f"SELECT any(query_id) FROM {project.query_log()} WHERE type = 'QueryFinish' "
+            "AND query_kind IN ('Insert', 'AsyncInsertFlush') "
+            "AND position(query, {table:String}) > 0",
+            parameters={"table": f"{db}.{rollback}"},
+        )
+    ]
+    assert _checksum(project)[0] == before[0] + 1
+    assert (
+        project.client.command(f"SELECT payload FROM {db}.events WHERE id = 9000000") == "stranded"
+    )
+    assert _heads(project) == ["bbbb"]
+
+
 def test_rebuild_async0_opt_in_reports_old_uuid_flush_errors(project, clickhouse_server):
     before = _seed(project, 20000)
     old_uuid = _uuid(project)

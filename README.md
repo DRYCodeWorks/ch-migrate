@@ -469,6 +469,19 @@ migration file. There is no command-line bypass. Writers that wait for
 acknowledgement should retry error **741** (`TABLE_UUID_MISMATCH`) and other
 transient rebuild errors. Writers must not ignore materialized-view errors.
 
+**One race ClickHouse leaves open is detected, not prevented.** An insert that
+resolves the table just before `EXCHANGE` and builds its materialized-view chain
+just after it writes only to the old storage, which becomes the rollback table;
+the copying view never sees it. In synthetic trials with eight busy writers, it
+hit async inserts, including `wait_for_async_insert = 1`, in about 2% of swaps.
+Synchronous inserts were never hit, but that does not prove they are immune.
+After the swap, `rebuild_table`
+reads `system.part_log` for parts created in the old storage by queries that
+wrote nothing to the new table. If it finds any, the run stops with the row
+count and query IDs and keeps its lock; see
+[Recover rows stranded at the swap](#recover-rows-stranded-at-the-swap).
+Preflight refuses when a host has no `system.part_log`.
+
 **On ClickHouse Cloud** the rebuild runs too, with three differences:
 
 - **Declare your writers.** Cloud's compute-compute separation hides other services' inserts
@@ -605,6 +618,20 @@ Do not delete a lock merely because it looks stale.
 4. Run `ch-migrate up ENV` again. It acquires a new lock and resumes the recorded
    work, killing any recorded orphan copy before resetting the staging partition.
 
+### Recover rows stranded at the swap
+
+A stop that names rows reaching only `<table>__chm_old_<revision>` happens after the
+swap: the live table is already the rebuilt one. The query IDs are those in
+`system.part_log`. For an asynchronous insert this is the flush query; find the
+writers' own query IDs through `flush_query_id` in `system.asynchronous_insert_log`.
+
+1. Copy the stranded rows into the live table, for example by selecting them from
+   the rollback table by key and excluding keys the live table already has.
+2. Release `_chm_rebuild_lock_<table>` as in step 3 above.
+3. Run `ch-migrate up ENV` again. The run treats the release as your
+   acknowledgement, finishes, and records `"stranded"` with `"acknowledged": true`
+   in the completion report.
+
 ### Retain and remove the rollback table
 
 After the all-replica swap and copying-view barrier, the original table is retained
@@ -619,7 +646,8 @@ table and completing the retention window, explicitly DROP the retained table,
 using the appropriate replicated/cluster scope.
 
 The completion report includes the duplicate window, old/new UUIDs, rollback
-table, and old-UUID async rejection count, bytes, and query IDs. On ClickHouse 26.3,
+table, old-UUID async rejection count, bytes, and query IDs, and the stranded-row
+check (`"stranded"`: rows, query IDs, whether an operator acknowledged them). On ClickHouse 26.3,
 the old UUID is recorded in the error-741 exception text—not a `table_uuid` log
 column. Reporting drains the old storage UUID through the retained rollback
 table before flushing logs and applying flush-time bounds. Flushing only the

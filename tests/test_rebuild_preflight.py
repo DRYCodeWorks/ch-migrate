@@ -27,6 +27,8 @@ class _Client:
         self.queries.append(sql)
         if "uniqExact(shard_num)" in sql:
             return _Result([(self.shards,)])
+        if "name = 'part_log'" in sql:
+            return _Result([("node", 1)])
         if "engine = 'Distributed'" in sql:
             return _Result([])
         if "system.mutations" in sql:
@@ -163,6 +165,21 @@ def test_cloud_rebuild_requires_declared_single_service_writers():
         RebuildRequest("db", _table(engine="ReplicatedReplacingMergeTree"), _table("new")),
     )
     assert not {"cloud_writers_undeclared", "cloud_writers_declared"} & _codes(self_hosted).keys()
+
+
+def test_host_without_part_log_refuses_because_stranded_rows_would_go_unseen():
+    class NoPartLog(_Client):
+        def query(self, sql):
+            if "name = 'part_log'" in sql:
+                return _Result([("node", 1), ("other", 0)])
+            return super().query(sql)
+
+    result = inspect_rebuild(
+        NoPartLog(writer_settings={"async_insert": "0", "wait_for_async_insert": "1"}),
+        RebuildRequest("db", _table(), _table("new")),
+    )
+    refusal = _codes(result)["part_log_unavailable"]
+    assert refusal.severity == "refusal" and refusal.details == {"hosts": ["other"]}
 
 
 def test_query_failure_is_not_silently_converted_to_empty_evidence():

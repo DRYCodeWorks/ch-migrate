@@ -9,6 +9,7 @@ from dataclasses import dataclass, field, replace
 from uuid import uuid4
 
 import pytest
+import yaml
 from test_rebuild_commands import (
     _active_copy,
     _baseline,
@@ -165,7 +166,25 @@ def _rebuild_with_writer(project, writer, gate):
             _until(lambda: _gate_queued(project, writer), "No old-UUID async batch queued")
             release.set()
         if writer.mode != "kill":
-            assert process.wait(timeout=180) == 0, log.read_text()
+            _finish(project, process, log)
+
+
+def _finish(project, process, log):
+    """Wait for the rebuild; if a swap-race insert stranded rows, act as the operator."""
+    if process.wait(timeout=180) == 0:
+        return
+    assert "StrandedRows" in log.read_text(), log.read_text()
+    db = project.database
+    project.client.command(
+        f"INSERT INTO {db}.events SELECT * FROM {db}.events__chm_old_bbbb "
+        f"WHERE id >= {_START_ID} AND id NOT IN (SELECT id FROM {db}.events)"
+    )
+    config = yaml.safe_load((project.root / "config.yaml").read_text())
+    cluster = config["environments"]["it"].get("cluster")
+    scope = f" ON CLUSTER {cluster}" if cluster else ""
+    project.client.command(f"DROP TABLE {db}._chm_rebuild_lock_events{scope} SYNC")
+    resumed = project.run("up", "it", "--timeout", project.budget(60))
+    assert resumed.exit_code == 0, resumed.output
 
 
 def _interrupt_and_resume(project, process):
@@ -183,7 +202,7 @@ def _interrupt_and_resume(project, process):
     assert _uuid(project) == source_uuid and _lock_owner(project) == owner
     _operator_release(project, process, owner)
     with _running(project) as (resumed, log):
-        assert resumed.wait(timeout=180) == 0, log.read_text()
+        _finish(project, resumed, log)
     project.flush_logs()
     completed = project.client.command(
         f"SELECT count() FROM {project.query_log()} WHERE type = 'QueryFinish' AND is_initial_query "

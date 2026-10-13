@@ -25,6 +25,10 @@ _STALE_SECONDS = 8
 _MAX_COPY_MEMORY = 1_073_741_824
 
 
+class StrandedRows(WaitingError):
+    """Acknowledged rows reached only the rollback table; the operator must copy them."""
+
+
 def execute_rebuild(runtime) -> dict:
     """Run a rebuild; a failed owner retains its lock for operator reconciliation."""
     ctx = _Context(runtime)
@@ -450,6 +454,7 @@ def _run_locked(ctx, lock):
     _cleanup(ctx, lock)
     _reload_owned_dictionaries(ctx)
     _async_report(ctx)
+    _stranded(ctx)
     result = _result(ctx)
     ctx.state["result"] = result
     ctx.save()
@@ -1038,6 +1043,58 @@ def _flush_async(ctx, table=None):
     ctx.command(f"SYSTEM FLUSH ASYNC INSERT QUEUE{cluster} {ctx.qualified(table or ctx.table)}")
 
 
+def _stranded(ctx):
+    """Find inserts that wrote only the old storage at the swap, and stop for the operator.
+
+    An insert that resolves the table before EXCHANGE and builds its view chain after it
+    skips the copying view; its rows exist only in the rollback table.
+    """
+    state = ctx.state
+    if "stranded" in state:
+        if state["stranded"]["rows"] and not state["stranded"]["acknowledged"]:
+            # A stop retains the lock, so only the operator's release lets a run get here.
+            state["stranded"]["acknowledged"] = True
+            ctx.save()
+        return
+    ctx.command(_flush_logs_sql(ctx))
+    rows = _stranded_parts(ctx)
+    state["stranded"] = {
+        "rows": sum(int(row[1]) for row in rows),
+        "query_ids": sorted({str(row[0]) for row in rows}),
+        "acknowledged": False,
+    }
+    ctx.save()
+    if state["stranded"]["rows"]:
+        raise StrandedRows(
+            f"{state['stranded']['rows']} acknowledged rows from inserts "
+            f"{state['stranded']['query_ids']} reached only "
+            f"{ctx.qualified(state['rollback_table'])}. Copy them into "
+            f"{ctx.qualified(ctx.table)}, then release the rebuild lock and run up again."
+        )
+
+
+def _stranded_parts(ctx):
+    """New old-storage parts since the swap from queries that wrote nothing to the new table."""
+    state = ctx.state
+    return ctx.rows(
+        f"SELECT query_id, sum(rows) FROM {ctx.system('part_log')} "
+        "WHERE event_type = 'NewPart' AND has({old:Array(String)}, toString(table_uuid)) "
+        "AND event_time_microseconds >= toDateTime64({start:String}, 6) "
+        f"AND query_id NOT IN (SELECT query_id FROM {ctx.system('part_log')} "
+        "WHERE event_type = 'NewPart' AND has({new:Array(String)}, toString(table_uuid))) "
+        "GROUP BY query_id",
+        {
+            "old": _uuids(state["old_uuids"]),
+            "new": _uuids(state["helpers"]["new"]),
+            "start": state["swap_intent"],
+        },
+    )
+
+
+def _uuids(value):
+    return sorted(set(value.values()) if isinstance(value, dict) else {value})
+
+
 def _result(ctx):
     state = ctx.state
     old = state["old_uuids"]
@@ -1047,6 +1104,7 @@ def _result(ctx):
         "rollback_table": state["rollback_table"],
         "duplicate_window": {"start": state["dual_start"], "end": state["snapshot"]["end"]},
         "async_flush_errors": state["async_flush_errors"],
+        "stranded": state["stranded"],
     }
 
 
