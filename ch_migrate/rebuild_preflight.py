@@ -158,7 +158,9 @@ def _definition_findings(request: RebuildRequest) -> list[PreflightFinding]:
     ):
         findings.append(
             PreflightFinding(
-                "partition_key_change", "refusal", "Rebuild 1.0 cannot change the partition key."
+                "partition_key_change",
+                "refusal",
+                "rebuild_table cannot change the partition key.",
             )
         )
     for source, destination in request.transfer_pairs:

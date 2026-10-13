@@ -15,7 +15,7 @@ transactional DDL.
 **Install:** `uv tool install ch-migrate-cli` or `pip install ch-migrate-cli`.
 The command is `ch-migrate`; the import package is `ch_migrate`.
 
-From 0.6, Python 3.10+ is required; 0.5.x is the last line for 3.9. Existing
+From 0.9, Python 3.10+ is required; 0.5.x is the last line for 3.9. Existing
 projects must run `ch-migrate upgrade-env` to install the version-2 shim.
 The old environment is backed up, and repeating the command preserves that backup.
 It also records current script heads as `lint.gate_baseline`, preserving YAML

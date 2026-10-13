@@ -4,6 +4,16 @@ Changes are recorded in [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 
 ## [Unreleased]
 
+## [0.9.0]
+
+0.9 brings everything planned for 1.0. It stays below 1.0 until the stability promises (frozen JSON output, the `rebuild_table` guarantee) have run on real workloads. A normal `pip install -U` reaches it from 0.5.x, so read this before upgrading:
+
+1. **Python 3.10 or later.** On Python 3.9, pip keeps installing 0.5.x.
+2. **Run `ch-migrate upgrade-env` in each project.** `up`, `down`, `status` and `history` refuse the old environment until you do.
+3. **Check `ch-migrate lint ENV`.** The idempotency gate can now block `up` for revisions written after the `upgrade-env` baseline.
+
+To stay on 0.5.x until then, pin `ch-migrate-cli==0.5.1`.
+
 ### Changed
 
 - **Python 3.10 or later is required.** 0.5.x is the last line that supports Python 3.9.
@@ -47,6 +57,10 @@ Changes are recorded in [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 - Deployment-aware version-table engines: replicated state for self-hosted replicated databases and configured clusters, preserving existing tables without automatic conversion.
 - Replica read barriers and failed version-mutation checks, plus live status warnings and an offline upgrade advisory for manual conversion.
 
+### Fixed
+
+- `ch-migrate --version` works in an editable install (`pip install -e`, `uv sync`). There it failed with `RuntimeError: 'ch_migrate' is not installed`, because click could not map the `ch_migrate` package to the `ch-migrate-cli` distribution. Installs from PyPI were not affected.
+
 ## [0.5.1]
 
 ### Fixed
@@ -56,7 +70,7 @@ Changes are recorded in [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 
 ## [0.5.0]
 
-0.5.x is the last release line that supports Python 3.9. 0.6 requires Python 3.10 or later, because it moves to the official clickhouse-connect dialect.
+0.5.x is the last release line that supports Python 3.9. 0.9 requires Python 3.10 or later, because it moves to the official clickhouse-connect dialect.
 
 **Renamed.** The PyPI package is now `ch-migrate-cli` (install with `uv tool install ch-migrate-cli`) and the import package is `ch_migrate`. Releases up to 0.4.1 were `clickhouse-alembic` / `clickhouse_alembic`; Alembic is how `ch-migrate` stores revisions, not what it is. The command is still `ch-migrate`. Uninstall `clickhouse-alembic` before installing `ch-migrate-cli`, because both install the `ch-migrate` command. Existing projects keep working: `clickhouse_alembic` remains as an alias that warns where it's imported and is removed in 1.0. To move over, replace `clickhouse_alembic` with `ch_migrate` in your migration files and run `ch-migrate upgrade-env`.
 
@@ -91,4 +105,4 @@ Changes are recorded in [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 
 ### Known issues
 
-- If the version-table update is delayed and `up` is run again before it applies, a migration can run twice. Fixed in 0.6; see Q2 in [the dialect spike](docs/design/2026-10-02-dialect-spike.md#q2-the-version-table).
+- If the version-table update is delayed and `up` is run again before it applies, a migration can run twice. Fixed in 0.9; see Q2 in [the dialect spike](docs/design/2026-10-02-dialect-spike.md#q2-the-version-table).

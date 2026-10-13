@@ -23,7 +23,9 @@ This README describes the source checkout, which may be ahead of PyPI. To try an
 
 ## Upgrade from 0.x
 
-0.6 requires Python 3.10+; 0.5.x is the last line supporting Python 3.9.
+0.9 requires Python 3.10+; 0.5.x is the last line supporting Python 3.9.
+A loose requirement such as `ch-migrate-cli` or `~=0.5` upgrades to 0.9; pin
+`ch-migrate-cli==0.5.1` until each project has run the command below.
 After upgrading the package, run this in each migration project:
 
 ```bash
