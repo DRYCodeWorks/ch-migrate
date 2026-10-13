@@ -6,6 +6,11 @@ Changes are recorded in [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 
 ### Changed
 
+- **Python 3.10 or later is required.** 0.5.x is the last line that supports Python 3.9.
+- Migrations run on the official clickhouse-connect dialect (`clickhousedb://`) in one checked HTTP session per run, so a standalone `SET` applies to later statements. Run `ch-migrate upgrade-env` after upgrading; old environments are refused before connecting.
+- The idempotency gate can block `up` on projects upgrading from 0.5. `upgrade-env` sets the baseline, so only revisions written after it are gated.
+- `up` now blocks until the mutations and `ON CLUSTER` DDL it starts have finished, and `--timeout` bounds that wait.
+- The version table no longer lets an interrupted run re-run a migration. 0.5.x and earlier can, if `up` runs again before a delayed version update applies.
 - `lint ENV` analyzes only pending revisions after the gate baseline; static `lint` checks every revision after it.
 - `up` refuses idempotency gate errors before applying migrations; other lint findings are nonblocking warnings.
 - `upgrade-env` records current script heads as a comment-preserving `lint.gate_baseline`.
