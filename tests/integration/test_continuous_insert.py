@@ -173,7 +173,7 @@ def _finish(project, process, log):
     """Wait for the rebuild; if a swap-race insert stranded rows, act as the operator."""
     if process.wait(timeout=180) == 0:
         return
-    assert "StrandedRows" in log.read_text(), log.read_text()
+    assert "reached only" in log.read_text(), log.read_text()
     db = project.database
     project.client.command(
         f"INSERT INTO {db}.events SELECT * FROM {db}.events__chm_old_bbbb "
