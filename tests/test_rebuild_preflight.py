@@ -145,18 +145,24 @@ def test_partition_key_and_mutation_and_shards_refuse():
     )
 
 
-def test_shared_source_refuses_on_cloud_and_self_hosted_does_not():
+def test_cloud_rebuild_requires_declared_single_service_writers():
     writer = {"async_insert": "0", "wait_for_async_insert": "1"}
     shared = _table(engine="SharedReplacingMergeTree")
-    cloud = inspect_rebuild(
+    undeclared = inspect_rebuild(
         _Client(writer_settings=writer), RebuildRequest("db", shared, _table("new"))
     )
-    assert _codes(cloud)["cloud_unsupported"].severity == "refusal"
+    assert _codes(undeclared)["cloud_writers_undeclared"].severity == "refusal"
+    declared = inspect_rebuild(
+        _Client(writer_settings=writer),
+        RebuildRequest("db", shared, _table("new"), writers_on_this_service_only=True),
+    )
+    assert "cloud_writers_undeclared" not in _codes(declared)
+    assert _codes(declared)["cloud_writers_declared"].severity == "warning"
     self_hosted = inspect_rebuild(
         _Client(writer_settings=writer),
         RebuildRequest("db", _table(engine="ReplicatedReplacingMergeTree"), _table("new")),
     )
-    assert "cloud_unsupported" not in _codes(self_hosted)
+    assert not {"cloud_writers_undeclared", "cloud_writers_declared"} & _codes(self_hosted).keys()
 
 
 def test_query_failure_is_not_silently_converted_to_empty_evidence():

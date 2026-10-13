@@ -6,7 +6,7 @@ import re
 from dataclasses import dataclass
 
 from ch_migrate.introspect import ColumnDefinition, TableDefinition
-from ch_migrate.rebuild_types import RebuildDefinition, RebuildOptions
+from ch_migrate.rebuild_types import HelperIdentity, RebuildDefinition, RebuildOptions
 
 _ENGINE = re.compile(
     r"(?:(?:Replicated|Shared))?(?:Replacing|Summing|Aggregating|Collapsing|VersionedCollapsing|Graphite)?MergeTree\Z",
@@ -61,19 +61,24 @@ def build_definition(
         revision=options.revision,
         generation=options.generation,
         allow_unacknowledged_async_loss=options.allow_unacknowledged_async_loss,
+        writers_on_this_service_only=options.writers_on_this_service_only,
+        grace_seconds=options.grace_seconds,
     )
 
 
-def helper_ddl(definition: RebuildDefinition, role: str, uuid: str) -> str:
-    """Create a same-database physical helper with its own UUID and Keeper path.
+def helper_ddl(definition: RebuildDefinition, role: str, identity: HelperIdentity) -> str:
+    """Create a same-database physical helper that the rebuild can prove is its own.
 
+    Self-hosted helpers get a chosen UUID and their own Keeper path. On ClickHouse Cloud,
+    which rejects chosen UUIDs, they carry the owner token as their COMMENT instead.
     `snap` and `stage` are plain MergeTree without TTL, in the source's replication
     family: their merges keep every row, so snapshot counts hold without
     SYSTEM STOP MERGES, which a server restart silently undoes.
     """
     if role not in {"new", "snap", "stage"}:
         raise ValueError(f"unknown rebuild helper role: {role}")
-    _validate_uuid(uuid)
+    if identity.token is None:
+        _validate_uuid(identity.uuid)
     schema = definition.source if role == "snap" else definition.target
     parsed = _parse(schema.raw_ddl, definition.database, definition.table)
     name = f"{definition.table}__chm_{role}"
@@ -83,14 +88,11 @@ def helper_ddl(definition: RebuildDefinition, role: str, uuid: str) -> str:
             parsed.tokens[parsed.name_at + 2].end,
             f"{_quote(definition.database)}.{_quote(name)}",
         ),
-        (parsed.engine_at, parsed.engine_end, _helper_engine(parsed, role, uuid)),
+        (parsed.engine_at, parsed.engine_end, _helper_engine(parsed, role, identity)),
+        *_identity_replacements(parsed, identity),
     ]
     if role in _PLAIN_ROLES:
         replacements.extend((start, end, "") for start, end in _ttl_spans(parsed))
-    if parsed.uuid_span:
-        replacements.append((*parsed.uuid_span, f"UUID '{uuid}'"))
-    else:
-        replacements.append((parsed.schema_at, parsed.schema_at, f"UUID '{uuid}' "))
     if parsed.cluster_span:
         replacements.append((*parsed.cluster_span, ""))
     sql = _replace(parsed.sql, replacements)
@@ -99,17 +101,32 @@ def helper_ddl(definition: RebuildDefinition, role: str, uuid: str) -> str:
     return sql
 
 
-def dual_ddl(definition: RebuildDefinition, uuid: str) -> str:
-    """Mirror incoming source inserts through an explicitly owned view UUID."""
-    _validate_uuid(uuid)
+def dual_ddl(definition: RebuildDefinition, identity: HelperIdentity) -> str:
+    """Mirror incoming source inserts through a view the rebuild can prove is its own."""
+    if identity.token is None:
+        _validate_uuid(identity.uuid)
+        marker, comment = f" UUID '{identity.uuid}'", ""
+    else:
+        # COMMENT before AS: after the SELECT it would parse as a table alias.
+        marker, comment = "", f" COMMENT {_string_literal(identity.token)}"
     db = _quote(definition.database)
     table = _quote(definition.table)
     cluster = f" ON CLUSTER {_quote(definition.cluster)}" if definition.cluster else ""
     return (
         f"CREATE MATERIALIZED VIEW {db}.{_quote(definition.table + '__chm_dual')}"
-        f" UUID '{uuid}'{cluster} TO {db}.{_quote(definition.table + '__chm_new')} "
+        f"{marker}{cluster} TO {db}.{_quote(definition.table + '__chm_new')}{comment} "
         f"AS SELECT {definition.projection} FROM {db}.{table}"
     )
+
+
+def target_comment(definition: RebuildDefinition) -> tuple[str, str]:
+    """The replacement's own COMMENT, as an ALTER for `new` and as the expected value."""
+    parsed = _parse(definition.target.raw_ddl, definition.database, definition.table)
+    literal = parsed.clauses.get("COMMENT", "''")
+    if not _string(literal):
+        raise ValueError("target COMMENT must be a string literal")
+    name = f"{_quote(definition.database)}.{_quote(definition.table + '__chm_new')}"
+    return f"ALTER TABLE {name} MODIFY COMMENT {literal}", _unquote(literal)
 
 
 @dataclass(frozen=True)
@@ -401,15 +418,19 @@ def _engine(
     raise ValueError("missing ENGINE clause")
 
 
-def _helper_engine(parsed: _DDL, role: str, uuid: str) -> str:
+def _helper_engine(parsed: _DDL, role: str, identity: HelperIdentity) -> str:
     name = parsed.engine_name
     args = parsed.engine_args or ()
-    if name.lower().startswith(("replicated", "shared")):
-        keeper, params = _keeper_arguments(parsed, role, uuid)
+    prefix = re.match(r"(?:replicated|shared)?", name, re.I).group(0)
+    if identity.token is not None:
+        # Cloud chooses Shared storage and Keeper paths itself and rejects explicit ones.
+        keeper, params = (), args[2:] if prefix and _keeper_given(args) else args
+        name, prefix = name[len(prefix) :], ""
+    elif prefix:
+        keeper, params = _keeper_arguments(parsed, role, identity.uuid)
     else:
         keeper, params = (), args
     if role in _PLAIN_ROLES:
-        prefix = re.match(r"(?:replicated|shared)?", name, re.I).group(0)
         name, params = prefix + "MergeTree", ()
     args = (*keeper, *params)
     return (
@@ -417,6 +438,25 @@ def _helper_engine(parsed: _DDL, role: str, uuid: str) -> str:
         if args or parsed.engine_args is not None
         else f"ENGINE = {name}"
     )
+
+
+def _identity_replacements(parsed: _DDL, identity: HelperIdentity) -> list[tuple[int, int, str]]:
+    """A chosen UUID clause, or on Cloud no UUID and the owner token as the table COMMENT."""
+    if identity.token is None:
+        if parsed.uuid_span:
+            return [(*parsed.uuid_span, f"UUID '{identity.uuid}'")]
+        return [(parsed.schema_at, parsed.schema_at, f"UUID '{identity.uuid}' ")]
+    removed = [(*parsed.uuid_span, "")] if parsed.uuid_span else []
+    comment = f"COMMENT {_string_literal(identity.token)}"
+    closing = _closing(parsed.tokens, _schema_opening(parsed))
+    clauses = _keyword_spans(parsed.tokens, (closing + 1, len(parsed.tokens)), _CLAUSES)
+    if "COMMENT" in clauses:
+        return removed + [(*clauses["COMMENT"], comment)]
+    return removed + [(len(parsed.sql), len(parsed.sql), " " + comment)]
+
+
+def _keeper_given(args: tuple[str, ...]) -> bool:
+    return len(args) >= 2 and _string(args[0]) and _string(args[1])
 
 
 def _keeper_arguments(
@@ -446,33 +486,37 @@ def _keeper_arguments(
 def _ttl_spans(parsed: _DDL) -> list[tuple[int, int]]:
     """Every table and column TTL, which a plain helper drops so merges keep every row."""
     tokens = parsed.tokens
-    opening = next(i for i, token in enumerate(tokens) if token.start == parsed.schema_at)
+    opening = _schema_opening(parsed)
     closing = _closing(tokens, opening)
-    spans = []
-    for first, last in _split(tokens, opening + 1, closing):
-        if _upper(tokens[first]) not in _COLUMN_EXTRAS:
-            spans.extend(_ttl_in(tokens, (first + 1, last), _COLUMN_MODIFIERS))
-    spans.extend(_ttl_in(tokens, (closing + 1, len(tokens)), _CLAUSES))
-    return spans
+    groups = [
+        _keyword_spans(tokens, (first + 1, last), _COLUMN_MODIFIERS)
+        for first, last in _split(tokens, opening + 1, closing)
+        if _upper(tokens[first]) not in _COLUMN_EXTRAS
+    ]
+    groups.append(_keyword_spans(tokens, (closing + 1, len(tokens)), _CLAUSES))
+    return [group["TTL"] for group in groups if "TTL" in group]
 
 
-def _ttl_in(
-    tokens: tuple[_Token, ...], bounds: tuple[int, int], stops: set[str]
-) -> list[tuple[int, int]]:
-    """The span from a depth-0 TTL keyword to the next depth-0 stop word."""
-    depth, start = 0, None
+def _schema_opening(parsed: _DDL) -> int:
+    return next(i for i, token in enumerate(parsed.tokens) if token.start == parsed.schema_at)
+
+
+def _keyword_spans(
+    tokens: tuple[_Token, ...], bounds: tuple[int, int], keywords: set[str]
+) -> dict[str, tuple[int, int]]:
+    """Each depth-0 keyword's span, up to the next depth-0 keyword or the bounds' end."""
+    starts, depth = [], 0
     for index in range(*bounds):
         token = tokens[index]
         depth += token.text in ("(", "[", "{")
         depth -= token.text in (")", "]", "}")
-        word = _upper(token)
-        if depth or word not in stops or not _clause_start(tokens, index):
-            continue
-        if start is not None:
-            return [(tokens[start].start, tokens[index - 1].end)]
-        if word == "TTL":
-            start = index
-    return [] if start is None else [(tokens[start].start, tokens[bounds[1] - 1].end)]
+        if not depth and _upper(token) in keywords and _clause_start(tokens, index):
+            starts.append(index)
+    ends = [index - 1 for index in starts[1:]] + [bounds[1] - 1]
+    return {
+        _upper(tokens[start]): (tokens[start].start, tokens[end].end)
+        for start, end in zip(starts, ends)
+    }
 
 
 def _insert_cluster(sql: str, cluster: str) -> str:
@@ -564,6 +608,10 @@ def _string(text: str) -> bool:
 
 def _unquote(text: str) -> str:
     return text[1:-1].replace("\\'", "'").replace("''", "'")
+
+
+def _string_literal(value: str) -> str:
+    return "'" + value.replace("\\", "\\\\").replace("'", "\\'") + "'"
 
 
 def _quote(identifier: str) -> str:

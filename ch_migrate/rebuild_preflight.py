@@ -23,6 +23,7 @@ class RebuildRequest:
     cluster: str | None = None
     allow_unacknowledged_async_loss: bool = False
     transfer_pairs: tuple[tuple[TableDefinition, TableDefinition], ...] = ()
+    writers_on_this_service_only: bool = False
 
 
 @dataclass(frozen=True)
@@ -95,16 +96,26 @@ class _Scope:
 
 
 def _cloud_findings(request: RebuildRequest) -> list[PreflightFinding]:
-    # Shared* engines exist only in ClickHouse Cloud's Shared databases (DRY-1445).
+    # Shared* engines exist only in ClickHouse Cloud's Shared databases.
     if not request.source.engine.startswith("Shared"):
         return []
+    if not request.writers_on_this_service_only:
+        return [
+            PreflightFinding(
+                "cloud_writers_undeclared",
+                "refusal",
+                "On ClickHouse Cloud, writers on another compute service are invisible to this "
+                "one, and an insert of theirs could be missing from the rebuilt table. Once every "
+                "writer to this table uses this service, declare writers_on_this_service_only=True "
+                "in the migration.",
+                {"engine": request.source.engine},
+            )
+        ]
     return [
         PreflightFinding(
-            "cloud_unsupported",
-            "refusal",
-            "Rebuild does not run on ClickHouse Cloud yet: Cloud refuses explicit table UUIDs, "
-            "SYSTEM STOP MERGES and SYSTEM FLUSH ASYNC INSERT QUEUE, which the guarded rebuild "
-            "needs for crash-safe ownership and the swap. Nothing was changed.",
+            "cloud_writers_declared",
+            "warning",
+            "Declared that every writer uses this service; ch-migrate cannot verify that.",
             {"engine": request.source.engine},
         )
     ]

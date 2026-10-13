@@ -1,4 +1,4 @@
-"""Rebuild acceptance against only the integration fixtures' owned ClickHouse servers."""
+"""Rebuild acceptance on the fixtures' owned servers and, where portable, ClickHouse Cloud."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ import json
 import os
 import secrets
 import signal
+import ssl
 import subprocess
 import sys
 import threading
@@ -17,6 +18,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
 from uuid import uuid4
 
+import certifi
 import pytest
 import yaml
 
@@ -30,8 +32,7 @@ def owned_project(request):
     return request.getfixturevalue("project")
 
 
-def test_rebuild_sorting_key_preserves_rows_and_rollback(owned_project):
-    project = owned_project
+def test_rebuild_sorting_key_preserves_rows_and_rollback(project):
     before = _seed(project, 12000)
     original_uuid = _uuid(project)
     _revision(project)
@@ -50,7 +51,14 @@ def test_rebuild_sorting_key_preserves_rows_and_rollback(owned_project):
     assert _uuid(project) in result["new_uuids"].values()
     assert _uuid(project) != original_uuid
     assert result["duplicate_window"]["start"] <= result["duplicate_window"]["end"]
-    assert set(result["async_flush_errors"]) == {"count", "bytes", "query_ids"}
+    assert set(result["async_flush_errors"]) == {
+        "count",
+        "bytes",
+        "query_ids",
+        "complete",
+        "replicas",
+    }
+    assert result["async_flush_errors"]["complete"] is not project.cloud
     assert _heads(project) == ["bbbb"]
     rerun = project.run("up", "it")
     assert rerun.exit_code == 0, rerun.output
@@ -61,8 +69,7 @@ def test_rebuild_sorting_key_preserves_rows_and_rollback(owned_project):
     assert _checksum(project) == before
 
 
-def test_rebuild_sigkill_requires_operator_release_then_resumes(owned_project):
-    project = owned_project
+def test_rebuild_sigkill_requires_operator_release_then_resumes(project):
     before = _seed(project, 120000, first_partition_rows=200)
     source_uuid = _uuid(project)
     _revision(project, select=_slow_projection())
@@ -90,9 +97,9 @@ def test_rebuild_sigkill_requires_operator_release_then_resumes(owned_project):
     assert not _locks(project)
     assert _checksum(project) == before
     assert _partition_rows(project, "events", first_partition) == 200
-    project.client.command("SYSTEM FLUSH LOGS")
+    project.flush_logs()
     completed = project.client.command(
-        "SELECT count() FROM system.query_log WHERE type = 'QueryFinish' "
+        f"SELECT count() FROM {project.query_log()} WHERE type = 'QueryFinish' AND is_initial_query "
         "AND startsWith(query_id, 'chm-rebuild-') AND endsWith(query_id, {part:String}) "
         "AND position(query, {db:String}) > 0",
         parameters={"part": first_partition, "db": project.database},
@@ -100,8 +107,7 @@ def test_rebuild_sigkill_requires_operator_release_then_resumes(owned_project):
     assert completed == 1, "Resume must not recopy an already moved partition"
 
 
-def test_rebuild_stale_live_owner_cannot_be_supplanted_before_exchange(owned_project):
-    project = owned_project
+def test_rebuild_stale_live_owner_cannot_be_supplanted_before_exchange(project):
     before = _seed(project, 120000)
     original_uuid = _uuid(project)
     _revision(project, select=_slow_projection())
@@ -122,8 +128,7 @@ def test_rebuild_stale_live_owner_cannot_be_supplanted_before_exchange(owned_pro
     assert not _locks(project)
 
 
-def test_rebuild_concurrent_up_refuses_second_owner(owned_project):
-    project = owned_project
+def test_rebuild_concurrent_up_refuses_second_owner(project):
     before = _seed(project, 80000)
     _revision(project, select=_slow_projection())
     with _running(project) as (first, log):
@@ -138,8 +143,7 @@ def test_rebuild_concurrent_up_refuses_second_owner(owned_project):
 
 
 @pytest.mark.parametrize("case", ["distributed", "partition", "mutation", "engine", "async0"])
-def test_rebuild_preflight_refuses_without_helpers(owned_project, case):
-    project = owned_project
+def test_rebuild_preflight_refuses_without_helpers(project, case):
     _seed(project, 10000)
     target = _target(project)
     if case == "distributed":
@@ -155,7 +159,7 @@ def test_rebuild_preflight_refuses_without_helpers(owned_project, case):
     elif case == "partition":
         target = target.replace("PARTITION BY toYYYYMM(ts)", "PARTITION BY toYYYYMM(ts) + 1")
     elif case == "mutation":
-        project.client.command(f"SYSTEM STOP MERGES {project.database}.events")
+        project.stop_merges(f"{project.database}.events")
         project.client.command(
             f"ALTER TABLE {project.database}.events UPDATE k = k + 1 WHERE id = 1"
         )
@@ -176,7 +180,7 @@ def test_rebuild_preflight_refuses_without_helpers(owned_project, case):
         if case == "mutation":
             project.client.command(f"SYSTEM START MERGES {project.database}.events")
         if case == "async0":
-            project.client.command(f"SYSTEM FLUSH ASYNC INSERT QUEUE {project.database}.events")
+            project.drain_async_queue("events")
 
 
 def test_rebuild_replicated_database_updates_both_replicas(
@@ -293,8 +297,7 @@ def test_rebuild_configured_atomic_cluster_waits_for_both_replicas(
         assert client.command(f"SELECT count() FROM {table}") == before[0] + 1
 
 
-def test_rebuild_after_exchange_resumes_cleanup_only(owned_project, clickhouse_server):
-    project = owned_project
+def test_rebuild_after_exchange_resumes_cleanup_only(project, clickhouse_server):
     before = _seed(project, 2000)
     old_uuid = _uuid(project)
     _revision(project)
@@ -328,13 +331,12 @@ def test_rebuild_after_exchange_resumes_cleanup_only(owned_project, clickhouse_s
     assert _heads(project) == ["bbbb"]
 
 
-def test_rebuild_async0_opt_in_reports_old_uuid_flush_errors(owned_project, clickhouse_server):
-    project = owned_project
+def test_rebuild_async0_opt_in_reports_old_uuid_flush_errors(project, clickhouse_server):
     before = _seed(project, 20000)
     old_uuid = _uuid(project)
     _revision(project, allow_async_loss=True)
     query_id = "async0-" + secrets.token_hex(8)
-    # Hold the real HTTP EXCHANGE request after the runtime's pre-swap flush.
+    # Hold the real HTTP EXCHANGE request (after the pre-swap flush where one is allowed).
     # Enqueue exactly one old-UUID insert in that gap, then let ClickHouse swap.
     with _hold_command(project, clickhouse_server, "EXCHANGE TABLES") as (blocked, release):
         with _running(project) as (process, log):
@@ -345,25 +347,22 @@ def test_rebuild_async0_opt_in_reports_old_uuid_flush_errors(owned_project, clic
             finally:
                 release.set()
             assert process.wait(timeout=90) == 0, log.read_text()
-    report = _rebuild_result(project)
-    project.client.command("SYSTEM FLUSH LOGS")
+    report = _rebuild_result(project)["async_flush_errors"]
+    project.flush_logs()
     errors = project.client.query(
-        "SELECT query_id, bytes FROM system.asynchronous_insert_log WHERE database = {db:String} "
-        "AND table = 'events' AND status = 'FlushError' AND position(exception, {uuid:String}) > 0",
+        f"SELECT query_id, bytes FROM {project.everywhere('system.asynchronous_insert_log')} "
+        "WHERE database = {db:String} AND table = 'events' AND status = 'FlushError' "
+        "AND position(exception, {uuid:String}) > 0",
         parameters={"db": project.database, "uuid": old_uuid},
     ).result_rows
     assert len(errors) == 1 and errors[0][0] == query_id
-    assert report["async_flush_errors"] == {
-        "count": 1,
-        "bytes": errors[0][1],
-        "query_ids": [query_id],
-    }
+    assert (report["count"], report["bytes"], report["query_ids"]) == (1, errors[0][1], [query_id])
+    assert report["complete"] is not project.cloud
     assert _checksum(project) == before
     assert _heads(project) == ["bbbb"]
 
 
-def test_plan_understands_guarded_rebuild_without_running_it(owned_project):
-    project = owned_project
+def test_plan_understands_guarded_rebuild_without_running_it(project):
     before = _seed(project, 1000)
     source_uuid = _uuid(project)
     _revision(project)
@@ -381,8 +380,7 @@ def test_plan_understands_guarded_rebuild_without_running_it(owned_project):
 
 
 @pytest.mark.parametrize("masked", [False, True])
-def test_rebuild_preserves_empty_logical_tables(owned_project, masked):
-    project = owned_project
+def test_rebuild_preserves_empty_logical_tables(project, masked):
     _seed(project, 30 if masked else 0)
     if masked:
         project.client.command(
@@ -401,8 +399,7 @@ def test_rebuild_preserves_empty_logical_tables(owned_project, masked):
     assert _heads(project) == ["bbbb"]
 
 
-def test_completed_rebuild_is_not_repeated_after_later_interruption(owned_project):
-    project = owned_project
+def test_completed_rebuild_is_not_repeated_after_later_interruption(project):
     before = _seed(project, 2000)
     _revision(project)
     revision = project.versions_dir / "bbbb.py"
@@ -414,9 +411,11 @@ def test_completed_rebuild_is_not_repeated_after_later_interruption(owned_projec
     with _running(project) as (process, log):
         _until(
             lambda: project.client.command(
-                "SELECT count() FROM system.processes WHERE startsWith(query, 'SELECT sleep(2)')"
+                f"SELECT count() FROM {project.everywhere('system.processes')} "
+                "WHERE startsWith(query, 'SELECT sleep(2)')"
             ),
             "Rebuild did not reach its following read",
+            seconds=120,
         )
         assert not _locks(project)
         rebuilt_uuid = _uuid(project)
@@ -470,6 +469,63 @@ def test_rebuild_survives_helper_merges_resuming_mid_copy(owned_project):
     assert _heads(project) == ["bbbb"]
 
 
+def test_rebuild_survives_replica_restart_mid_copy(cluster_project, clickhouse_cluster):
+    """A real restart of the other replica mid-copy: merges resume there, and nothing is lost."""
+    project, cluster = cluster_project, clickhouse_cluster
+    table = f"{project.database}.events"
+    engine = (
+        f"ReplicatedReplacingMergeTree('/chm-restart/{project.database}/events', '{{replica}}')"
+    )
+    project.client.command(
+        f"CREATE TABLE {table} ON CLUSTER {cluster.name} "
+        f"(id UInt64, ts DateTime, k UInt8, payload String) ENGINE = {engine} "
+        "PARTITION BY toYYYYMM(ts) ORDER BY id"
+    )
+    _baseline(project)
+    for client in cluster.clients.values():
+        client.command(f"SYSTEM STOP MERGES {table}")  # Keep duplicate rows to snapshot.
+    for _ in range(2):
+        project.client.command(
+            f"INSERT INTO {table} SELECT number, toDateTime('2026-02-01') + number, "
+            "number % 7, toString(number) FROM numbers(60000)"
+        )
+    for client in cluster.clients.values():
+        client.command(f"SYSTEM SYNC REPLICA {table}")
+        client.command("SYSTEM FLUSH LOGS")
+    before = _final_checksum(project.client, table)
+    target = _target(
+        project, f"ReplicatedReplacingMergeTree('/chm-restart/{{db}}/new', '{{replica}}')"
+    )
+    slow = "id + toUInt64(sleepEachRow(0.0001)) AS id, ts, k, payload"
+    _revision(project, target=target, select=slow)
+    try:
+        _restart_replica_mid_copy(project, cluster)
+    finally:
+        for client in cluster.clients.values():
+            client.command(f"SYSTEM START MERGES {table}")
+    assert _heads(project) == ["bbbb"]
+    for client in cluster.clients.values():
+        client.command(f"SYSTEM SYNC REPLICA {table}")
+        assert _final_checksum(client, table) == before
+
+
+def _restart_replica_mid_copy(project, cluster):
+    with _running(project, timeout="180") as (process, log):
+        _until(lambda: _active_copy(project), "Copy never started", seconds=60)
+        cluster.stop_node(2)
+        cluster.start_node(2)  # Node 2's STOP MERGES on the helpers, if any, is now gone.
+        exit_code = process.wait(timeout=180)
+    if exit_code != 0:  # A rebuild may stop while node 2 is down; the next `up` resumes it.
+        resumed = project.run("up", "it", "--timeout", "180")
+        assert resumed.exit_code == 0, log.read_text() + resumed.output
+
+
+def _final_checksum(client, table):
+    return client.query(
+        f"SELECT count(), sum(cityHash64(id, ts, k, payload)) FROM {table} FINAL"
+    ).result_rows[0]
+
+
 def _baseline(project):
     project.write_revision("aaaa", {"upgrade": 'op.execute("SELECT 1")'})
     result = project.run("up", "it")
@@ -492,7 +548,7 @@ def _seed(project, rows, first_partition_rows=0):
         f"INSERT INTO {db}.events SELECT 100000 + number, toDateTime('2026-02-01') + number, "
         f"number % 7, toString(number) FROM numbers({rows})"
     )
-    project.client.command("SYSTEM FLUSH LOGS")  # Observer seeds complete writer evidence.
+    project.flush_logs()  # Observer seeds complete writer evidence.
     return _checksum(project)
 
 
@@ -510,6 +566,8 @@ def _revision(project, *, target=None, select=None, allow_async_loss=False):
         options.append(f"select={select!r}")
     if allow_async_loss:
         options.append("allow_unacknowledged_async_loss=True")
+    if project.cloud:
+        options.append("writers_on_this_service_only=True")  # The test's writers use one service.
     suffix = ", " + ", ".join(options) if options else ""
     project.write_revision(
         "bbbb", {"upgrade": f"op.rebuild_table('events', 'rebuild.sql'{suffix})"}, "aaaa"
@@ -579,16 +637,16 @@ def _lock_age(project):
 
 def _assert_locked_refusal(project, owner, orphan):
     original_uuid = _uuid(project)
-    second = project.run("up", "it", "--timeout", "1")
+    second = project.run("up", "it", "--timeout", project.budget(1))
     assert second.exit_code != 0, second.output
     assert "lock" in second.output.lower(), second.output
     assert "reconcil" in second.output.lower(), second.output
     assert _lock_owner(project) == owner
     assert _uuid(project) == original_uuid
     if _active_copy(project) != orphan:
-        project.client.command("SYSTEM FLUSH LOGS")
+        project.flush_logs()
         outcome = project.client.command(
-            "SELECT type FROM system.query_log WHERE query_id = {id:String} "
+            f"SELECT type FROM {project.query_log()} WHERE query_id = {{id:String}} "
             "ORDER BY event_time_microseconds DESC LIMIT 1",
             parameters={"id": orphan},
         )
@@ -621,15 +679,16 @@ def _pending_mutation(project):
 
 def _queued_async(project):
     return project.client.command(
-        "SELECT count() FROM system.asynchronous_inserts WHERE database = {db:String} "
-        "AND table = 'events' AND length(entries.query_id) > 0",
+        f"SELECT count() FROM {project.everywhere('system.asynchronous_inserts')} "
+        "WHERE database = {db:String} AND table = 'events' AND length(entries.query_id) > 0",
         parameters={"db": project.database},
     )
 
 
 def _active_copy(project):
     rows = project.client.query(
-        "SELECT query_id FROM system.processes WHERE startsWith(query_id, 'chm-rebuild-') "
+        f"SELECT query_id FROM {project.everywhere('system.processes')} "
+        "WHERE startsWith(query_id, 'chm-rebuild-') "
         "AND query_kind = 'Insert' AND position(query, {db:String}) > 0",
         parameters={"db": project.database},
     ).result_rows
@@ -648,18 +707,17 @@ def _send_async0(project, query_id, row_id, client=None):
         f"INSERT INTO {project.database}.events (id, ts, k, payload) VALUES "
         f"({row_id}, '2026-02-02 00:00:00', 1, 'async')"
     )
-    (client or project.client).command(
-        sql,
-        settings={
-            "query_id": query_id,
-            "async_insert": 1,
-            "wait_for_async_insert": 0,
-            "async_insert_use_adaptive_busy_timeout": 0,
-            "async_insert_busy_timeout_ms": 8000,
-            "async_insert_busy_timeout_max_ms": 8000,
-            "log_query_settings": 1,
-        },
-    )
+    settings = {
+        "query_id": query_id,
+        "async_insert": 1,
+        "wait_for_async_insert": 0,
+        "async_insert_use_adaptive_busy_timeout": 0,
+        "async_insert_busy_timeout_ms": 8000,
+        "async_insert_busy_timeout_max_ms": 8000,
+    }
+    if not project.cloud:  # Cloud locks log_query_settings (already on there).
+        settings["log_query_settings"] = 1
+    (client or project.client).command(sql, settings=settings)
 
 
 def _rebuild_result(project):
@@ -706,6 +764,7 @@ def _running(project, timeout="180"):
 @contextmanager
 def _hold_command(project, upstream, sql_prefix):
     blocked, release = threading.Event(), threading.Event()
+    forwarder = _Upstream(upstream)
 
     class Forwarder(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
@@ -718,20 +777,18 @@ def _hold_command(project, upstream, sql_prefix):
                 if not release.wait(30):
                     self.send_error(504, "Test exchange barrier timed out")
                     return
-            connection = http.client.HTTPConnection(upstream.host, upstream.port, timeout=120)
+            headers = {
+                key: value
+                for key, value in self.headers.items()
+                if key.lower() not in {"host", "connection", "transfer-encoding", "content-length"}
+            }
+            headers["Content-Length"] = str(len(body))
             try:
-                headers = {
-                    key: value
-                    for key, value in self.headers.items()
-                    if key.lower()
-                    not in {"host", "connection", "transfer-encoding", "content-length"}
-                }
-                headers["Content-Length"] = str(len(body))
-                connection.request(self.command, self.path, body=body, headers=headers)
-                response = connection.getresponse()
-                payload = response.read()
-                self.send_response(response.status)
-                for key, value in response.getheaders():
+                status, response_headers, payload = forwarder.forward(
+                    self.command, self.path, (body, headers)
+                )
+                self.send_response(status)
+                for key, value in response_headers:
                     if key.lower() not in {"content-length", "transfer-encoding", "connection"}:
                         self.send_header(key, value)
                 self.send_header("Content-Length", str(len(payload)))
@@ -741,8 +798,6 @@ def _hold_command(project, upstream, sql_prefix):
                 self.close_connection = True
             except (BrokenPipeError, ConnectionResetError):
                 pass  # A deliberate SIGKILL can close the downstream client after server success.
-            finally:
-                connection.close()
 
         do_GET = do_POST
 
@@ -754,7 +809,7 @@ def _hold_command(project, upstream, sql_prefix):
     config_path = project.root / "config.yaml"
     original = config_path.read_text()
     config = yaml.safe_load(original)
-    config["environments"]["it"]["port"] = server.server_port
+    config["environments"]["it"].update(host="127.0.0.1", port=server.server_port, secure=False)
     config_path.write_text(yaml.safe_dump(config))
     thread.start()
     try:
@@ -764,7 +819,62 @@ def _hold_command(project, upstream, sql_prefix):
         server.shutdown()
         server.server_close()
         thread.join(timeout=10)
+        forwarder.close()
         config_path.write_text(original)
+
+
+class _Upstream:
+    """Forward to the real server, keeping one upstream connection per HTTP session.
+
+    ClickHouse Cloud routes each connection, not each session id, to a replica, so a
+    fresh connection per request could reach a replica without the session.
+    """
+
+    def __init__(self, server):
+        self.server = server
+        self.lock = threading.Lock()
+        self.sessions = {}
+
+    def forward(self, method, path, request):
+        session = parse_qs(urlsplit(path).query).get("session_id", [None])[0]
+        if session is None:
+            connection = self._connect()
+            try:
+                return _exchange(connection, method, path, request)
+            finally:
+                connection.close()
+        with self.lock:
+            entry = self.sessions.setdefault(session, {"lock": threading.Lock(), "conn": None})
+        with entry["lock"]:
+            entry["conn"] = entry["conn"] or self._connect()
+            try:
+                return _exchange(entry["conn"], method, path, request)
+            except (http.client.HTTPException, OSError):
+                entry["conn"].close()
+                entry["conn"] = None
+                raise
+
+    def close(self):
+        for entry in self.sessions.values():
+            if entry["conn"] is not None:
+                entry["conn"].close()
+
+    def _connect(self):
+        if self.server.secure:
+            return http.client.HTTPSConnection(
+                self.server.host,
+                self.server.port,
+                timeout=120,
+                context=ssl.create_default_context(cafile=certifi.where()),
+            )
+        return http.client.HTTPConnection(self.server.host, self.server.port, timeout=120)
+
+
+def _exchange(connection, method, path, request):
+    body, headers = request
+    connection.request(method, path, body=body, headers=headers)
+    response = connection.getresponse()
+    return response.status, response.getheaders(), response.read()
 
 
 def _request_body(handler):

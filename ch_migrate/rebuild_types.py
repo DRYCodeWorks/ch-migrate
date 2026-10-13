@@ -9,6 +9,9 @@ from ch_migrate.introspect import TableDefinition
 from ch_migrate.version_table import VersionTableState
 from ch_migrate.waiting_types import WaitBudget
 
+# Pause between the copying view reaching every replica and the drain barrier on Cloud.
+DEFAULT_GRACE_SECONDS = 10.0
+
 
 @dataclass(frozen=True)
 class RebuildOptions:
@@ -19,6 +22,8 @@ class RebuildOptions:
     cluster: str | None = None
     select: str | None = None
     allow_unacknowledged_async_loss: bool = False
+    writers_on_this_service_only: bool = False
+    grace_seconds: float = DEFAULT_GRACE_SECONDS
 
 
 @dataclass(frozen=True)
@@ -34,6 +39,16 @@ class RebuildDefinition:
     revision: str
     generation: int
     allow_unacknowledged_async_loss: bool = False
+    writers_on_this_service_only: bool = False
+    grace_seconds: float = DEFAULT_GRACE_SECONDS
+
+
+@dataclass(frozen=True)
+class HelperIdentity:
+    """How a rebuild proves a helper is its own: a chosen UUID, or (Cloud) a comment token."""
+
+    uuid: str | None = None
+    token: str | None = None
 
 
 @dataclass(frozen=True)

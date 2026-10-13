@@ -122,7 +122,10 @@ def render_revision(header: RevisionHeader, files: SqlFiles, options: NewOptions
     operation = "rebuild_table" if options.rebuild else "run_sql"
     imports = f"IrreversibleMigration, {operation}" if irreversible else operation
     upgrade_call = (
-        f"rebuild_table({options.table_name!r}, {files.upgrade!r})"
+        f"rebuild_table(\n        {options.table_name!r},\n        {files.upgrade!r},\n"
+        "        # ClickHouse Cloud only: set True once every writer to this table uses this\n"
+        "        # service. ch-migrate cannot see inserts made through other services.\n"
+        "        writers_on_this_service_only=False,\n    )"
         if options.rebuild
         else f"run_sql({files.upgrade!r})"
     )

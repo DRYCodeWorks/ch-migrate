@@ -469,12 +469,21 @@ migration file. There is no command-line bypass. Writers that wait for
 acknowledgement should retry error **741** (`TABLE_UUID_MISMATCH`) and other
 transient rebuild errors. Writers must not ignore materialized-view errors.
 
-**Self-hosted only for now.** On ClickHouse Cloud, `plan` reports and `up`
-refuses a rebuild with `cloud_unsupported` before creating anything. Cloud does
-not allow explicit table UUIDs, `SYSTEM STOP MERGES` or
-`SYSTEM FLUSH ASYNC INSERT QUEUE`, and the guarded rebuild relies on all three
-for crash-safe ownership and the swap. The options are in
-`docs/design/2026-10-13-rebuild-on-cloud.md`.
+**On ClickHouse Cloud** the rebuild runs too, with three differences:
+
+- **Declare your writers.** Cloud's compute-compute separation hides other services' inserts
+  from this one, and an insert of theirs could be missing from the rebuilt table. Once every
+  writer to the table uses the service you migrate through, set
+  `writers_on_this_service_only=True` in the `rebuild_table` call; `new --rebuild` writes it
+  as `False` for you to change. Until then `plan` reports, and `up` refuses with,
+  `cloud_writers_undeclared`. After the copying view reaches every replica, the rebuild
+  waits `grace_seconds` (default 10) before draining inserts.
+- **No forced queue flush.** Cloud forbids `SYSTEM FLUSH ASYNC INSERT QUEUE`; `EXCHANGE`
+  drains the old table's queue itself. The guarantee is unchanged. The report of rejected
+  fire-and-forget inserts is a lower bound (`"complete": false`) that names the replicas it read.
+- **Ownership by token.** Cloud rejects chosen table UUIDs, so helpers carry an owner token in
+  their `COMMENT` until the rebuild reads back and records their UUID. Do not edit helper
+  comments: a changed token stops the rebuild for operator reconciliation.
 
 Generate the rebuild from the environment's current DDL:
 

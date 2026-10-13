@@ -57,12 +57,17 @@ def test_scaffold_rebuild_round_trip_uses_only_sql_edits(project):
     refusals = {
         item["code"] for item in statement["rebuild"]["findings"] if item["severity"] == "refusal"
     }
-    # Cloud refuses rebuild before any helper, lock or swap exists (DRY-1445).
-    assert refusals == ({"cloud_unsupported"} if project.cloud else set())
-    applied = project.run("up", "it", "--timeout", "30")
+    # The scaffold names the Cloud declaration as False; Cloud refuses until it is True.
+    assert refusals == ({"cloud_writers_undeclared"} if project.cloud else set())
     if project.cloud:
-        _assert_cloud_refusal(project, applied, before)
-        return
+        _assert_cloud_refusal(project, project.run("up", "it", "--timeout", "30"), before)
+        [revision] = project.versions_dir.glob("*reorder*.py")
+        revision.write_text(
+            revision.read_text().replace(
+                "writers_on_this_service_only=False", "writers_on_this_service_only=True"
+            )
+        )
+    applied = project.run("up", "it", "--timeout", "180")
     assert applied.exit_code == 0, applied.output
     assert "ORDER BY (k, id)" in project.client.command(f"SHOW CREATE TABLE {table}")
     assert (
@@ -83,8 +88,9 @@ def test_scaffold_rebuild_round_trip_uses_only_sql_edits(project):
 
 
 def _assert_cloud_refusal(project, applied, before):
+    """Undeclared Cloud writers: refused before any helper, lock or swap exists."""
     assert applied.exit_code != 0, applied.output
-    assert "does not run on ClickHouse Cloud" in applied.output
+    assert "cloud_writers_undeclared" in applied.output
     table = f"{project.database}.t"
     assert "ORDER BY id" in project.client.command(f"SHOW CREATE TABLE {table}")
     assert (

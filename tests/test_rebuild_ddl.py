@@ -5,8 +5,14 @@ from __future__ import annotations
 import pytest
 
 from ch_migrate.introspect import TableDefinition
-from ch_migrate.rebuild_ddl import _parse, build_definition, dual_ddl, helper_ddl
-from ch_migrate.rebuild_types import RebuildOptions
+from ch_migrate.rebuild_ddl import (
+    _parse,
+    build_definition,
+    dual_ddl,
+    helper_ddl,
+    target_comment,
+)
+from ch_migrate.rebuild_types import HelperIdentity, RebuildOptions
 
 SOURCE = """CREATE TABLE `analytics`.`events` UUID 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' (
     `id` UInt64 CODEC(Delta, ZSTD(3)),
@@ -48,7 +54,7 @@ def test_helpers_preserve_complete_physical_schema_and_isolate_keeper_paths():
     definition = _definition(cluster="all_replicas")
     paths = set()
     for role, uuid in UUIDS.items():
-        sql = helper_ddl(definition, role, uuid)
+        sql = helper_ddl(definition, role, HelperIdentity(uuid=uuid))
         parsed = _parse(sql, "analytics", "events__chm_" + role)
         assert parsed.uuid_span is not None
         assert sql[parsed.uuid_span[0] : parsed.uuid_span[1]] == f"UUID '{uuid}'"
@@ -80,7 +86,11 @@ def test_snapshot_and_stage_are_plain_and_ttl_free_so_merges_keep_every_row():
         source,
     )
     for role, uuid in UUIDS.items():
-        parsed = _parse(helper_ddl(definition, role, uuid), "analytics", "events__chm_" + role)
+        parsed = _parse(
+            helper_ddl(definition, role, HelperIdentity(uuid=uuid)),
+            "analytics",
+            "events__chm_" + role,
+        )
         kind = next(column for column in parsed.columns if column.name == "kind")
         if role == "new":
             assert parsed.engine_name == "ReplicatedReplacingMergeTree"
@@ -109,7 +119,11 @@ def test_implicit_keeper_arguments_get_explicit_unique_paths_preserving_versions
     definition = _definition(target, source)
     paths = []
     for role, uuid in UUIDS.items():
-        parsed = _parse(helper_ddl(definition, role, uuid), "analytics", "events__chm_" + role)
+        parsed = _parse(
+            helper_ddl(definition, role, HelperIdentity(uuid=uuid)),
+            "analytics",
+            "events__chm_" + role,
+        )
         params = ("id",) if role == "new" else ()
         assert parsed.engine_args == (
             f"'/clickhouse/tables/{uuid}/{{shard}}'",
@@ -133,7 +147,9 @@ def test_zero_arg_engine_and_nonreplicated_engine_do_not_share_keeper_paths():
         source,
     )
     assert _parse(
-        helper_ddl(definition, "snap", UUIDS["snap"]), "analytics", "events__chm_snap"
+        helper_ddl(definition, "snap", HelperIdentity(uuid=UUIDS["snap"])),
+        "analytics",
+        "events__chm_snap",
     ).engine_args == (f"'/clickhouse/tables/{UUIDS['snap']}/{{shard}}'", "'{replica}'")
     plain = _definition(
         TARGET.replace(
@@ -146,19 +162,25 @@ def test_zero_arg_engine_and_nonreplicated_engine_do_not_share_keeper_paths():
         ),
     )
     assert (
-        _parse(helper_ddl(plain, "new", UUIDS["new"]), "analytics", "events__chm_new").engine_args
+        _parse(
+            helper_ddl(plain, "new", HelperIdentity(uuid=UUIDS["new"])),
+            "analytics",
+            "events__chm_new",
+        ).engine_args
         == ()
     )
 
 
 def test_dual_projection_explicitly_names_insertable_target_columns():
     definition = _definition(select="id, toDate(day) AS day, concat(kind, ',', kind)")
-    sql = dual_ddl(definition, UUIDS["new"])
+    sql = dual_ddl(definition, HelperIdentity(uuid=UUIDS["new"]))
     assert "TO `analytics`.`events__chm_new` AS SELECT" in sql
     assert "(id) AS `id`, (toDate(day)) AS `day`, (concat(kind, ',', kind)) AS `kind`" in sql
     assert sql.endswith("FROM `analytics`.`events`")
     assert "computed" not in sql and "virtual" not in sql
-    assert "SELECT `id`, `day`, `kind` FROM" in dual_ddl(_definition(), UUIDS["new"])
+    assert "SELECT `id`, `day`, `kind` FROM" in dual_ddl(
+        _definition(), HelperIdentity(uuid=UUIDS["new"])
+    )
 
 
 @pytest.mark.parametrize(
@@ -196,9 +218,9 @@ def test_invalid_projection_is_refused(projection):
 def test_unknown_role_and_invalid_uuid_are_refused():
     definition = _definition()
     with pytest.raises(ValueError):
-        helper_ddl(definition, "old", UUIDS["snap"])
+        helper_ddl(definition, "old", HelperIdentity(uuid=UUIDS["snap"]))
     with pytest.raises(ValueError):
-        helper_ddl(definition, "snap", "not-a-uuid")
+        helper_ddl(definition, "snap", HelperIdentity(uuid="not-a-uuid"))
 
 
 def test_helper_keeper_roots_survive_source_cleanup_and_table_rename():
@@ -207,8 +229,62 @@ def test_helper_keeper_roots_survive_source_cleanup_and_table_rename():
     definition = _definition(target, source)
     original_root = "/clickhouse/tables/{shard}/analytics/events"
     for role, uuid in UUIDS.items():
-        parsed = _parse(helper_ddl(definition, role, uuid), "analytics", "events__chm_" + role)
+        parsed = _parse(
+            helper_ddl(definition, role, HelperIdentity(uuid=uuid)),
+            "analytics",
+            "events__chm_" + role,
+        )
         path = parsed.engine_args[0].strip("'")
         assert "{table}" not in path and "{database}" not in path
         assert path != original_root
         assert not path.startswith(original_root + "/")
+
+
+# ClickHouse Cloud reports Shared engines with its own Keeper arguments.
+CLOUD_SOURCE = """CREATE TABLE analytics.events
+(
+    `id` UInt64,
+    `v` UInt64,
+    `day` Date TTL day + toIntervalYear(1)
+)
+ENGINE = SharedReplacingMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}', v)
+PARTITION BY toYYYYMM(day)
+ORDER BY id
+TTL day + toIntervalYear(2)
+SETTINGS index_granularity = 8192
+COMMENT 'live events'"""
+
+
+def _cloud_definition():
+    target = CLOUD_SOURCE.replace("ORDER BY id", "ORDER BY (day, id)")
+    return _definition(target, CLOUD_SOURCE)
+
+
+def test_cloud_helpers_carry_owner_token_instead_of_a_chosen_uuid():
+    definition = _cloud_definition()
+    for role in ("new", "snap", "stage"):
+        token = f"chm-rebuild:r1:{role}:abc"
+        sql = helper_ddl(definition, role, HelperIdentity(token=token))
+        parsed = _parse(sql, "analytics", "events__chm_" + role)
+        assert parsed.uuid_span is None and "UUID" not in sql
+        assert parsed.clauses["COMMENT"] == f"'{token}'"
+        assert "live events" not in sql
+        if role == "new":
+            assert parsed.engine_name == "ReplacingMergeTree" and parsed.engine_args == ("v",)
+            assert parsed.clauses["TTL"] == "day + toIntervalYear(2)"
+        else:
+            assert parsed.engine_name == "MergeTree" and parsed.engine_args == ()
+            assert "TTL" not in sql
+
+
+def test_cloud_dual_view_puts_owner_token_before_its_select():
+    sql = dual_ddl(_cloud_definition(), HelperIdentity(token="chm-rebuild:r1:dual:abc"))
+    assert "UUID" not in sql
+    assert "TO `analytics`.`events__chm_new` COMMENT 'chm-rebuild:r1:dual:abc' AS SELECT" in sql
+
+
+def test_target_comment_restores_the_replacements_own_comment():
+    sql, value = target_comment(_cloud_definition())
+    assert sql == "ALTER TABLE `analytics`.`events__chm_new` MODIFY COMMENT 'live events'"
+    assert value == "live events"
+    assert target_comment(_definition())[1] == ""

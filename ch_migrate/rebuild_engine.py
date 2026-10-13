@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import sys
 import threading
+import time
 from uuid import uuid4
 
-from ch_migrate.rebuild_ddl import dual_ddl, helper_ddl
+from ch_migrate.rebuild_ddl import dual_ddl, helper_ddl, target_comment
 from ch_migrate.rebuild_dependents import (
     DependentValidationError,
     DictionaryReload,
@@ -15,6 +16,7 @@ from ch_migrate.rebuild_dependents import (
     validate_dependents,
 )
 from ch_migrate.rebuild_preflight import RebuildRequest, inspect_rebuild
+from ch_migrate.rebuild_types import HelperIdentity
 from ch_migrate.waiting_ddl import DistributedDDLWaiter
 from ch_migrate.waiting_types import UnknownOutcome, WaitingError
 
@@ -51,7 +53,9 @@ class _Context:
         self.definition = runtime.definition
         self.database = runtime.definition.database
         self.table = runtime.definition.table
-        self.cluster = runtime.deployment.health_cluster
+        self.cluster = runtime.deployment.replica_cluster
+        # Cloud's Shared databases reject chosen UUIDs, STOP MERGES and queue flushes.
+        self.shared = runtime.deployment.database_engine.startswith("Shared")
         self.ddl_cluster = runtime.definition.cluster
         self.budget = runtime.budget
         self.waiter = DistributedDDLWaiter(self.client, self.budget)
@@ -67,6 +71,53 @@ class _Context:
 
     def name(self, role):
         return f"{self.table}__chm_{role}"
+
+    def identity(self, role):
+        """How this rebuild creates `role` so that it can later prove the object is its own."""
+        if self.shared:
+            return HelperIdentity(token=self.state["tokens"][role])
+        return HelperIdentity(
+            uuid=self.dual_uuid() if role == "dual" else self.state["helpers"][role]
+        )
+
+    def dual_uuid(self):
+        return self.state.get("dual_uuid")
+
+    def bound_uuid(self, role):
+        """The helper's UUID: chosen up front, or on Cloud read back once its token proves ownership."""
+        uid = self.dual_uuid() if role == "dual" else self.state["helpers"][role]
+        if uid or not self.shared:
+            return uid
+        name = self.name(role)
+        if not self.owned(name, self.state["tokens"][role]):
+            raise UnknownOutcome(f"Cannot prove ownership of {name} on every replica")
+        uid = next(iter(self.catalog(name).values()))[0]
+        if role == "dual":
+            self.state["dual_uuid"] = uid
+        else:
+            self.state["helpers"][role] = uid
+        self.save()
+        return uid
+
+    def owned(self, name, token):
+        """Every replica shows `name` with our token and one UUID; another owner's is never adopted."""
+        catalog = self.catalog(name)
+        foreign = {host: row[2] for host, row in catalog.items() if row[2] != token}
+        if foreign:
+            raise UnknownOutcome(f"{name} carries another owner's comment: {foreign}")
+        return set(catalog) == self.hosts and len({row[0] for row in catalog.values()}) == 1
+
+    def proven(self, role):
+        """Our object is on every replica: by UUID once bound and, on Cloud, by its token too.
+
+        `new` alone gives up its token after binding, for the replacement's own COMMENT.
+        """
+        name = self.name(role)
+        uid = self.dual_uuid() if role == "dual" else self.state["helpers"][role]
+        token_checked = self.shared and not (role == "new" and uid)
+        if token_checked and not self.owned(name, self.state["tokens"][role]):
+            return False
+        return uid is None or self.converged(name, uid)
 
     def qualified(self, name):
         return f"{_id(self.database)}.{_id(name)}"
@@ -229,7 +280,8 @@ class _Lock:
         self.ctx = context
         self.name = f"_chm_rebuild_lock_{context.table}"
         self.owner = str(uuid4())
-        self.uuid = str(uuid4())
+        # Cloud assigns the UUID itself; the owner comment proves ownership until it is read back.
+        self.uuid = None if context.shared else str(uuid4())
         self.stop = threading.Event()
         self.thread = None
         self.failure = None
@@ -279,6 +331,13 @@ class _Lock:
         return False
 
     def _create(self):
+        comment = _lit("chm-rebuild-owner:" + self.owner)
+        schema = "(owner String, heartbeat DateTime64(6) DEFAULT now64(6))"
+        if self.ctx.shared:
+            return (
+                f"CREATE TABLE {self.ctx.qualified(self.name)} {schema} "
+                f"ENGINE = MergeTree ORDER BY heartbeat COMMENT {comment}"
+            )
         replicated = (
             len(self.ctx.hosts) > 1 or self.ctx.runtime.deployment.database_engine == "Replicated"
         )
@@ -289,16 +348,19 @@ class _Lock:
         cluster = f" ON CLUSTER {_id(self.ctx.ddl_cluster)}" if self.ctx.ddl_cluster else ""
         return (
             f"CREATE TABLE {self.ctx.qualified(self.name)} UUID {_lit(self.uuid)}{cluster} "
-            "(owner String, heartbeat DateTime64(6) DEFAULT now64(6)) "
-            f"ENGINE = {engine} ORDER BY heartbeat COMMENT {_lit('chm-rebuild-owner:' + self.owner)}"
+            f"{schema} ENGINE = {engine} ORDER BY heartbeat COMMENT {comment}"
         )
 
     def _owned(self):
         catalog = self.ctx.catalog(self.name)
-        return set(catalog) == self.ctx.hosts and all(
-            uid == self.uuid and comment == f"chm-rebuild-owner:{self.owner}"
-            for uid, _, comment in catalog.values()
-        )
+        if set(catalog) != self.ctx.hosts or any(
+            comment != f"chm-rebuild-owner:{self.owner}" for _, _, comment in catalog.values()
+        ):
+            return False
+        uids = {uid for uid, _, _ in catalog.values()}
+        if self.uuid is None and len(uids) == 1:
+            self.uuid = next(iter(uids))
+        return uids == {self.uuid}
 
     def check(self):
         if self.failure is not None or not self._owned():
@@ -382,7 +444,7 @@ def _run_locked(ctx, lock):
         _drain(ctx)
         _snapshot(ctx)
         _copy(ctx, lock)
-        if ctx.definition.target.engine.startswith("Replicated"):
+        if ctx.shared or ctx.definition.target.engine.startswith("Replicated"):
             _sync_replica(ctx, ctx.name("new"))
         _swap(ctx, lock)
     _cleanup(ctx, lock)
@@ -407,7 +469,9 @@ def _validate_owned_dependents(ctx):
 def _discard_validation(ctx, error):
     state = ctx.runtime.record.get("rebuild")
     if state is not None:
-        if state.get("dual_uuid") or state["snapshot"].get("started") or state["parts"]:
+        # A dual view may exist before its UUID is bound on Cloud: the DDL intent says so.
+        dual = state.get("dual_uuid") or state["ddl"].get("create_dual")
+        if dual or state["snapshot"].get("started") or state["parts"]:
             raise UnknownOutcome(
                 f"{error}; dependent validation/reload failed after copying began; lock retained"
             ) from error
@@ -418,7 +482,7 @@ def _discard_validation(ctx, error):
             name = ctx.name(role)
             if ctx.absent(name):
                 continue
-            ctx.uuid_map(name, state["helpers"][role])
+            ctx.uuid_map(name, ctx.bound_uuid(role))
             cluster = f" ON CLUSTER {_id(ctx.ddl_cluster)}" if ctx.ddl_cluster else ""
             ctx.ddl(
                 f"reject_drop_{role}",
@@ -454,6 +518,7 @@ def _preflight(ctx):
         ctx.cluster,
         definition.allow_unacknowledged_async_loss,
         ((definition.source, definition.source), (definition.target, definition.target)),
+        definition.writers_on_this_service_only,
     )
     findings = inspect_rebuild(ctx.client, request).findings
     for finding in findings:
@@ -483,9 +548,10 @@ def _initialize(ctx):
         if not ctx.absent(name):
             raise WaitingError(f"Unowned helper exists: {ctx.qualified(name)}")
     state = record.setdefault("rebuild", {})
+    roles = ("new", "snap", "stage")
     state.update(
         {
-            "helpers": {role: str(uuid4()) for role in ("new", "snap", "stage")},
+            "helpers": {role: None if ctx.shared else str(uuid4()) for role in roles},
             "old_uuids": old,
             "rollback_table": rollback,
             "snapshot": {},
@@ -493,18 +559,40 @@ def _initialize(ctx):
             "ddl": {},
         }
     )
+    if ctx.shared:
+        # Journaled before any CREATE: the token is this run's only proof of ownership.
+        revision = ctx.definition.revision
+        state["tokens"] = {
+            role: f"chm-rebuild:{revision}:{role}:{uuid4().hex}" for role in (*roles, "dual")
+        }
+        state["dual_uuid"] = None
     ctx.save()
 
 
 def _helpers(ctx):
     for role in ("new", "snap", "stage"):
-        name = ctx.name(role)
-        uid = ctx.state["helpers"][role]
         ctx.ddl(
             f"create_{role}",
-            helper_ddl(ctx.definition, role, uid),
-            lambda n=name, u=uid: ctx.converged(n, u),
+            helper_ddl(ctx.definition, role, ctx.identity(role)),
+            lambda r=role: ctx.proven(r),
         )
+        ctx.bound_uuid(role)
+    if ctx.shared:
+        _restore_new_comment(ctx)
+
+
+def _restore_new_comment(ctx):
+    """Once bound by UUID, `new` drops its owner token for the replacement's own COMMENT."""
+    sql, comment = target_comment(ctx.definition)
+    name, uid = ctx.name("new"), ctx.state["helpers"]["new"]
+
+    def restored():
+        catalog = ctx.catalog(name)
+        return set(catalog) == ctx.hosts and all(
+            row[0] == uid and row[2] == comment for row in catalog.values()
+        )
+
+    ctx.ddl("comment_new", sql, restored)
 
 
 def _dual(ctx):
@@ -518,19 +606,37 @@ def _dual(ctx):
             raise UnknownOutcome(f"Unowned dual view exists: {ctx.catalog(name)}")
         state["dual_uuid"] = str(uuid4())
         ctx.save()
-    uid = state["dual_uuid"]
-    ctx.ddl("create_dual", dual_ddl(ctx.definition, uid), lambda: ctx.converged(name, uid))
+    ctx.ddl(
+        "create_dual", dual_ddl(ctx.definition, ctx.identity("dual")), lambda: ctx.proven("dual")
+    )
+    uid = ctx.bound_uuid("dual")
     ctx.wait("dual visible on every replica", lambda: ctx.converged(name, uid))
     if "barrier" not in state:
+        if ctx.shared:
+            _grace(ctx)
         state["barrier"] = ctx.time()
         ctx.save()
+
+
+def _grace(ctx):
+    """Let every replica apply the view's metadata before inserts are drained (Cloud).
+
+    The session is queried throughout: Cloud closes a connection idle for 10 s, and the
+    reconnect may reach a replica that does not hold this session.
+    """
+    label = f"{ctx.definition.grace_seconds:g}s grace after the copying view"
+    deadline = time.monotonic() + ctx.definition.grace_seconds
+    while (remaining := deadline - time.monotonic()) > 0:
+        ctx.rows("SELECT 1")
+        ctx.budget.check(label)
+        time.sleep(min(remaining, 1.0))
 
 
 def _drain(ctx):
     if ctx.state.get("drained"):
         return
     _drain_before(ctx, ctx.state["barrier"])
-    if ctx.definition.source.engine.startswith("Replicated"):
+    if ctx.shared or ctx.definition.source.engine.startswith("Replicated"):
         _sync_source(ctx)
     ctx.state["drained"] = True
     ctx.save()
@@ -766,7 +872,8 @@ def _swap(ctx, lock):
         ctx.save()
     lock.check()
     if not _swapped(ctx):
-        _flush_async(ctx)
+        if not ctx.shared:
+            _flush_async(ctx)
         sql = f"EXCHANGE TABLES {ctx.qualified(ctx.table)} AND {ctx.qualified(ctx.name('new'))}"
         if ctx.ddl_cluster:
             sql += f" ON CLUSTER {_id(ctx.ddl_cluster)}"
@@ -780,6 +887,7 @@ def _swap(ctx, lock):
         lambda: ctx.converged(ctx.table, new) and ctx.converged(ctx.name("new"), old),
     )
     state["exchanged"] = True
+    state.setdefault("exchanged_at", ctx.time())
     ctx.save()
 
 
@@ -830,41 +938,79 @@ def _async_report(ctx):
         return
     if not state.get("swap_intent"):
         raise UnknownOutcome("Swap timestamp missing; cannot attribute async flush errors")
-    logs = "SYSTEM FLUSH LOGS"
-    if ctx.cluster:
-        logs += f" ON CLUSTER {_id(ctx.cluster)}"
     if "report_end" not in state:
-        # Queues follow the old storage UUID. Flushing the now-live name would
-        # flush the replacement and miss the old queue's later error 741.
-        _flush_async(ctx, state["rollback_table"])
+        if ctx.shared:
+            # Cloud forbids the flush; EXCHANGE itself drains the old queue (Cloud probes).
+            _await_old_queue(ctx, state.get("exchanged_at") or ctx.time())
+        else:
+            # Queues follow the old storage UUID. Flushing the now-live name would
+            # flush the replacement and miss the old queue's later error 741.
+            _flush_async(ctx, state["rollback_table"])
         _drain_before(ctx, ctx.time())
-        ctx.command(logs)
+        ctx.command(_flush_logs_sql(ctx))
         state["report_end"] = ctx.time()
         ctx.save()
-    ctx.command(logs)
     _require_async_log(ctx)
-    old = sorted(set(state["old_uuids"].values()))
-    rows = ctx.rows(
-        f"SELECT materialize(hostName()), query_id, bytes FROM {ctx.system('asynchronous_insert_log')} "
-        "WHERE database = {db:String} AND table = {table:String} AND status = 'FlushError' "
-        "AND arrayExists(uuid -> position(exception, uuid) > 0, {old:Array(String)}) "
-        "AND flush_time_microseconds >= toDateTime64({start:String}, 6) "
-        "AND flush_time_microseconds <= toDateTime64({end:String}, 6)",
-        {
-            "db": ctx.database,
-            "table": ctx.table,
-            "old": old,
-            "start": state["swap_intent"],
-            "end": state["report_end"],
-        },
-    )
+    rows = _settled_flush_errors(ctx)
     state["async_flush_errors"] = {
         "count": len(rows),
         "bytes": sum(int(row[2]) for row in rows),
         "query_ids": sorted({str(row[1]) for row in rows}),
+        # Cloud's report is a lower bound: no flush, and logs of other services are unseen.
+        "complete": not ctx.shared,
+        "replicas": sorted(ctx.hosts),
     }
     ctx.save()
     _progress(f"Old-UUID asynchronous FlushErrors: {state['async_flush_errors']}")
+
+
+def _await_old_queue(ctx, cutoff):
+    sql = (
+        "SELECT count() FROM "
+        + ctx.system("asynchronous_inserts")
+        + " WHERE database = {db:String} AND table = {table:String} "
+        "AND first_update <= toDateTime64({cutoff:String}, 6)"
+    )
+    parameters = {"db": ctx.database, "table": ctx.table, "cutoff": cutoff}
+    ctx.wait("pre-swap async insert queue", lambda: not ctx.rows(sql, parameters)[0][0])
+
+
+def _settled_flush_errors(ctx):
+    """Old-UUID FlushErrors; on Cloud, read until two consecutive reads agree."""
+    ctx.command(_flush_logs_sql(ctx))
+    rows = _flush_errors(ctx)
+    while ctx.shared:
+        ctx.budget.pause("asynchronous insert log settling")
+        ctx.command(_flush_logs_sql(ctx))
+        again = _flush_errors(ctx)
+        if again == rows:
+            break
+        rows = again
+    return rows
+
+
+def _flush_errors(ctx):
+    state = ctx.state
+    return sorted(
+        ctx.rows(
+            f"SELECT materialize(hostName()), query_id, bytes FROM {ctx.system('asynchronous_insert_log')} "
+            "WHERE database = {db:String} AND table = {table:String} AND status = 'FlushError' "
+            "AND arrayExists(uuid -> position(exception, uuid) > 0, {old:Array(String)}) "
+            "AND flush_time_microseconds >= toDateTime64({start:String}, 6) "
+            "AND flush_time_microseconds <= toDateTime64({end:String}, 6)",
+            {
+                "db": ctx.database,
+                "table": ctx.table,
+                "old": sorted(set(state["old_uuids"].values())),
+                "start": state["swap_intent"],
+                "end": state["report_end"],
+            },
+        )
+    )
+
+
+def _flush_logs_sql(ctx):
+    return "SYSTEM FLUSH LOGS" + (f" ON CLUSTER {_id(ctx.cluster)}" if ctx.cluster else "")
 
 
 def _require_async_log(ctx):

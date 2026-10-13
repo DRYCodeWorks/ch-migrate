@@ -10,6 +10,8 @@ from clickhouse_connect.cc_sqlalchemy.sql import format_table
 from clickhouse_connect.cc_sqlalchemy.sql.ddlcompiler import ChDDLCompiler
 from clickhouse_connect.driver.binding import quote_identifier
 
+CLOUD_CLUSTER = "default"
+
 
 @dataclass(frozen=True)
 class VersionTableState:
@@ -29,6 +31,13 @@ class VersionTableState:
         if self.database_engine.startswith("Shared"):
             return None
         return self.cluster or (self.database if self.database_engine == "Replicated" else None)
+
+    @property
+    def replica_cluster(self) -> str | None:
+        """Cluster whose replicas a rebuild must inspect; Cloud names its replicas `default`."""
+        if self.database_engine.startswith("Shared"):
+            return CLOUD_CLUSTER
+        return self.health_cluster
 
     def new_engine(self):
         return migration_state_engine(self, "alembic_version", "version_num")

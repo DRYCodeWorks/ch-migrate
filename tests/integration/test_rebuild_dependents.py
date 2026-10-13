@@ -1,4 +1,4 @@
-"""Real-server dependent behavior during an owned online table rebuild."""
+"""Real-server dependent behavior during an online table rebuild, self-hosted and on Cloud."""
 
 from __future__ import annotations
 
@@ -17,21 +17,15 @@ from test_rebuild_commands import _hold_command
 pytestmark = pytest.mark.integration
 
 
-@pytest.fixture
-def owned_project(request):
-    if os.environ.get("CH_MIGRATE_IT_URL"):
-        pytest.skip("Dependent acceptance requires the fixture-owned Docker server")
-    return request.getfixturevalue("project")
-
-
-def test_live_aggregate_and_dictionary_survive_rebuild(owned_project, clickhouse_server, request):
-    project = owned_project
+def test_live_aggregate_and_dictionary_survive_rebuild(project, clickhouse_server, request):
     _source(project)
     _aggregate(project)
     _dictionary(project, request)
     _baseline(project)
     _seed(project)
     db = project.database
+    if project.cloud:  # Cloud loads dictionaries at CREATE, before the seed rows existed.
+        project.client.command(f"SYSTEM RELOAD DICTIONARY ON CLUSTER 'default' {db}.events_dict")
     initial = _totals(project)
     assert initial == _aggregate_totals(project)
     assert project.client.command(f"SELECT dictGetUInt64('{db}.events_dict', 'value', 1)") == 1
@@ -73,8 +67,7 @@ def test_live_aggregate_and_dictionary_survive_rebuild(owned_project, clickhouse
     assert _heads(project) == ["bbbb"]
 
 
-def test_dictionary_reload_reads_the_replacement_storage(owned_project, clickhouse_server, request):
-    project = owned_project
+def test_dictionary_reload_reads_the_replacement_storage(project, clickhouse_server, request):
     _source(project)
     _dictionary(project, request)
     _baseline(project)
@@ -88,7 +81,8 @@ def test_dictionary_reload_reads_the_replacement_storage(owned_project, clickhou
         release,
     ):
         with _running(project) as (process, log):
-            assert blocked.wait(30), log.read_text()
+            # On Cloud the grace pause and all-replica barriers come before the reload.
+            assert blocked.wait(float(project.budget(30))), log.read_text()
             assert _uuid(project) != old_uuid
             try:
                 project.client.command(
@@ -110,8 +104,7 @@ def test_dictionary_reload_reads_the_replacement_storage(owned_project, clickhou
 
 
 @pytest.mark.parametrize("change", ["drop", "rename", "type"])
-def test_invalid_source_view_refuses_then_repaired_sql_succeeds(owned_project, change):
-    project = owned_project
+def test_invalid_source_view_refuses_then_repaired_sql_succeeds(project, change):
     _source(project)
     _aggregate(project)
     _baseline(project)
@@ -123,7 +116,7 @@ def test_invalid_source_view_refuses_then_repaired_sql_succeeds(owned_project, c
         "type": "id, ts, k, toString(value) AS value",
     }[change]
     _revision(project, _invalid_target(change), projection)
-    rejected = project.run("up", "it", "--timeout", "15")
+    rejected = project.run("up", "it", "--timeout", project.budget(15))
     assert rejected.exit_code != 0, rejected.output
     assert "events_mv" in rejected.output, rejected.output
     assert (_uuid(project), _source_rows(project), _aggregate_totals(project)) == before
@@ -139,8 +132,7 @@ def test_invalid_source_view_refuses_then_repaired_sql_succeeds(owned_project, c
 
 
 @pytest.mark.parametrize("qualifier", ["none", "table", "database_table"])
-def test_inner_engine_materialized_view_keeps_receiving_rows(owned_project, qualifier):
-    project = owned_project
+def test_inner_engine_materialized_view_keeps_receiving_rows(project, qualifier):
     _source(project)
     db = project.database
     prefix = {"none": "", "table": "events.", "database_table": f"{db}.events."}[qualifier]
@@ -162,8 +154,7 @@ def test_inner_engine_materialized_view_keeps_receiving_rows(owned_project, qual
 
 
 @pytest.mark.parametrize("feed_id_type", ["UInt64", "UInt32"])
-def test_materialized_view_to_rebuilt_table_uses_new_target(owned_project, feed_id_type):
-    project = owned_project
+def test_materialized_view_to_rebuilt_table_uses_new_target(project, feed_id_type):
     _source(project)
     db = project.database
     project.client.command(
@@ -187,14 +178,14 @@ def test_materialized_view_to_rebuilt_table_uses_new_target(owned_project, feed_
     assert _heads(project) == ["bbbb"]
 
 
-def test_single_shard_distributed_route_is_conservatively_refused(owned_project):
-    project = owned_project
+def test_single_shard_distributed_route_is_conservatively_refused(project):
     db = project.database
+    # Cloud's only cluster is one shard with several replicas; the refusal is per route.
     cluster = project.client.query(
         "SELECT cluster FROM system.clusters GROUP BY cluster "
-        "HAVING uniqExact(shard_num) = 1 AND count() = 1 LIMIT 1"
+        "HAVING uniqExact(shard_num) = 1 ORDER BY count(), cluster LIMIT 1"
     ).result_rows
-    assert cluster, "Owned server has no single-node Distributed cluster"
+    assert cluster, "Owned server has no single-shard Distributed cluster"
     _source(project)
     _baseline(project)
     project.client.command(
@@ -204,7 +195,7 @@ def test_single_shard_distributed_route_is_conservatively_refused(owned_project)
     project.client.command(f"INSERT INTO {db}.events VALUES (1, '2026-02-02', 1, 9)")
     before = (_uuid(project), _source_rows(project))
     _revision(project)
-    rejected = project.run("up", "it", "--timeout", "15")
+    rejected = project.run("up", "it", "--timeout", project.budget(15))
     assert rejected.exit_code != 0, rejected.output
     assert "Distributed" in rejected.output
     assert (_uuid(project), _source_rows(project)) == before
@@ -235,12 +226,18 @@ def _aggregate(project):
 def _dictionary(project, request):
     db = project.database
     reader = "reader_" + db
-    project.client.command(f"CREATE USER {reader} IDENTIFIED WITH no_password HOST LOCAL")
+    if project.cloud:  # Cloud needs a password, and a dictionary source must name it.
+        password = project.new_password()
+        identity, credentials = f"BY '{password}'", f" PASSWORD '{password}'"
+        identity = "IDENTIFIED WITH sha256_password " + identity
+    else:
+        identity, credentials = "IDENTIFIED WITH no_password HOST LOCAL", ""
+    project.client.command(f"CREATE USER {reader} {identity}")
     request.addfinalizer(lambda: project.client.command(f"DROP USER IF EXISTS {reader}"))
     project.client.command(f"GRANT SELECT ON {db}.events TO {reader}")
     project.client.command(
         f"CREATE DICTIONARY {db}.events_dict (id UInt64, value UInt64) "
-        f"PRIMARY KEY id SOURCE(CLICKHOUSE(USER '{reader}' DB '{db}' TABLE 'events')) "
+        f"PRIMARY KEY id SOURCE(CLICKHOUSE(USER '{reader}'{credentials} DB '{db}' TABLE 'events')) "
         "LIFETIME(MIN 0 MAX 0) LAYOUT(HASHED())"
     )
 
@@ -257,15 +254,18 @@ def _seed(project, rows=12000):
         "SELECT number + 1, toDateTime('2026-02-01'), number % 7, "
         f"number % 23 + 1 FROM numbers({rows})"
     )
-    project.client.command("SYSTEM FLUSH LOGS")
+    project.flush_logs()
 
 
 def _revision(project, target=None, select=None):
     (project.sql_dir / "rebuild.sql").write_text(target or _target())
     projection = select or "id, ts, k, value"
+    declaration = ", writers_on_this_service_only=True" if project.cloud else ""
     project.write_revision(
         "bbbb",
-        {"upgrade": f"op.rebuild_table('events', 'rebuild.sql', select={projection!r})"},
+        {
+            "upgrade": f"op.rebuild_table('events', 'rebuild.sql', select={projection!r}{declaration})"
+        },
         "aaaa",
     )
 
@@ -407,14 +407,14 @@ def _assert_accounting(project, acknowledged, initial, window):
 
 
 def _server_intervals(project, query_ids, window):
-    project.client.command("SYSTEM FLUSH LOGS")
+    project.flush_logs()
     rows = project.client.query(
         "SELECT query_id, countIf(type = 'QueryStart'), countIf(type = 'QueryFinish'), "
         "minIf(event_time_microseconds, type = 'QueryStart') <= "
         "parseDateTime64BestEffort({end:String}, 6) AND "
         "maxIf(event_time_microseconds, type = 'QueryFinish') >= "
         "parseDateTime64BestEffort({start:String}, 6) AS overlaps "
-        "FROM system.query_log WHERE has({ids:Array(String)}, query_id) "
+        f"FROM {project.query_log()} WHERE has({{ids:Array(String)}}, query_id) "
         "AND type IN ('QueryStart', 'QueryFinish') GROUP BY query_id",
         parameters={"ids": query_ids, "start": window["start"], "end": window["end"]},
     ).result_rows
@@ -456,7 +456,6 @@ def _writer(server, project, acknowledged):
                         settings={
                             "query_id": query_id,
                             "log_queries": 1,
-                            "log_query_settings": 1,
                             "async_insert": 0,
                             "wait_for_async_insert": 1,
                         },

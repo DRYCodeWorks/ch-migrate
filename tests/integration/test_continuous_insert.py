@@ -1,9 +1,8 @@
-"""Acknowledgement, duplicate-window and loss accounting against owned servers."""
+"""Acknowledgement, duplicate-window and loss accounting on owned servers and ClickHouse Cloud."""
 
 from __future__ import annotations
 
 import json
-import os
 import threading
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
@@ -36,16 +35,8 @@ _START_ID = 3000000
 _BATCH_SIZE = 18
 
 
-@pytest.fixture
-def owned_project(request):
-    if os.environ.get("CH_MIGRATE_IT_URL"):
-        pytest.skip("Continuous acceptance only uses fixture-owned Docker servers")
-    return request.getfixturevalue("project")
-
-
 @pytest.mark.parametrize("mode", ["sync", "kill", "async1", "async0"])
-def test_continuous_insert_single_node(owned_project, clickhouse_server, mode):
-    project = owned_project
+def test_continuous_insert_single_node(project, clickhouse_server, mode):
     _prepare(project, mode)
     writer = _exercise(project, clickhouse_server, mode)
     _assert_accounting(project, writer)
@@ -110,7 +101,7 @@ def _prepare(project, mode, engine="MergeTree()"):
         f"FROM numbers({rows})"
     )
     _revision(project, target=_target(project, engine), select=_slow_projection())
-    project.client.command("SYSTEM FLUSH LOGS")
+    project.flush_logs()
 
 
 def _exercise(project, server, mode):
@@ -132,7 +123,7 @@ def _exercise(project, server, mode):
         after = len(writer.returned)
         _until(lambda: len(writer.returned) >= after + 3, "Writer did not continue after swap")
     assert not writer.errors, writer.errors
-    project.client.command(f"SYSTEM FLUSH ASYNC INSERT QUEUE {project.database}.events")
+    project.drain_async_queue("events")
     assert _heads(project) == ["bbbb"] and not _locks(project)
     window = _rebuild_result(project)["duplicate_window"]
     writer.intervals = _insert_times(project, writer, window)
@@ -142,11 +133,11 @@ def _exercise(project, server, mode):
 def _assert_async_refusal(project, writer):
     writer.arm()
     _until(lambda: _gate_queued(project, writer), "No unacknowledged batch queued")
-    project.client.command("SYSTEM FLUSH LOGS")
-    refused = project.run("up", "it", "--timeout", "20")
+    project.flush_logs()
+    refused = project.run("up", "it", "--timeout", project.budget(20))
     assert refused.exit_code != 0 and "async" in refused.output.lower(), refused.output
     assert not _helpers(project) and not _locks(project)
-    project.client.command(f"SYSTEM FLUSH ASYNC INSERT QUEUE {project.database}.events")
+    project.drain_async_queue("events")
 
 
 def _rebuild_with_writer(project, writer, gate):
@@ -160,7 +151,7 @@ def _rebuild_with_writer(project, writer, gate):
             row_id for query_id in writer.returned[before:] for row_id in writer.attempts[query_id]
         }
         if writer.mode == "async0":
-            project.client.command(f"SYSTEM FLUSH ASYNC INSERT QUEUE {project.database}.events")
+            project.drain_async_queue("events")
         blocked.clear()
         release.set()
         if writer.mode == "kill":
@@ -187,15 +178,15 @@ def _interrupt_and_resume(project, process):
     process.kill()
     assert process.wait(timeout=15) != 0
     _until(lambda: _lock_age(project) >= 9, "Killed owner's heartbeat did not expire")
-    refused = project.run("up", "it", "--timeout", "1")
+    refused = project.run("up", "it", "--timeout", project.budget(1))
     assert refused.exit_code != 0 and "reconcil" in refused.output.lower(), refused.output
     assert _uuid(project) == source_uuid and _lock_owner(project) == owner
     _operator_release(project, process, owner)
     with _running(project) as (resumed, log):
         assert resumed.wait(timeout=180) == 0, log.read_text()
-    project.client.command("SYSTEM FLUSH LOGS")
+    project.flush_logs()
     completed = project.client.command(
-        "SELECT count() FROM system.query_log WHERE type = 'QueryFinish' "
+        f"SELECT count() FROM {project.query_log()} WHERE type = 'QueryFinish' AND is_initial_query "
         "AND startsWith(query_id, 'chm-rebuild-') AND endsWith(query_id, '202601') "
         "AND position(query, {db:String}) > 0",
         parameters={"db": project.database},
@@ -237,7 +228,7 @@ def _send_batch(client, project, batch):
     for attempt in range(3):
         query_id = "chm-continuous-" + uuid4().hex
         writer.attempts[query_id] = ids
-        settings = _writer_settings(writer, query_id)
+        settings = _writer_settings(writer, query_id, project.cloud)
         try:
             client.command(
                 f"INSERT INTO {project.database}.events (id, ts, k, payload) VALUES {values}",
@@ -252,29 +243,31 @@ def _send_batch(client, project, batch):
         return
 
 
-def _writer_settings(writer, query_id):
+def _writer_settings(writer, query_id, cloud):
     delayed = writer.long_flush.is_set()
     if delayed:
         writer.long_flush.clear()
         writer.gate_query = query_id
-    return {
+    settings = {
         "query_id": query_id,
         "log_queries": 1,
-        "log_query_settings": 1,
         "async_insert": int(writer.mode.startswith("async")),
         "wait_for_async_insert": int(writer.mode != "async0"),
         "async_insert_use_adaptive_busy_timeout": 0,
         "async_insert_busy_timeout_ms": 8000 if delayed else 50,
         "async_insert_busy_timeout_max_ms": 8000 if delayed else 50,
     }
+    if not cloud:  # Cloud locks log_query_settings (already on there).
+        settings["log_query_settings"] = 1
+    return settings
 
 
 def _gate_queued(project, writer):
     if writer.gate_query is None:
         return False
     return project.client.command(
-        "SELECT count() FROM system.asynchronous_inserts WHERE database = {db:String} "
-        "AND table = 'events' AND has(entries.query_id, {query:String})",
+        f"SELECT count() FROM {project.everywhere('system.asynchronous_inserts')} "
+        "WHERE database = {db:String} AND table = 'events' AND has(entries.query_id, {query:String})",
         parameters={"db": project.database, "query": writer.gate_query},
     )
 
@@ -282,11 +275,11 @@ def _gate_queued(project, writer):
 def _insert_times(project, writer, window):
     if not writer.mode.startswith("async"):
         return _server_intervals(project, writer.returned, window)
-    project.client.command("SYSTEM FLUSH LOGS")
+    project.flush_logs()
     rows = project.client.query(
         "SELECT query_id, status, flush_time_microseconds >= toDateTime64({start:String}, 6) "
         "AND flush_time_microseconds <= toDateTime64({end:String}, 6) "
-        "FROM system.asynchronous_insert_log WHERE database = {db:String} "
+        f"FROM {project.everywhere('system.asynchronous_insert_log')} WHERE database = {{db:String}} "
         "AND table = 'events' AND has({ids:Array(String)}, query_id)",
         parameters={"db": project.database, "ids": list(writer.attempts), **window},
     ).result_rows

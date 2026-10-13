@@ -247,9 +247,8 @@ def _suggest_rebuild(environment: str, table: str) -> str:
 
 
 def _rebuild_assessment(statement: MigrationStatement, table: Any, scope: _Scope):
-    allow_async_loss = False
-    if statement.rebuild:
-        call = statement.rebuild
+    call = statement.rebuild
+    if call:
         options = RebuildOptions(
             scope.env["database"],
             table.name,
@@ -260,11 +259,15 @@ def _rebuild_assessment(statement: MigrationStatement, table: Any, scope: _Scope
             call.allow_unacknowledged_async_loss,
         )
         target = build_definition(table, statement.sql, options).target
-        allow_async_loss = call.allow_unacknowledged_async_loss
     else:
         target = _rebuild_target(table, statement.sql)
     request = RebuildRequest(
-        scope.env["database"], table, target, scope.deployment.health_cluster, allow_async_loss
+        scope.env["database"],
+        table,
+        target,
+        scope.deployment.replica_cluster,
+        bool(call and call.allow_unacknowledged_async_loss),
+        writers_on_this_service_only=bool(call and call.writers_on_this_service_only),
     )
     return inspect_rebuild(scope.client, request)
 

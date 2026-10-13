@@ -9,10 +9,17 @@ from pathlib import Path
 from typing import Literal
 
 from ch_migrate.rebase import RevisionGraph
+from ch_migrate.rebuild_types import DEFAULT_GRACE_SECONDS
 from ch_migrate.sql import split_statements
 
 MigrationDirection = Literal["upgrade", "downgrade"]
 _FSTRING_POSITIONS = sys.version_info >= (3, 12)
+_REBUILD_OPTIONS = (
+    "select",
+    "allow_unacknowledged_async_loss",
+    "writers_on_this_service_only",
+    "grace_seconds",
+)
 
 
 @dataclass(frozen=True)
@@ -31,6 +38,8 @@ class RebuildCall:
     create_sql_path: str
     select: str | None = None
     allow_unacknowledged_async_loss: bool = False
+    writers_on_this_service_only: bool = False
+    grace_seconds: float = DEFAULT_GRACE_SECONDS
 
 
 def migration_statements(path: Path) -> list[MigrationStatement]:
@@ -131,7 +140,7 @@ def _rebuild_statements(
     arguments = dict(zip(("table", "create_sql_path"), call.args))
     arguments.update({item.arg: item.value for item in call.keywords})
     values = {}
-    for name in ("table", "create_sql_path", "select", "allow_unacknowledged_async_loss"):
+    for name in ("table", "create_sql_path", *_REBUILD_OPTIONS):
         value = arguments.get(name)
         if value is None:
             continue
@@ -148,8 +157,9 @@ def _rebuild_statements(
         raise ValueError(
             f"{source.path}:{call.lineno}: rebuild requires literal table and SQL path"
         )
-    if not isinstance(values.get("allow_unacknowledged_async_loss", False), bool):
-        raise ValueError("rebuild async-loss opt-in must be an explicit boolean")
+    for name in ("allow_unacknowledged_async_loss", "writers_on_this_service_only"):
+        if not isinstance(values.get(name, False), bool):
+            raise ValueError(f"rebuild {name} must be an explicit boolean")
     rebuild = RebuildCall(**values)
     sql_path = source.path.parent.parent / "sql" / rebuild.create_sql_path
     statements = split_statements(sql_path.read_text())

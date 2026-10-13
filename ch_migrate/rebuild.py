@@ -13,9 +13,16 @@ from ch_migrate.classify import _identifier, _tokens
 from ch_migrate.connection import get_client
 from ch_migrate.introspect import get_create_statement, parse_create_table
 from ch_migrate.rebuild_ddl import build_definition
-from ch_migrate.rebuild_types import RebuildOptions, RebuildRuntime
+from ch_migrate.rebuild_types import DEFAULT_GRACE_SECONDS, RebuildOptions, RebuildRuntime
 from ch_migrate.sql import load_statements
 from ch_migrate.waiting_types import WaitingError
+
+_OPTIONS = {
+    "select",
+    "allow_unacknowledged_async_loss",
+    "writers_on_this_service_only",
+    "grace_seconds",
+}
 
 
 @Operations.register_operation("rebuild_table")
@@ -28,29 +35,27 @@ class RebuildTableOp(MigrateOperation):
         self.options = options
 
     @classmethod
-    def rebuild_table(
-        cls,
-        operations,
-        table,
-        create_sql_path,
-        *,
-        select=None,
-        allow_unacknowledged_async_loss=False,
-    ):
-        return operations.invoke(
-            cls(
-                table,
-                create_sql_path,
-                {
-                    "select": select,
-                    "allow_unacknowledged_async_loss": allow_unacknowledged_async_loss,
-                },
-            )
-        )
+    def rebuild_table(cls, operations, table, create_sql_path, **options):
+        unknown = set(options) - _OPTIONS
+        if unknown:
+            raise TypeError(f"rebuild_table got unknown options: {sorted(unknown)}")
+        return operations.invoke(cls(table, create_sql_path, options))
 
 
-def rebuild_table(table, create_sql_path, *, select=None, allow_unacknowledged_async_loss=False):
-    """Rebuild from one replacement CREATE TABLE in migrations/sql/."""
+def rebuild_table(
+    table,
+    create_sql_path,
+    *,
+    select=None,
+    allow_unacknowledged_async_loss=False,
+    writers_on_this_service_only=False,
+    grace_seconds=DEFAULT_GRACE_SECONDS,
+):
+    """Rebuild from one replacement CREATE TABLE in migrations/sql/.
+
+    On ClickHouse Cloud, `writers_on_this_service_only=True` declares that every writer to
+    the table uses this service; ch-migrate cannot see other services' inserts.
+    """
     from alembic import op
 
     return op.rebuild_table(
@@ -58,6 +63,8 @@ def rebuild_table(table, create_sql_path, *, select=None, allow_unacknowledged_a
         create_sql_path,
         select=select,
         allow_unacknowledged_async_loss=allow_unacknowledged_async_loss,
+        writers_on_this_service_only=writers_on_this_service_only,
+        grace_seconds=grace_seconds,
     )
 
 
@@ -109,16 +116,31 @@ def _request(operation: RebuildTableOp, waiter) -> RebuildOptions:
         table = _identifier(tokens[2])
     else:
         raise ValueError("rebuild_table requires a table in the migration database")
-    if not isinstance(operation.options["allow_unacknowledged_async_loss"], bool):
-        raise ValueError("allow_unacknowledged_async_loss must be an explicit boolean")
     return RebuildOptions(
         database=database,
         table=table,
         revision=waiter.revision,
         generation=waiter.generation,
         cluster=waiter.state.on_cluster,
-        **operation.options,
+        **_options(operation.options),
     )
+
+
+def _options(given: dict) -> dict:
+    options = {
+        "select": None,
+        "allow_unacknowledged_async_loss": False,
+        "writers_on_this_service_only": False,
+        "grace_seconds": DEFAULT_GRACE_SECONDS,
+        **given,
+    }
+    for name in ("allow_unacknowledged_async_loss", "writers_on_this_service_only"):
+        if not isinstance(options[name], bool):
+            raise ValueError(f"{name} must be an explicit boolean")
+    grace = options["grace_seconds"]
+    if isinstance(grace, bool) or not isinstance(grace, (int, float)) or grace < 0:
+        raise ValueError("grace_seconds must be a non-negative number")
+    return options
 
 
 def _digest(options: RebuildOptions, sql: str) -> str:
