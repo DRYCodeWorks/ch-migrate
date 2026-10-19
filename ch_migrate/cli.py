@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any
 import click
 from dotenv import load_dotenv
 
-from ch_migrate import ui
+from ch_migrate import __version__, ui
 from ch_migrate.authoring import NewOptions
 from ch_migrate.config import get_env_config
 from ch_migrate.runner import alembic_failure, run_alembic, run_migrations
@@ -146,7 +146,8 @@ def _plural(count: int, noun: str) -> str:
 
 
 @click.group()
-@click.version_option()
+# The distribution (ch-migrate-cli) and import names differ, so click cannot infer it.
+@click.version_option(__version__, prog_name="ch-migrate")
 def main() -> None:
     """ClickHouse migration tool built on Alembic.
 
