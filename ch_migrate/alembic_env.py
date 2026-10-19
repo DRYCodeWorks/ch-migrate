@@ -6,13 +6,16 @@ import logging
 import os
 from logging.config import fileConfig
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
+from uuid import uuid4
 
 import clickhouse_connect.cc_sqlalchemy.alembic  # Registers the official implementation.
 from alembic import context
 from clickhouse_connect.cc_sqlalchemy.alembic.impl import ClickHouseImpl
 from dotenv import load_dotenv
-from sqlalchemy import URL, Column, MetaData, String, Table, create_engine, pool
+from sqlalchemy import URL, Column, MetaData, String, Table, create_engine, pool, text
+from sqlalchemy.sql.dml import Insert
 
 from ch_migrate.config import get_env_config
 from ch_migrate.hooks import HookRegistry, run_hooks
@@ -51,6 +54,40 @@ class ChMigrateImpl(ClickHouseImpl):
             state.new_engine(),
             schema=version_table_schema,
             info={"ch_migrate_on_cluster": state.on_cluster},
+        )
+
+    def _exec(self, construct, execution_options=None, multiparams=None, params=None):
+        if isinstance(construct, Insert) and self._is_version_table_construct(construct):
+            self._insert_version_row(construct)
+            return SimpleNamespace(rowcount=1)
+        return super()._exec(
+            construct, execution_options=execution_options, multiparams=multiparams, params=params
+        )
+
+    def _exec_version_update(self, construct, execution_options=None):
+        # The official INSERT then waited DELETE, with the INSERT written by _insert_version_row.
+        self._insert_version_row(construct)
+        where = self._compile_version_where(construct)
+        super()._exec(
+            text(
+                f"ALTER TABLE {self._version_table_name} DELETE WHERE {where} "
+                "SETTINGS mutations_sync = 2"
+            )
+        )
+        return SimpleNamespace(rowcount=1)
+
+    def _insert_version_row(self, construct) -> None:
+        # Replicated and Shared MergeTree silently drop a block identical to an earlier insert
+        # (DRY-1447), so re-inserting a previous head after `down` left no version row at all.
+        # A token unique to this write keeps every intentional version row.
+        value = self._compile_clause(next(iter(construct._values.values())))
+        token = f"'chm_version_{uuid4().hex}'"
+        super()._exec(
+            text(
+                f"INSERT INTO {self._version_table_name} (version_num) "
+                f"SETTINGS insert_deduplication_token = {token}, async_insert = 0 "
+                f"VALUES ({value})"
+            )
         )
 
 
