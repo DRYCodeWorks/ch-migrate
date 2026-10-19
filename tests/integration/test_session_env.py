@@ -52,7 +52,7 @@ def legacy_project(project):
         "SELECT engine FROM system.tables WHERE database = {db:String} "
         "AND name = 'alembic_version'",
         parameters={"db": project.database},
-    ).result_rows == [("ReplacingMergeTree",)]
+    ).result_rows == [(project.engine("ReplacingMergeTree"),)]
     (project.sql_dir / "second.sql").write_text(
         "ALTER TABLE {db}.legacy ADD COLUMN IF NOT EXISTS value String"
     )
@@ -79,7 +79,8 @@ def test_session_sql_first_setting_applies(project):
     )
     result = project.run("up", "it")
     assert result.exit_code == 0, result.output
-    assert project.client.query(f"SELECT value FROM {project.database}.probe").result_rows == [(3,)]
+    probe = project.everywhere(f"{project.database}.probe")
+    assert project.client.query(f"SELECT value FROM {probe}").result_rows == [(3,)]
 
 
 def test_session_setting_carries_across_revisions(project):
@@ -100,7 +101,8 @@ def test_session_setting_carries_across_revisions(project):
     )
     result = project.run("up", "it")
     assert result.exit_code == 0, result.output
-    assert project.client.query(f"SELECT value FROM {project.database}.probe").result_rows == [(3,)]
+    probe = project.everywhere(f"{project.database}.probe")
+    assert project.client.query(f"SELECT value FROM {probe}").result_rows == [(3,)]
 
 
 def test_session_expiry_fails_instead_of_losing_settings(project):
@@ -121,7 +123,8 @@ def test_session_expiry_fails_instead_of_losing_settings(project):
     result = project.run("up", "it")
     assert result.exit_code != 0
     assert "SESSION_NOT_FOUND" in result.output, result.output
-    assert project.client.command(f"SELECT count() FROM {project.database}.probe") == 0
+    probe = project.everywhere(f"{project.database}.probe")
+    assert project.client.command(f"SELECT count() FROM {probe}") == 0
     assert (
         project.client.query(
             f"SELECT version_num FROM {project.database}.alembic_version"
@@ -186,6 +189,7 @@ def test_session_preserves_batch_and_revision_hooks(project):
     project.write_revision("bbbb", {"upgrade": 'op.execute("SELECT 2")'}, down_revision="aaaa")
     result = project.run("up", "it")
     assert result.exit_code == 0, result.output
+    events = project.everywhere(f"{project.database}.hook_events")
     assert project.client.query(
-        f"SELECT phase, count() FROM {project.database}.hook_events GROUP BY phase ORDER BY phase"
+        f"SELECT phase, count() FROM {events} GROUP BY phase ORDER BY phase"
     ).result_rows == [("post", 2), ("pre", 1)]
