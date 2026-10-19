@@ -13,6 +13,7 @@ from uuid import uuid4
 import clickhouse_connect.cc_sqlalchemy.alembic  # Registers the official implementation.
 from alembic import context
 from clickhouse_connect.cc_sqlalchemy.alembic.impl import ClickHouseImpl
+from clickhouse_connect.driver.httputil import get_pool_manager
 from dotenv import load_dotenv
 from sqlalchemy import URL, Column, MetaData, String, Table, create_engine, pool, text
 from sqlalchemy.sql.dml import Insert
@@ -135,36 +136,46 @@ def _run_offline(env_config: dict[str, Any]) -> None:
 
 
 def _run_online(env_config: dict[str, Any]) -> None:
-    engine = create_engine(_url(env_config), poolclass=pool.NullPool)
-    hooks = HookRegistry.from_config(env_config.get("hooks"))
-    database = env_config["database"]
+    # The session lives on whichever replica its connection reached: ClickHouse Cloud routes
+    # each TCP connection, not each session id. A pool of its own keeps the session on one
+    # connection instead of sharing the driver's default pool with other in-process clients.
+    # A dropped connection still fails closed through session_check.
+    session_pool = get_pool_manager(maxsize=1)
+    engine = create_engine(
+        _url(env_config), poolclass=pool.NullPool, connect_args={"pool_mgr": session_pool}
+    )
     try:
         with engine.connect() as connection:
-            # Establish the session before requiring its existence on every later request.
-            connection.exec_driver_sql("SELECT 1")
-            client = connection.connection.dbapi_connection.client
-            client.set_client_setting("session_check", 1)
-            state = inspect_version_table(client, database, env_config.get("cluster"))
-            assert_version_mutations_healthy(client, state)
-            state = sync_version_replica(client, state)
-            if warning := state.warning():
-                logger.warning(warning)
-            connection.dialect.ddl_compiler = VersionTableDDLCompiler
-            context.configure(
-                connection=connection,
-                target_metadata=None,
-                version_table="alembic_version",
-                version_table_schema=database,
-                on_version_apply=_post_migrate(hooks, database),
-                ch_migrate_version_state=state,
-            )
-            with context.begin_transaction():
-                run_hooks(
-                    connection, hooks.pre_migrate, db=database, phase="pre_migrate", revision="all"
-                )
-                context.run_migrations()
+            _run_connection(connection, env_config)
     finally:
         engine.dispose()
+        session_pool.clear()
+
+
+def _run_connection(connection, env_config: dict[str, Any]) -> None:
+    hooks = HookRegistry.from_config(env_config.get("hooks"))
+    database = env_config["database"]
+    # Establish the session before requiring its existence on every later request.
+    connection.exec_driver_sql("SELECT 1")
+    client = connection.connection.dbapi_connection.client
+    client.set_client_setting("session_check", 1)
+    state = inspect_version_table(client, database, env_config.get("cluster"))
+    assert_version_mutations_healthy(client, state)
+    state = sync_version_replica(client, state)
+    if warning := state.warning():
+        logger.warning(warning)
+    connection.dialect.ddl_compiler = VersionTableDDLCompiler
+    context.configure(
+        connection=connection,
+        target_metadata=None,
+        version_table="alembic_version",
+        version_table_schema=database,
+        on_version_apply=_post_migrate(hooks, database),
+        ch_migrate_version_state=state,
+    )
+    with context.begin_transaction():
+        run_hooks(connection, hooks.pre_migrate, db=database, phase="pre_migrate", revision="all")
+        context.run_migrations()
 
 
 def _url(env_config: dict[str, Any]) -> URL:
