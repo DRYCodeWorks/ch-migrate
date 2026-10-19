@@ -5,7 +5,7 @@ Usage:
     from ch_migrate import read_sql, get_db, get_env_config, create_dictionary
 """
 
-__version__ = "0.5.1"
+__version__ = "0.6.0"
 
 
 from typing import Any

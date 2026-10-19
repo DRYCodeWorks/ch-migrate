@@ -4,8 +4,23 @@ Changes are recorded in [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 
 ## [Unreleased]
 
+## [0.6.0]
+
+0.6 runs migrations on ClickHouse's official clickhouse-connect dialect in one session-safe connection, and stops a migration from running twice. A normal `pip install -U` reaches it from 0.5.x, so read this before upgrading:
+
+1. **Python 3.10 or later.** On Python 3.9, pip keeps installing 0.5.x.
+2. **Run `ch-migrate upgrade-env` in each project.** `up`, `down` and `history` refuse the old environment until you do. It replaces the whole `migrations/env.py` and saves the old file as `migrations/env.py.bak`; reapply any customizations from the backup.
+3. **Check `ch-migrate lint ENV`.** The idempotency gate can now block `up`, but only for revisions written after the baseline that `upgrade-env` records.
+
+To stay on 0.5.x until then, pin `ch-migrate-cli==0.5.1`.
+
 ### Changed
 
+- **Python 3.10 or later is required.** 0.5.x is the last line that supports Python 3.9.
+- Migrations run on the official clickhouse-connect dialect (`clickhousedb://`) in one checked HTTP session per run, so a standalone `SET` applies to later statements. Run `ch-migrate upgrade-env` after upgrading; old environments are refused before connecting.
+- The migration session uses its own single-connection pool. ClickHouse Cloud routes each TCP connection, not each session id, to a replica, so the session stays on the connection that created it. A request that reaches a replica without the session fails with `SESSION_NOT_FOUND` instead of running with default settings.
+- The idempotency gate can block `up` on projects upgrading from 0.5. `upgrade-env` sets the baseline, so only revisions written after it are gated.
+- The version table no longer lets an interrupted run re-run a migration. 0.5.x and earlier can, if `up` runs again before a delayed version update applies.
 - `lint ENV` analyzes only pending revisions after the gate baseline; static `lint` checks every revision after it.
 - `up` refuses idempotency gate errors before applying migrations; other lint findings are nonblocking warnings.
 - `upgrade-env` records current script heads as a comment-preserving `lint.gate_baseline`.
@@ -19,6 +34,11 @@ Changes are recorded in [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 - An isolated one-shard/two-replica integration harness with embedded Keeper, owned Docker network cleanup, node stop/start, and distributed-DDL timeout/catch-up coverage.
 - Deployment-aware version-table engines: replicated state for self-hosted replicated databases and configured clusters, preserving existing tables without automatic conversion.
 - Replica read barriers and failed version-mutation checks, plus live status warnings and an offline upgrade advisory for manual conversion.
+- Every version-row INSERT, from `up`, `down` and `stamp`, carries its own deduplication token, so Replicated and Shared MergeTree cannot drop a re-inserted earlier head and leave the version table empty.
+
+### Fixed
+
+- `ch-migrate --version` works in an editable install (`pip install -e`, `uv sync`). There it failed with `RuntimeError: 'ch_migrate' is not installed`, because click could not map the `ch_migrate` package to the `ch-migrate-cli` distribution. Installs from PyPI were not affected.
 
 ## [0.5.1]
 
