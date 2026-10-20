@@ -57,14 +57,16 @@ def _enforce_up_gate(environment: str, skip_mv_check: bool) -> None:
     try:
         report = lint_pending_up(Path.cwd(), environment, skip_mv_check)
     except Exception as error:
-        raise click.ClickException(f"Migration preflight failed: {error}") from error
+        raise ui.Failure(f"Migration preflight failed: {error}") from error
     if _print_gate_findings(report):
-        raise click.ClickException(
-            "Migration gate failed; nothing was applied. Fix SQL or add a reasoned in-file waiver."
+        raise ui.Failure(
+            "Migration gate failed; nothing was applied.",
+            "Fix SQL or add a reasoned in-file waiver.",
         )
 
 
 def _print_gate_findings(report) -> bool:
+    from ch_migrate.display import lint_finding_line
     from ch_migrate.lint import GATE_RULES, Severity
 
     blocked = False
@@ -77,11 +79,10 @@ def _print_gate_findings(report) -> bool:
         position = finding.file or "config.yaml"
         if finding.line is not None:
             position += f":{finding.line}"
-        click.echo(
-            f"{position}: {severity.upper()} [{finding.rule}] {finding.message}", err=gate_error
-        )
+        console = ui.err if gate_error else ui.out
+        console.print(lint_finding_line(finding, location=position, severity=severity))
         if finding.statement:
-            click.echo(f"  {finding.statement}", err=gate_error)
+            ui.detail(finding.statement, stderr=gate_error)
     return blocked
 
 
@@ -90,8 +91,9 @@ def _require_current_env() -> None:
 
     if has_current_env(Path.cwd() / "migrations" / "env.py"):
         return
-    raise click.ClickException(
-        "This project's migrations/env.py is from ch-migrate 0.x. Run `ch-migrate upgrade-env`."
+    raise ui.Failure(
+        "This project's migrations/env.py is from ch-migrate 0.x.",
+        "Run `ch-migrate upgrade-env`.",
     )
 
 
@@ -303,7 +305,7 @@ def up(
     except Exception as error:
         if verbose:
             raise
-        raise click.ClickException(str(error)) from error
+        raise ui.Failure(str(error)) from error
 
 
 @main.command()
@@ -904,7 +906,7 @@ def lint(environment: str | None, json_output: bool) -> None:
             raw_config = load_config(config_path)
             lint_config = LintConfig.from_config(raw_config)
         except Exception as error:
-            raise click.ClickException(f"Invalid lint configuration: {error}") from error
+            raise ui.Failure(f"Invalid lint configuration: {error}") from error
 
     client = None
     database = None
@@ -1148,18 +1150,19 @@ def upgrade_env() -> None:
     try:
         heads = record_baseline(Path.cwd())
     except Exception as error:
-        raise click.ClickException(f"Could not record gate baseline: {error}") from error
-    click.echo("  Recorded gate baseline: " + (", ".join(heads) if heads else "(empty)"))
+        raise ui.Failure(f"Could not record gate baseline: {error}") from error
+    ui.success("Recorded gate baseline: " + (", ".join(heads) if heads else "(empty)"))
     # This command stays offline; status performs the live check for a selected environment.
-    click.echo(
-        "Warning: existing version tables are not converted. If the deployment is replicated, "
-        "run `ch-migrate status <env>` and follow README 'The version table' to back up, "
-        "reconcile, and manually convert non-replicated state before routing across nodes.",
-        err=True,
+    ui.warn("Existing version tables are not converted.")
+    ui.hint(
+        "If the deployment is replicated, run `ch-migrate status <env>` and follow README "
+        "'The version table' to back up, reconcile, and manually convert non-replicated "
+        "state before routing across nodes.",
+        stderr=True,
     )
 
     if env_py_dst.exists() and env_py_dst.read_bytes() == env_py_src.read_bytes():
-        click.echo("migrations/env.py is already current; backup unchanged.")
+        ui.success("migrations/env.py is already current; backup unchanged.")
         return
 
     # Back up existing env.py if present

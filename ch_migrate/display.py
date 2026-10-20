@@ -231,16 +231,8 @@ def render_lint_report(
 
     # One finding per line, file:line first, so terminals and editors can jump to it.
     for r in report.results:
-        is_error = r.severity.value == "error"
-        line = Text()
-        marker = "✓ " if r.severity.value == "info" else ("✗ " if is_error else "! ")
-        style = "cyan" if r.severity.value == "info" else ("bold red" if is_error else "yellow")
-        line.append(marker, style=style)
         location = f"{r.file}:{r.line}" if r.file and r.line else (r.file or "")
-        line.append(location, style="bold")
-        line.append(f"  {r.message}  ")
-        line.append(f"[{r.rule}]", style="dim")
-        console.print(line)
+        console.print(lint_finding_line(r, location=location))
 
     summary_parts = []
     if report.error_count:
@@ -254,6 +246,20 @@ def render_lint_report(
         summary_parts.append(f"[cyan]{report.info_count} {noun}[/cyan]")
 
     console.print(", ".join(summary_parts))
+
+
+def lint_finding_line(result: Any, *, location: str, severity: str | None = None) -> Text:
+    """`✗ path:line  message  [rule]`, marked by severity (the result's own unless given)."""
+    severity = severity or result.severity.value
+    is_error = severity == "error"
+    marker = "✓ " if severity == "info" else ("✗ " if is_error else "! ")
+    style = "cyan" if severity == "info" else ("bold red" if is_error else "yellow")
+    line = Text()
+    line.append(marker, style=style)
+    line.append(location, style="bold")
+    line.append(f"  {result.message}  ")
+    line.append(f"[{result.rule}]", style="dim")
+    return line
 
 
 def render_snapshot_progress(
