@@ -38,7 +38,7 @@ To stay on 0.5.x until then, pin `ch-migrate-cli==0.5.1`.
 
 ### Fixed
 
-- `ch-migrate --version` works in an editable install (`pip install -e`, `uv sync`). There it failed with `RuntimeError: 'ch_migrate' is not installed`, because click could not map the `ch_migrate` package to the `ch-migrate-cli` distribution. Installs from PyPI were not affected.
+- `ch-migrate --version` works. In 0.5.1 it failed with `RuntimeError: 'ch_migrate' is not installed` in PyPI installs as well as editable ones, because click could not map the `ch_migrate` package to the `ch-migrate-cli` distribution.
 
 ## [0.5.1]
 
