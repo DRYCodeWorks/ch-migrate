@@ -9,8 +9,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
-import click
-
+from ch_migrate import ui
 from ch_migrate.alembic_env import has_current_env
 from ch_migrate.baseline import baseline_exemptions, normalize_baseline
 from ch_migrate.idempotency import classify_idempotency, waiver_reason
@@ -81,9 +80,8 @@ class LintConfig:
 
         rules_raw = lint_section.get("rules", {})
         if "large_table_threshold" in lint_section or "large_table_mutation" in rules_raw:
-            click.echo(
-                "Deprecated: large_table_mutation/large_table_threshold are ignored; use ch-migrate plan.",
-                err=True,
+            ui.warn(
+                "Deprecated: large_table_mutation/large_table_threshold are ignored; use ch-migrate plan."
             )
         rules = {}
         for name, level in rules_raw.items():

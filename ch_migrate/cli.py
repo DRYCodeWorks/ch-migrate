@@ -865,7 +865,7 @@ def plan(environment: str, json_output: bool) -> None:
         if json_output:
             emit_json("plan", {"error": str(error)})
         else:
-            click.echo(f"Error: {error}", err=True)
+            ui.error(str(error))
         raise click.exceptions.Exit(2) from error
     if json_output:
         emit_json("plan", document)
