@@ -376,7 +376,10 @@ The reviewable classification corpus is `tests/corpus/idempotency.yaml`.
 
 **Recovery:** fix the cause of a partial failure, then run `ch-migrate up ENV`
 again. Earlier idempotent statements can run again; the version advances only
-when the revision completes. Before retrying waived operations, review what the
+when the revision completes. On ClickHouse Cloud, a column that the failed attempt
+dropped or renamed stays locked until that change's mutation finishes: a retry
+before then fails with "affected by mutation ... which is not finished yet", even
+with `IF EXISTS`. Wait for it in `system.mutations`, then run `up` again. Before retrying waived operations, review what the
 earlier attempt actually changed.
 
 **Existing history:** `upgrade-env` records the current local script head(s) in

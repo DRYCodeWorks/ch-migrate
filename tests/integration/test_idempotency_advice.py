@@ -1,6 +1,7 @@
 """Every rewrite the gate suggests passes the gate and survives a retry on ClickHouse."""
 
 import secrets
+import time
 
 import pytest
 
@@ -94,6 +95,7 @@ def _state_after(project, request, runs):
     for statements in ((*SETUP,), *runs):
         for statement in statements:
             project.client.command(statement.format(db=database))
+        _settle(project.client, database)
     columns = project.client.query(
         "SELECT table, name, type FROM system.columns WHERE database = {db:String} "
         "ORDER BY table, name",
@@ -107,3 +109,17 @@ def _state_after(project, request, runs):
     tables = sorted({table for table, _, _ in columns})
     rows = [project.client.command(f"SELECT count() FROM {database}.`{table}`") for table in tables]
     return columns, indexes, rows
+
+
+def _settle(client, database):
+    """Wait out this attempt's mutations, as a person fixing a failed migration would.
+
+    On Cloud, a column an unfinished DROP or RENAME COLUMN mutation touches refuses the
+    next change to it (code 36), even with IF EXISTS, until that mutation completes.
+    """
+    pending = "SELECT count() FROM system.mutations WHERE database = {db:String} AND NOT is_done"
+    for _ in range(120):
+        if not client.command(pending, parameters={"db": database}):
+            return
+        time.sleep(1)
+    raise AssertionError(f"mutations in {database} did not finish")
