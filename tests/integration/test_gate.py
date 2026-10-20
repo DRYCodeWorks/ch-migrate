@@ -126,7 +126,10 @@ def test_gate_other_findings_warn_without_blocking(project):
     _revision(project, "aaaa", "mv.sql")
     result = project.run("up", "it")
     assert result.exit_code == 0, result.output
-    assert "WARN [mv_declarations]" in result.output
+    assert any(
+        line.startswith("! ") and line.endswith("[mv_declarations]")
+        for line in result.output.splitlines()
+    ), result.output
     assert project.client.command(f"EXISTS TABLE {project.database}.view") == 1
 
 

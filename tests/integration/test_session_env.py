@@ -163,7 +163,7 @@ def test_upgrade_env_required_before_legacy_commands_connect(legacy_project):
     for command in ("up", "down", "history"):
         refused = project.run(command, "it")
         assert refused.exit_code == 1, refused.output
-        assert "Run `ch-migrate upgrade-env`." in refused.output
+        assert "Run ch-migrate upgrade-env." in refused.output
         assert "Can't load plugin" not in refused.output
         assert project.client.command(f"SHOW CREATE TABLE {project.database}.legacy") == before
         assert project.client.query(

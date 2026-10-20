@@ -8,13 +8,17 @@ Text between backticks in steps, results and hints is shown as a command,
 highlighted in a terminal, with the backticks removed. Errors, warnings and
 details print exactly as written, because they often carry database messages
 that use backticks for identifiers. Nothing is parsed as Rich markup.
+
+Raise `Failure` rather than `click.ClickException`, so click prints the error in
+this style too.
 """
 
 from __future__ import annotations
 
 import sys
-from typing import NoReturn
+from typing import IO, Any, NoReturn
 
+import click
 from rich.console import Console
 from rich.text import Text
 
@@ -23,6 +27,23 @@ out = Console(highlight=False, soft_wrap=True)
 err = Console(stderr=True, highlight=False, soft_wrap=True)
 
 _COMMAND_STYLE = "bold cyan"
+
+
+class Failure(click.ClickException):
+    """A command error that click shows as `✗ message` and then the hints.
+
+    `format_message()` keeps the message and hints joined as one plain string.
+    """
+
+    def __init__(self, message: str, *hints: str) -> None:
+        super().__init__(" ".join((message, *hints)))
+        self.headline = message
+        self.hints = hints
+
+    def show(self, file: IO[Any] | None = None) -> None:
+        error(self.headline)
+        for line in self.hints:
+            hint(line, stderr=True)
 
 
 def step(message: str) -> None:
