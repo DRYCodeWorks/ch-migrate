@@ -196,8 +196,11 @@ uses `str.format`, so its literal-brace rules differ from `run_sql`.
 ### Re-runnable migrations
 
 Before Alembic runs, `up` refuses pending statements that violate idempotency
-rules. Use `IF NOT EXISTS` / `IF EXISTS` where supported. Inserts, exchanges,
-renames, updates/deletes, and cross-table partition copies/moves need a waiver.
+rules. Use `IF NOT EXISTS` / `IF EXISTS` where supported, including table,
+dictionary, and database renames. Inserts, exchanges, updates/deletes,
+single-part attach/detach, and cross-table partition copies/moves need a waiver.
+Each finding says how to make its statement safe; follow it before reaching for
+a waiver.
 
 ```sql
 -- ch-migrate: allow-non-idempotent Reviewed backfill into a deduplicating destination

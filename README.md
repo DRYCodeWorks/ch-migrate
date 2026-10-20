@@ -343,15 +343,23 @@ and the word `SET` inside string literals are not flagged. `standalone_set` is
 a gate rule whose severity cannot be lowered.
 
 Use `IF NOT EXISTS` for `CREATE` and `ALTER ... ADD`, and `IF EXISTS` for `DROP`,
-`ALTER ... DROP`, and `RENAME COLUMN`, where supported. This includes tables,
-views, materialized views, dictionaries, databases, users, roles, row policies,
-settings profiles, quotas, functions, and named collections. Column, index,
-projection, and constraint changes are checked separately. `CREATE OR REPLACE`
-is accepted. `ATTACH` and `DETACH` need their matching `IF` form.
+`ALTER ... DROP`, `RENAME COLUMN`, and table, dictionary, and database renames.
+This includes tables, views, materialized views, dictionaries, databases, users,
+roles, row policies, settings profiles, quotas, functions, and named collections.
+Column, index, projection, and constraint changes are checked separately.
+`CREATE OR REPLACE` is accepted. `ATTACH` and `DETACH` of an object need their
+matching `IF` form.
 
-Inserts, exchanges, table/dictionary/database renames, updates/deletes,
-`ATTACH PARTITION ... FROM`, and `MOVE PARTITION ... TO TABLE` need a reasoned
-waiver. Put it directly above the statement, without a separating blank line:
+Each finding says how to make its statement safe to run twice, using the
+statement's own names: the exact `IF` form, or what a retry would do and the
+usual fix. For example, a backfill into a table that only its migration writes
+can start with `TRUNCATE`, and `ATTACH PARTITION ... FROM` can usually be
+`REPLACE PARTITION ... FROM`.
+
+Inserts, exchanges, updates/deletes, `ATTACH PARTITION ... FROM`,
+`MOVE PARTITION ... TO TABLE`, and attaching or detaching a single `PART` need a
+reasoned waiver. Put it directly above the statement, without a separating blank
+line:
 
 ```sql
 -- ch-migrate: allow-non-idempotent This backfill targets a reviewed deduplicating table
@@ -362,7 +370,8 @@ For inline Python SQL, use the same directive in a `#` comment directly above
 `op.execute`. Empty reasons remain errors. Waivers print as INFO with their
 reasons in `lint` and `up`; they do not make the statement idempotent.
 `MODIFY`, `MATERIALIZE`, `CLEAR COLUMN`, `TRUNCATE`, `OPTIMIZE`, `SYSTEM`, grants,
-revokes, `REPLACE PARTITION`, and comments are not flagged by this rule.
+revokes, `REPLACE PARTITION`, attaching or detaching a whole partition, and
+comments are not flagged by this rule.
 The reviewable classification corpus is `tests/corpus/idempotency.yaml`.
 
 **Recovery:** fix the cause of a partial failure, then run `ch-migrate up ENV`

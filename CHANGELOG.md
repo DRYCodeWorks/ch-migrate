@@ -52,6 +52,7 @@ To stay on 0.5.x until then, pin `ch-migrate-cli==0.5.1`.
 - A SHA-pinned GitHub Actions drift gate that preserves the JSON report on failure; its install, credential, comparison, and exit steps run against the integration fixture for both matching and out-of-band schemas.
 - Reviewed idempotency corpus covering DDL, mutations, inserts, and partition operations.
 - Required-reason `ch-migrate: allow-non-idempotent` statement waivers, reported as INFO.
+- Gate findings say how to make the flagged statement safe to run twice, using its own names: the exact `IF NOT EXISTS` or `IF EXISTS` rewrite, or what a retry would do and the usual fix, such as `TRUNCATE` before a backfill or `REPLACE PARTITION` instead of `ATTACH PARTITION ... FROM`.
 - A `standalone_set` gate error for literal upgrade `SET` statements on environments without the v2 session-safety marker. Version-2 environments, `SETTINGS` clauses, and string literals are not flagged.
 - An isolated one-shard/two-replica integration harness with embedded Keeper, owned Docker network cleanup, node stop/start, and distributed-DDL timeout/catch-up coverage.
 - Deployment-aware version-table engines: replicated state for self-hosted replicated databases and configured clusters, preserving existing tables without automatic conversion.

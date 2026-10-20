@@ -386,13 +386,9 @@ class IdempotencyRule(LintRule):
             check = classify_idempotency(sql)
             if check.status == "ok":
                 return []
-            message = (
-                check.suggestion
-                if check.status == "fix"
-                else (
-                    "Not idempotent by syntax; add an in-file "
-                    "ch-migrate: allow-non-idempotent <reason> waiver"
-                )
+            message = check.suggestion or (
+                "Not idempotent by syntax; add an in-file "
+                "ch-migrate: allow-non-idempotent <reason> waiver"
             )
         first_line = sql.strip().splitlines()[0] if sql.strip() else ""
         return [

@@ -193,11 +193,20 @@
 - sql: "EXCHANGE TABLES {db}.old AND {db}.new"
   expected: waiver
 - sql: "RENAME TABLE a TO b"
-  expected: waiver
+  expected: fix
+  suggestion: "RENAME TABLE IF EXISTS a TO b"
+- sql: "RENAME TABLE IF EXISTS a TO b"
+  expected: ok
 - sql: "RENAME DICTIONARY a TO b"
-  expected: waiver
+  expected: fix
+  suggestion: "RENAME DICTIONARY IF EXISTS a TO b"
+- sql: "RENAME DICTIONARY IF EXISTS a TO b"
+  expected: ok
 - sql: "RENAME DATABASE a TO b"
-  expected: waiver
+  expected: fix
+  suggestion: "RENAME DATABASE IF EXISTS a TO b"
+- sql: "RENAME DATABASE IF EXISTS a TO b"
+  expected: ok
 - sql: "INSERT INTO t VALUES (1)"
   expected: waiver
 - sql: "INSERT INTO t SELECT id FROM other"
@@ -264,3 +273,11 @@
   expected: ok
 - sql: "-- header\n# note\nCREATE TABLE IF NOT EXISTS `DROP` (`UPDATE` UInt64) ENGINE = Memory"
   expected: ok
+- sql: "ALTER TABLE t DETACH PARTITION 'p'"
+  expected: ok
+- sql: "ALTER TABLE t ATTACH PARTITION 'p'"
+  expected: ok
+- sql: "ALTER TABLE t DETACH PART 'all_1_1_0'"
+  expected: waiver
+- sql: "ALTER TABLE t ATTACH PART 'all_1_1_0'"
+  expected: waiver
