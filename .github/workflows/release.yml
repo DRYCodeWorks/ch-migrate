@@ -8,13 +8,13 @@ name: release
 # PyPI publisher for project ch-migrate-cli: owner DRYCodeWorks, repository
 # ch-migrate, workflow release.yml, no environment.
 #
-# This copy of the workflow is on the 0.6.x release branch, dy/ch-migrate-0.6.
-# GitHub runs the workflow file from the tagged commit, so 0.6.x tags are
+# This copy of the workflow is on the 0.7.x release branch, dy/ch-migrate-0.7.
+# GitHub runs the workflow file from the tagged commit, so 0.7.x tags are
 # checked against this branch while tags on main keep main's own check.
 #
-# To release 0.6.x: set __version__ in ch_migrate/__init__.py, commit, push
-# dy/ch-migrate-0.6, then `git tag vX.Y.Z && git push origin vX.Y.Z`. Tags on
-# commits that are not on dy/ch-migrate-0.6 are refused before anything builds.
+# To release 0.7.x: set __version__ in ch_migrate/__init__.py, commit, push
+# dy/ch-migrate-0.7, then `git tag vX.Y.Z && git push origin vX.Y.Z`. Tags on
+# commits that are not on dy/ch-migrate-0.7 are refused before anything builds.
 
 on:
   push:
@@ -24,7 +24,7 @@ permissions:
   contents: read
 
 env:
-  RELEASE_BRANCH: dy/ch-migrate-0.6
+  RELEASE_BRANCH: dy/ch-migrate-0.7
 
 jobs:
   on-release-branch:
