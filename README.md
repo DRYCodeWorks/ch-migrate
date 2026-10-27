@@ -241,9 +241,33 @@ ch-migrate up dev                 # No default waiting timeout
 ch-migrate up dev --timeout 120   # One waiting budget across the invocation
 ```
 
-Progress names the table, mutation ID, host, remaining parts and elapsed time.
-A terminal uses a live line; CI gets plain state changes and periodic summaries
-on stderr. Zero remaining parts alone does not count as completion: every
+While it waits, `up` shows progress on stderr. In a terminal, each mutation gets a
+live bar weighted by bytes, with its parts and an estimate of the time left:
+
+```text
+→ Applying 3f9c2a1b  backfill_digest
+  ━━━━━━━━━━━━━━━━━━━━╺━━━━━━━━━━━━━━━━━  18.2 / 41.0 GiB · 23/41 parts · 1:12 · ~1:30 left
+✓ 3f9c2a1b  backfill_digest  mutation_7.txt · 41 parts · 41.0 GiB · 2:03
+```
+
+Self-hosted replicated tables get one row per replica, and `ON CLUSTER` DDL
+counts the hosts that have finished. When output isn't a terminal (CI logs,
+pipes, coding agents), `up` prints plain lines instead: one when a wait starts,
+one at each 10% of the parts or every 30 seconds, and one when it finishes:
+
+```text
+→ Applying 3f9c2a1b  backfill_digest
+  waiting on mutation_7.txt (demo_dev.events): 0/41 parts
+  waiting on mutation_7.txt (demo_dev.events): 5/41 parts · 0:14
+✓ 3f9c2a1b  backfill_digest  mutation_7.txt · 41 parts · 2:03
+```
+
+Part sizes come from `system.parts`. If the migration role can't read it, the bar
+counts parts only and says so once; progress never changes whether `up`
+succeeds. After a resume the bar counts the parts still left when it reattached.
+A failed mutation shows ClickHouse's `latest_fail_reason` and the scoped
+`KILL MUTATION` statement; a timeout names what is still pending and how to
+resume. Zero remaining parts alone does not count as completion: every
 required replica must report its owned mutation finished. Configure `cluster`
 for self-hosted replicated tables, or use a Replicated database's automatic
 cluster. Missing replicas or missing evidence are never treated as success.

@@ -3,14 +3,21 @@
 from __future__ import annotations
 
 import re
+from dataclasses import replace
 
+from clickhouse_connect.driver.exceptions import DatabaseError
+
+from ch_migrate.waiting_display import HostParts, MutationProgress
 from ch_migrate.waiting_sql import sql_string
-from ch_migrate.waiting_types import UnknownOutcome, WaitingError
+from ch_migrate.waiting_types import FailedMutation, MutationFailed, UnknownOutcome, WaitingError
+
+VERSION_TABLE = "alembic_version"
 
 
 class MutationWaiter:
     def __init__(self, client, state, budget):
         self.client, self.state, self.budget = client, state, budget
+        self._part_sizes: dict[tuple[str, str], int] = {}
 
     def target(self, table: tuple[str, str]) -> dict | None:
         rows = self.client.query(
@@ -72,7 +79,7 @@ class MutationWaiter:
                     f"{receipt['database']}.{receipt['table']}; every required replica finished"
                 )
                 return
-            self.budget.pause("; ".join(pending))
+            self.budget.pause("; ".join(pending), self._snapshot(receipt, rows))
 
     def _replicated_target(self, target: dict) -> None:
         path, total = self.client.query(
@@ -171,11 +178,59 @@ class MutationWaiter:
                 checkpoint()
         return pending
 
+    def _snapshot(self, receipt: dict, rows: list) -> MutationProgress | None:
+        """What the display shows about this statement's unfinished mutations; never a verdict."""
+        hosts = [
+            parts
+            for host in receipt["uuids"]
+            if host not in receipt["done_hosts"]
+            and (parts := _host_parts(host, receipt["ids"].get(host) or [], rows)) is not None
+        ]
+        owned = [mutation for ids in receipt["ids"].values() for mutation in ids]
+        if not hosts or not owned:
+            return None
+        if self.budget.display.wants_bytes:
+            hosts = self._with_sizes(receipt, hosts)
+        table = f"{receipt['database']}.{receipt['table']}"
+        bookkeeping = receipt["table"] == VERSION_TABLE
+        return MutationProgress(table, min(owned, key=_order), tuple(hosts), bookkeeping)
+
+    def _with_sizes(self, receipt: dict, hosts: list[HostParts]) -> list[HostParts]:
+        # Parts never change size, so each is read once; only new names cost a query.
+        wanted = {(host.host, name) for host in hosts for name in host.names}
+        unknown = {name for _, name in wanted - self._part_sizes.keys()}
+        if unknown:
+            try:
+                self._part_sizes.update(self._read_sizes(receipt, unknown))
+            except DatabaseError as error:
+                self.budget.display.parts_only(_sizes_unreadable(error))
+                return hosts
+        sizes = self._part_sizes
+        return [
+            replace(
+                host,
+                sizes={n: sizes[(host.host, n)] for n in host.names if (host.host, n) in sizes},
+            )
+            for host in hosts
+        ]
+
+    def _read_sizes(self, receipt: dict, names: set[str]) -> dict[tuple[str, str], int]:
+        source, parameters = self._source(receipt, "parts")
+        rows = self.client.query(
+            "SELECT materialize(hostName()), name, bytes_on_disk "
+            f"FROM {source} WHERE database = {{db:String}} AND table = {{table:String}} "
+            "AND active AND has({names:Array(String)}, name)",
+            parameters={**parameters, "names": sorted(names)},
+            settings=self._settings() if receipt.get("cluster") else None,
+        ).result_rows
+        shared = receipt["engine"].startswith("Shared")
+        return {("shared" if shared else host, name): size for host, name, size in rows}
+
     def _rows(self, target: dict) -> list:
         source, parameters = self._source(target, "mutations")
         rows = self.client.query(
-            f"SELECT materialize(hostName()), mutation_id, command, is_done, parts_to_do, latest_fail_reason "
-            f"FROM {source} WHERE database = {{db:String}} AND table = {{table:String}}",
+            "SELECT materialize(hostName()), mutation_id, command, is_done, parts_to_do, "
+            f"latest_fail_reason, parts_to_do_names FROM {source} WHERE database = {{db:String}} AND table = {{table:String}}",
             parameters=parameters,
             settings=self._settings() if target.get("cluster") else None,
         ).result_rows
@@ -215,20 +270,24 @@ class MutationWaiter:
 
     @staticmethod
     def _failures(target: dict, rows: list, prefix: str) -> None:
-        for host, mutation, _, done, _, reason in rows:
+        for host, mutation, _, done, _, reason, *_ in rows:
             if not done and reason:
                 kill = (
                     f"KILL MUTATION WHERE database = {sql_string(target['database'])} "
                     f"AND table = {sql_string(target['table'])} AND mutation_id = {sql_string(mutation)}"
                 )
-                raise WaitingError(
-                    f"{prefix}: {target['database']}.{target['table']} mutation {mutation} on {host}: {reason}\nOperator only on {host}: {kill}"
+                table = f"{target['database']}.{target['table']}"
+                raise MutationFailed(
+                    f"{prefix}: {table} mutation {mutation} on {host}: {reason}\nOperator only on {host}: {kill}",
+                    FailedMutation(
+                        table, mutation, host, reason, kill, prefix.startswith("Blocked")
+                    ),
                 )
 
     @staticmethod
     def _progress(target: dict, rows: list) -> str:
         parts = {}
-        for host, mutation, _, _, count, _ in rows:
+        for host, mutation, _, _, count, *_ in rows:
             parts[(host, mutation)] = max(parts.get((host, mutation), 0), count)
         return "; ".join(
             f"{target['database']}.{target['table']} mutation {mutation} host {host}; parts_to_do={count}"
@@ -241,3 +300,20 @@ def _order(mutation: str) -> int:
     if len(numbers) != 1:
         raise WaitingError(f"Unrecognized mutation ordering identifier: {mutation}")
     return int(numbers[0])
+
+
+def _host_parts(host: str, ids: list, rows: list) -> HostParts | None:
+    unfinished = [row for row in rows if row[0] == host and row[1] in ids and not row[3]]
+    if not unfinished:
+        return None
+    names = frozenset(name for row in unfinished for name in row[6])
+    return HostParts(host, names, len(names) or max(row[4] for row in unfinished))
+
+
+def _sizes_unreadable(error: Exception) -> str:
+    code = re.search(r"\(([A-Z][A-Z_]+)\)", str(error))
+    why = f" ({code.group(1)})" if code else ""
+    return (
+        f"can't read system.parts{why}. Grant SELECT ON system.parts to the migration role "
+        "to see bytes and a time estimate."
+    )

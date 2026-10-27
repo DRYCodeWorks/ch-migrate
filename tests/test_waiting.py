@@ -87,7 +87,9 @@ def test_zero_parts_is_not_mutation_completion(monkeypatch):
         "baseline": {"host": []},
     }
     monkeypatch.setattr(waiter, "_identities", lambda _: {"host": "uuid"})
-    monkeypatch.setattr(waiter, "_rows", lambda _: [("host", "mutation_1.txt", "owned", 0, 0, "")])
+    monkeypatch.setattr(
+        waiter, "_rows", lambda _: [("host", "mutation_1.txt", "owned", 0, 0, "", [])]
+    )
     with pytest.raises(WaitTimeout, match="mutation_1.txt"):
         waiter.wait(receipt, lambda: None)
     assert receipt["done_hosts"] == []

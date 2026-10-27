@@ -29,6 +29,7 @@ GRANT SELECT ON system.columns TO {project}_migration_role;
 GRANT CURRENT GRANTS(SELECT ON system.replicas) TO {project}_migration_role;
 GRANT CURRENT GRANTS(SELECT ON system.clusters) TO {project}_migration_role;
 GRANT CURRENT GRANTS(SELECT ON system.distributed_ddl_queue) TO {project}_migration_role;
+GRANT CURRENT GRANTS(SELECT ON system.parts) TO {project}_migration_role;
 GRANT CURRENT GRANTS(SYSTEM SYNC REPLICA ON {db}.*) TO {project}_migration_role;
 GRANT CURRENT GRANTS(SYSTEM SYNC DATABASE REPLICA ON {db}.*) TO {project}_migration_role;
 GRANT CURRENT GRANTS(CLUSTER ON *.*) TO {project}_migration_role;

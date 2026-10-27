@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from ch_migrate.waiting_display import DDLProgress
 from ch_migrate.waiting_types import UnknownOutcome, WaitingError
 
 
@@ -48,7 +49,9 @@ class DistributedDDLWaiter:
                 checkpoint()
             pending = self._host_states(receipt, rows, checkpoint)
             if pending:
-                self.budget.pause(f"DDL {entry}: " + "; ".join(pending))
+                finished = len(expected.intersection(receipt["done_hosts"]))
+                progress = DDLProgress(entry, finished, len(expected))
+                self.budget.pause(f"DDL {entry}: " + "; ".join(pending), progress)
         self.budget.complete(f"DDL {receipt['entry']}; every required host finished")
 
     def tables(

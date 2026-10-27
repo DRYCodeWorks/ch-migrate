@@ -9,6 +9,7 @@ from uuid import uuid4
 from sqlalchemy import text
 from sqlalchemy.sql.dml import Delete, Insert, Update
 
+from ch_migrate import ui
 from ch_migrate.waiting_sql import (
     mutation_sql,
     qualified_table,
@@ -38,9 +39,7 @@ class VersionWrites:
     def resume(self) -> None:
         for key, record in self.owner.journal.unfinished_versions():
             self.owner.validate_revision(key.revision, record["fingerprint"])
-            print(
-                f"Resuming version bookkeeping for {key.revision}", file=self.owner.progress_stream
-            )
+            ui.step(f"Resuming version bookkeeping for {key.revision[:8]}", stderr=True)
             self.continue_record(key, record)
 
     def continue_record(self, key, record: dict) -> None:

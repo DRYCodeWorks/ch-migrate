@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import sys
 from contextlib import contextmanager
 from functools import wraps
 from pathlib import Path
@@ -15,6 +14,7 @@ from clickhouse_connect.driver.exceptions import DatabaseError
 from sqlalchemy import event
 from sqlalchemy.schema import CreateTable
 
+from ch_migrate import ui
 from ch_migrate.classify import classify
 from ch_migrate.hooks import run_hooks
 from ch_migrate.idempotency import classify_idempotency
@@ -52,7 +52,6 @@ class MigrationWaiter:
         self.mutations = MutationWaiter(self.client, state, self.budget)
         self.ddl = DistributedDDLWaiter(self.client, self.budget)
         self.versions = VersionWrites(self)
-        self.progress_stream = sys.stderr
         self.revision = None
         self.generation = self.position = self._internal = 0
         self.fingerprint = ""
@@ -62,6 +61,8 @@ class MigrationWaiter:
         self._scripts = None
 
     def install(self, config) -> None:
+        # `ch-migrate up` passes the display it labels with each migration's name.
+        self.budget.display = config.attributes.get("ch_migrate_display", self.budget.display)
         self._scripts = ScriptDirectory.from_config(config)
         for target, name, listener, options in (
             (self.connection, "before_cursor_execute", self._before, {"retval": True}),
@@ -348,9 +349,10 @@ class MigrationWaiter:
             or record["kind"] == "mutation"
             or (record["kind"] == "ttl" and record["phase"] == "accepted")
         ):
-            print(
-                f"Resuming {key.revision} statement {key.position}; not reissuing SQL",
-                file=self.progress_stream,
+            ui.step(
+                f"Resuming {key.revision[:8]} statement {key.position}: waiting on the work it "
+                "started; not reissuing SQL",
+                stderr=True,
             )
             self._wait_work(key, record)
             self._complete(key, record)

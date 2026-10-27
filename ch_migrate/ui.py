@@ -46,14 +46,14 @@ class Failure(click.ClickException):
             hint(line, stderr=True)
 
 
-def step(message: str) -> None:
+def step(message: str, *, stderr: bool = False) -> None:
     """Something is starting or in progress."""
-    out.print(_marked("→ ", "cyan", message))
+    (err if stderr else out).print(_marked("→ ", "cyan", message))
 
 
-def success(message: str) -> None:
+def success(message: str, *, stderr: bool = False) -> None:
     """Something finished as intended."""
-    out.print(_marked("✓ ", "green", message))
+    (err if stderr else out).print(_marked("✓ ", "green", message))
 
 
 def detail(message: str, *, stderr: bool = False) -> None:

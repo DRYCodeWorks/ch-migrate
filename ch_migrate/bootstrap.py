@@ -151,6 +151,7 @@ def build_bootstrap_sql(
         f"GRANT CURRENT GRANTS(SELECT ON system.replicas) TO {project}_migration_role;",
         f"GRANT CURRENT GRANTS(SELECT ON system.clusters) TO {project}_migration_role;",
         f"GRANT CURRENT GRANTS(SELECT ON system.distributed_ddl_queue) TO {project}_migration_role;",
+        f"GRANT CURRENT GRANTS(SELECT ON system.parts) TO {project}_migration_role;",
         f"GRANT CURRENT GRANTS(SYSTEM SYNC REPLICA ON {db}.*) TO {project}_migration_role;",
         f"GRANT CURRENT GRANTS(SYSTEM SYNC DATABASE REPLICA ON {db}.*) TO {project}_migration_role;",
         f"GRANT CURRENT GRANTS(CLUSTER ON *.*) TO {project}_migration_role;",
@@ -328,7 +329,9 @@ def run_bootstrap(
     secure = env_config.get("secure", True)
     port = env_config.get("port", 8443 if secure else 8123)
 
-    ui.step(f"Bootstrapping {env_name}: database {env_config['database']} on {host}, as {admin_user}")
+    ui.step(
+        f"Bootstrapping {env_name}: database {env_config['database']} on {host}, as {admin_user}"
+    )
     ui.detail(f"Migration user: {migration_user}")
     if dict_reader_name:
         ui.detail(f"Dict reader: {dict_reader_name}")
