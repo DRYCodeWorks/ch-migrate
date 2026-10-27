@@ -22,10 +22,17 @@ class MigrationStatement:
     line: int
     comments: tuple[str, ...]
     direction: MigrationDirection
+    # False when the SQL only exists at run time; `sql` then holds the call's source.
+    readable: bool = True
 
 
 def migration_statements(path: Path) -> list[MigrationStatement]:
-    """Collect literal SQL in upgrade/downgrade bodies, preserving its source."""
+    """Collect the SQL in upgrade/downgrade bodies, preserving its source.
+
+    Literal SQL is returned as statements. A call that sends SQL known only at run time
+    (a variable, an expression) comes back as one unreadable statement, so callers can
+    insist on a waiver instead of passing it silently.
+    """
     content = path.read_text()
     root = path.parent.parent
     if root.name == "migrations":
@@ -45,7 +52,7 @@ def migration_statements(path: Path) -> list[MigrationStatement]:
         for call in calls:
             if _call_name(call) in ("read_sql", "run_sql"):
                 result.extend(_file_statements(call, source, direction))
-            elif _call_name(call) == "op.execute":
+            elif _sends_sql(call):
                 result.extend(_inline_statements(call, source, direction))
     return result
 
@@ -79,14 +86,19 @@ def _call_name(call: ast.Call) -> str:
     return ""
 
 
+def _sends_sql(call: ast.Call) -> bool:
+    """`op.execute`, and `execute`/`exec_driver_sql` on a connection such as `op.get_bind()`."""
+    return isinstance(call.func, ast.Attribute) and call.func.attr in ("execute", "exec_driver_sql")
+
+
 def _file_statements(
     call: ast.Call, source: _Source, direction: MigrationDirection
 ) -> list[MigrationStatement]:
-    if not call.args or not isinstance(call.args[0], ast.Constant):
-        return []
-    path_value = call.args[0].value
+    path_value = (
+        call.args[0].value if call.args and isinstance(call.args[0], ast.Constant) else None
+    )
     if not isinstance(path_value, str):
-        return []
+        return [_unreadable(call, source, direction)]
     sql_path = source.path.parent.parent / "sql" / path_value
     statements = split_statements(sql_path.read_text())
     filename = sql_path.relative_to(source.root).as_posix()
@@ -103,7 +115,13 @@ def _inline_statements(
         return []
     text = _literal_sql(call.args[0], source.content)
     if text is None:
-        return []
+        # `op.execute(read_sql("file.sql"))`: the file's statements are collected from read_sql.
+        if isinstance(call.args[0], ast.Call) and _call_name(call.args[0]) in (
+            "read_sql",
+            "run_sql",
+        ):
+            return []
+        return [_unreadable(call, source, direction)]
     comments = _python_comments(source.lines, call.lineno)
     filename = source.path.relative_to(source.root).as_posix()
     result = []
@@ -114,7 +132,18 @@ def _inline_statements(
     return result
 
 
+def _unreadable(
+    call: ast.Call, source: _Source, direction: MigrationDirection
+) -> MigrationStatement:
+    code = ast.get_source_segment(source.content, call) or ast.unparse(call)
+    filename = source.path.relative_to(source.root).as_posix()
+    comments = _python_comments(source.lines, call.lineno)
+    return MigrationStatement(code, filename, call.lineno, comments, direction, readable=False)
+
+
 def _literal_sql(node: ast.AST, content: str) -> str | None:
+    if _is_text_call(node):
+        return _literal_sql(node.args[0], content)
     if isinstance(node, ast.Constant) and isinstance(node.value, str):
         return node.value
     if not isinstance(node, ast.JoinedStr):
@@ -133,6 +162,16 @@ def _literal_sql(node: ast.AST, content: str) -> str | None:
                 format_spec = ":" + (_literal_sql(value.format_spec, content) or "")
             pieces.append("{" + expression + conversion + format_spec + "}")
     return "".join(pieces)
+
+
+def _is_text_call(node: ast.AST) -> bool:
+    """SQLAlchemy's `text("...")` or `sa.text("...")` around the SQL."""
+    if not isinstance(node, ast.Call) or len(node.args) != 1:
+        return False
+    func = node.func
+    return (isinstance(func, ast.Name) and func.id == "text") or (
+        isinstance(func, ast.Attribute) and func.attr == "text"
+    )
 
 
 def _python_comments(lines: list[str], lineno: int) -> tuple[str, ...]:

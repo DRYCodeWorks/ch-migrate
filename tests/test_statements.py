@@ -127,6 +127,59 @@ def test_missing_referenced_file_is_not_silently_ignored(project):
         migration_statements(path)
 
 
+def test_every_way_of_sending_sql_is_collected(project):
+    path = _revision(
+        project,
+        "def upgrade():\n"
+        "    op.execute(text('UPDATE {db}.t SET x = 1 WHERE 1'))\n"
+        "    op.get_bind().execute(sa.text(f'DELETE FROM {db}.t WHERE id = 1'))\n"
+        "    op.get_bind().exec_driver_sql('ALTER TABLE {db}.t UPDATE x = 2 WHERE 1')\n",
+    )
+    statements = migration_statements(path)
+    assert [(s.sql, s.line, s.readable) for s in statements] == [
+        ("UPDATE {db}.t SET x = 1 WHERE 1", 4, True),
+        ("DELETE FROM {db}.t WHERE id = 1", 5, True),
+        ("ALTER TABLE {db}.t UPDATE x = 2 WHERE 1", 6, True),
+    ]
+
+
+def test_sql_known_only_at_run_time_is_unreadable_not_skipped(project):
+    path = _revision(
+        project,
+        "def upgrade():\n"
+        "    # ch-migrate: allow-non-idempotent built from a reviewed list\n"
+        "    op.execute(statement)\n"
+        "    run_sql(name)\n"
+        "    connection.exec_driver_sql(build())\n",
+    )
+    statements = migration_statements(path)
+    assert [(s.sql, s.line, s.readable) for s in statements] == [
+        ("op.execute(statement)", 5, False),
+        ("run_sql(name)", 6, False),
+        ("connection.exec_driver_sql(build())", 7, False),
+    ]
+    assert statements[0].comments == (
+        "ch-migrate: allow-non-idempotent built from a reviewed list",
+    )
+
+
+def test_unreadable_sql_needs_a_waiver_and_skips_sql_rules(project):
+    _revision(
+        project,
+        "def upgrade():\n"
+        "    op.execute(statement)\n"
+        "    # ch-migrate: allow-non-idempotent each table is filled once\n"
+        "    op.execute(other)\n",
+    )
+    report = lint_migrations(project / "migrations/versions")
+    assert [(r.rule, r.severity.value, r.line) for r in report.results] == [
+        ("idempotency", "error", 4),
+        ("idempotency", "info", 6),
+    ]
+    assert "only exists at run time" in report.results[0].message
+    assert report.results[1].message == "Idempotency waiver: each table is filled once"
+
+
 def _revision(project: Path, body: str) -> Path:
     path = project / "migrations/versions/a.py"
     path.write_text("revision = 'a'\ndown_revision = None\n" + body)
