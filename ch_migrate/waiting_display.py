@@ -29,41 +29,6 @@ BAR_WIDTH = 38
 Progress = Union["MutationProgress", "DDLProgress", str]
 
 
-@dataclass(frozen=True)
-class HostParts:
-    """One host's remaining parts. `sizes` maps each remaining part to its bytes, if known."""
-
-    host: str
-    names: frozenset[str]
-    count: int
-    sizes: dict[str, int] | None = None
-
-    @property
-    def bytes_left(self) -> int | None:
-        if self.sizes is None or not self.names.issubset(self.sizes):
-            return None
-        return sum(self.sizes[name] for name in self.names)
-
-
-@dataclass(frozen=True)
-class MutationProgress:
-    """The mutation a statement started, on every host that hasn't finished it."""
-
-    table: str
-    mutation: str
-    hosts: tuple[HostParts, ...]
-    bookkeeping: bool = False  # the version table's own delete: waited for, not shown
-
-
-@dataclass(frozen=True)
-class DDLProgress:
-    """An ON CLUSTER statement's distributed DDL queue entry."""
-
-    entry: str
-    finished: int
-    total: int
-
-
 class WaitDisplay:
     """Draws one wait at a time; `complete` prints its result line, `stop` clears it."""
 
@@ -74,18 +39,13 @@ class WaitDisplay:
         self._live: Live | None = None
         self._parts_only = False
 
+    def start_migration(self, label: str) -> None:
+        self.migration = label
+
     @property
     def wants_bytes(self) -> bool:
         """Only the terminal bar shows bytes, so piped runs skip the size lookup."""
         return self._terminal and not self._parts_only
-
-    @property
-    def _terminal(self) -> bool:
-        # A dumb terminal can't redraw in place, so it gets the piped lines.
-        return self.console.is_terminal and not self.console.is_dumb_terminal
-
-    def start_migration(self, label: str) -> None:
-        self.migration = label
 
     def update(self, progress: Progress) -> None:
         if isinstance(progress, MutationProgress) and progress.bookkeeping:
@@ -127,6 +87,11 @@ class WaitDisplay:
             self._wait = _Wait(key, started=time.monotonic())
         return self._wait
 
+    @property
+    def _terminal(self) -> bool:
+        # A dumb terminal can't redraw in place, so it gets the piped lines.
+        return self.console.is_terminal and not self.console.is_dumb_terminal
+
     def _draw_live(self, wait: _Wait) -> None:
         if self._live is None:
             self._live = Live(console=self.console, auto_refresh=False, transient=True)
@@ -137,6 +102,41 @@ class WaitDisplay:
         line = wait.piped_line(time.monotonic())
         if line is not None:
             self.console.print(Text("  " + line))
+
+
+@dataclass(frozen=True)
+class MutationProgress:
+    """The mutation a statement started, on every host that hasn't finished it."""
+
+    table: str
+    mutation: str
+    hosts: tuple[HostParts, ...]
+    bookkeeping: bool = False  # the version table's own delete: waited for, not shown
+
+
+@dataclass(frozen=True)
+class HostParts:
+    """One host's remaining parts. `sizes` maps each remaining part to its bytes, if known."""
+
+    host: str
+    names: frozenset[str]
+    count: int
+    sizes: dict[str, int] | None = None
+
+    @property
+    def bytes_left(self) -> int | None:
+        if self.sizes is None or not self.names.issubset(self.sizes):
+            return None
+        return sum(self.sizes[name] for name in self.names)
+
+
+@dataclass(frozen=True)
+class DDLProgress:
+    """An ON CLUSTER statement's distributed DDL queue entry."""
+
+    entry: str
+    finished: int
+    total: int
 
 
 @dataclass
@@ -239,11 +239,6 @@ class _Wait:
         return text
 
 
-def _named(mutation: str) -> str:
-    # MergeTree ids already read "mutation_7.txt"; replicated ones are bare numbers.
-    return mutation if mutation.startswith("mutation") else f"mutation {mutation}"
-
-
 def _key(progress: Progress) -> str:
     if isinstance(progress, MutationProgress):
         return f"mutation {progress.table} {progress.mutation}"
@@ -263,6 +258,11 @@ def _bar_row(label: str, bar: ProgressBar, stats: str) -> Table:
 
 def _bar(completed: float, total: float) -> ProgressBar:
     return ProgressBar(total=max(total, 1), completed=min(completed, total), width=BAR_WIDTH)
+
+
+def _named(mutation: str) -> str:
+    # MergeTree ids already read "mutation_7.txt"; replicated ones are bare numbers.
+    return mutation if mutation.startswith("mutation") else f"mutation {mutation}"
 
 
 def _duration(seconds: float) -> str:

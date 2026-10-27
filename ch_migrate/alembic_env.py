@@ -103,6 +103,18 @@ def has_current_env(path: Path) -> bool:
     )
 
 
+def _route_logs(handler: logging.Handler | None) -> None:
+    # `ch-migrate up` reports each migration in its own words, so Alembic's and
+    # ch-migrate's records go to its handler instead of alembic.ini's console handler.
+    if handler is None:
+        return
+    for name in ("alembic", "ch_migrate"):
+        named = logging.getLogger(name)
+        named.handlers = [handler]
+        named.propagate = False
+        named.setLevel(logging.INFO)
+
+
 def _run_offline(env_config: dict[str, Any]) -> None:
     context.configure(
         url=_url(env_config),
@@ -182,18 +194,6 @@ def _run_context(waiter: MigrationWaiter, hooks: HookRegistry) -> None:
             )
         context.run_migrations()
         waiter.finish_run()
-
-
-def _route_logs(handler: logging.Handler | None) -> None:
-    # `ch-migrate up` reports each migration in its own words, so Alembic's and
-    # ch-migrate's records go to its handler instead of alembic.ini's console handler.
-    if handler is None:
-        return
-    for name in ("alembic", "ch_migrate"):
-        named = logging.getLogger(name)
-        named.handlers = [handler]
-        named.propagate = False
-        named.setLevel(logging.INFO)
 
 
 def _url(env_config: dict[str, Any]) -> URL:

@@ -24,6 +24,14 @@ class WaitTimeout(WaitingError):
         self.pending, self.elapsed = pending, elapsed
 
 
+class MutationFailed(WaitingError):
+    """ClickHouse reports `latest_fail_reason` for a mutation this run owns or waits behind."""
+
+    def __init__(self, message: str, failure: FailedMutation) -> None:
+        super().__init__(message)
+        self.failure = failure
+
+
 @dataclass(frozen=True)
 class FailedMutation:
     """What the operator needs: where it failed, why, and the scoped KILL statement."""
@@ -34,14 +42,6 @@ class FailedMutation:
     reason: str
     kill: str
     foreign: bool = False
-
-
-class MutationFailed(WaitingError):
-    """ClickHouse reports `latest_fail_reason` for a mutation this run owns or waits behind."""
-
-    def __init__(self, message: str, failure: FailedMutation) -> None:
-        super().__init__(message)
-        self.failure = failure
 
 
 @dataclass

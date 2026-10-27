@@ -21,21 +21,6 @@ def clock(monkeypatch):
     return now
 
 
-def _display(terminal):
-    buffer = io.StringIO()
-    console = Console(file=buffer, force_terminal=terminal, width=160, color_system=None)
-    return WaitDisplay(console), buffer
-
-
-def _mutation(left, host="h1", sizes=True):
-    names = frozenset(f"all_{i}_{i}_0" for i in range(left))
-    return HostParts(host, names, left, {name: GIB for name in names} if sizes else None)
-
-
-def _progress(*hosts):
-    return MutationProgress("demo_dev.events", "7", hosts)
-
-
 def test_terminal_bar_weights_by_bytes_and_estimates_time(clock):
     display, buffer = _display(terminal=True)
     display.start_migration("3f9c2a1b  backfill_status")
@@ -151,6 +136,21 @@ def test_interrupt_says_the_work_continues(capsys):
     err = capsys.readouterr().err
     assert err.startswith("✗ Interrupted during 3f9c2a1b  backfill")
     assert "Run ch-migrate up dev to pick up where it stopped" in err
+
+
+def _display(terminal):
+    buffer = io.StringIO()
+    console = Console(file=buffer, force_terminal=terminal, width=160, color_system=None)
+    return WaitDisplay(console), buffer
+
+
+def _mutation(left, host="h1", sizes=True):
+    names = frozenset(f"all_{i}_{i}_0" for i in range(left))
+    return HostParts(host, names, left, {name: GIB for name in names} if sizes else None)
+
+
+def _progress(*hosts):
+    return MutationProgress("demo_dev.events", "7", hosts)
 
 
 def _current(label):
