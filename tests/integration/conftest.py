@@ -39,7 +39,8 @@ class ClickHouseServer:
             password=self.password,
             secure=self.secure,
             connect_timeout=5,
-            send_receive_timeout=15,
+            # Cloud DDL such as DROP DATABASE SYNC can take longer than a local container.
+            send_receive_timeout=60 if self.secure else 15,
         )
 
 
@@ -134,10 +135,34 @@ class MigrationProject:
         return "system.query_log"
 
     def everywhere(self, table):
-        """FROM source for a Memory table: on Cloud its rows live only on the writing replica."""
+        """FROM source for a per-node table (Memory, most system tables) on every Cloud replica."""
         if self.cloud:
             return f"clusterAllReplicas('default', {table})"
         return table
+
+    def flush_logs(self):
+        """Flush query logs on every replica; Cloud keeps them per node."""
+        on = " ON CLUSTER 'default'" if self.cloud else ""
+        self.client.command(f"SYSTEM FLUSH LOGS{on}")
+
+    def drain_async_queue(self, table):
+        """Flush `table`'s async queue; Cloud forbids the flush, so wait for it to empty."""
+        if not self.cloud:
+            self.client.command(f"SYSTEM FLUSH ASYNC INSERT QUEUE {self.database}.{table}")
+            return
+        deadline = time.monotonic() + 60
+        while self.client.command(
+            f"SELECT count() FROM {self.everywhere('system.asynchronous_inserts')} "
+            "WHERE database = {db:String} AND table = {table:String}",
+            parameters={"db": self.database, "table": table},
+        ):
+            if time.monotonic() > deadline:
+                pytest.fail(f"Async insert queue for {table} did not drain within 60 seconds")
+            time.sleep(0.2)
+
+    def budget(self, seconds):
+        """An `up --timeout` value; Cloud's all-replica checks and grace need at least a minute."""
+        return str(max(seconds, 60) if self.cloud else seconds)
 
     @staticmethod
     def new_password():

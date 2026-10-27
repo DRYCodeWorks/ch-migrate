@@ -63,7 +63,7 @@ def test_classification_lightweight_update_is_synchronous_patch_work(project):
 def _mutation_ids(project):
     rows = project.client.query(
         "SELECT DISTINCT mutation_id FROM system.mutations "
-        "WHERE database = {db:String} AND table = 'sample'",
-        parameters={"db": project.database},
+        "WHERE database = {db:String} AND table = {table:String} AND " + project.REWRITES_PARTS,
+        parameters={"db": project.database, "table": "sample"},
     ).result_rows
     return {row[0] for row in rows}
