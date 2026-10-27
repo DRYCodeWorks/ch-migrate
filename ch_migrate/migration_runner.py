@@ -29,8 +29,8 @@ from ch_migrate.runner import (
     _start_migration,
 )
 from ch_migrate.sql import clean_database_error
-from ch_migrate.waiting_display import WaitDisplay
-from ch_migrate.waiting_types import (
+from ch_migrate.waiting.display import WaitDisplay
+from ch_migrate.waiting.errors import (
     FailedMutation,
     MutationFailed,
     UnknownOutcome,

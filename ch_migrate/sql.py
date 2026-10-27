@@ -41,7 +41,6 @@ class SqlStatementError(RuntimeError):
     """
 
 
-
 def run_sql(path: str, **values: Any) -> None:
     """Run every statement in a SQL file under migrations/sql/, one at a time.
 
@@ -127,7 +126,7 @@ def clean_database_error(message: str) -> str:
 
 def _database_reason(exc: Exception) -> str:
     """Preserve operator instructions from wait failures; trim driver noise only."""
-    from ch_migrate.waiting_types import WaitingError
+    from ch_migrate.waiting.errors import WaitingError
 
     current: BaseException | None = exc
     seen: set[int] = set()

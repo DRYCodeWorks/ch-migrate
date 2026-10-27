@@ -20,9 +20,12 @@ from ch_migrate.hooks import run_hooks
 from ch_migrate.idempotency import classify_idempotency
 from ch_migrate.introspect import ColumnDefinition, Schema, TableDefinition, _parse_order_by
 from ch_migrate.statements import migration_statements
-from ch_migrate.waiting_ddl import DistributedDDLWaiter
-from ch_migrate.waiting_mutations import MutationWaiter
-from ch_migrate.waiting_sql import (
+from ch_migrate.waiting.budget import WaitBudget
+from ch_migrate.waiting.ddl import DistributedDDLWaiter
+from ch_migrate.waiting.errors import UnknownOutcome, WaitingError
+from ch_migrate.waiting.journal import StepKey, WaitingJournal
+from ch_migrate.waiting.mutations import MutationWaiter
+from ch_migrate.waiting.sql import (
     bind_statement,
     is_session_or_read,
     modifies_ttl,
@@ -36,9 +39,7 @@ from ch_migrate.waiting_sql import (
     statement_digest,
     statement_table,
 )
-from ch_migrate.waiting_store import StepKey, WaitingJournal
-from ch_migrate.waiting_types import UnknownOutcome, WaitBudget, WaitingError
-from ch_migrate.waiting_versions import VersionWrites
+from ch_migrate.waiting.versions import VersionWrites
 
 
 class MigrationWaiter:

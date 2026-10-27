@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from ch_migrate.waiting_display import DDLProgress
-from ch_migrate.waiting_types import UnknownOutcome, WaitingError
+from ch_migrate.waiting.display import DDLProgress
+from ch_migrate.waiting.errors import UnknownOutcome, WaitingError
 
 
 class DistributedDDLWaiter:

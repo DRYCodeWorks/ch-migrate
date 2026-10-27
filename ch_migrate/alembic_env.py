@@ -27,7 +27,7 @@ from ch_migrate.version_table import (
     sync_version_replica,
 )
 from ch_migrate.waiting import MigrationWaiter
-from ch_migrate.waiting_versions import write_unjournaled
+from ch_migrate.waiting.versions import write_unjournaled
 
 ENV_VERSION = 2
 DEFAULT_SESSION_TIMEOUT = 1800

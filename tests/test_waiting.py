@@ -4,14 +4,15 @@ import pytest
 from click.testing import CliRunner
 
 from ch_migrate.cli import main
-from ch_migrate.waiting_mutations import MutationWaiter
-from ch_migrate.waiting_sql import (
+from ch_migrate.waiting.budget import WaitBudget
+from ch_migrate.waiting.errors import WaitTimeout
+from ch_migrate.waiting.mutations import MutationWaiter
+from ch_migrate.waiting.sql import (
     is_session_or_read,
     mutation_sql,
     query_setting,
     statement_table,
 )
-from ch_migrate.waiting_types import WaitBudget, WaitTimeout
 
 
 @pytest.mark.parametrize("timeout", ["0", "-1", "nan", "inf", "-inf"])
@@ -64,7 +65,7 @@ def test_statement_tracking_distinguishes_reads_from_writes(sql, readonly):
 
 def test_deadline_is_shared_across_waits(monkeypatch):
     now = [10.0]
-    monkeypatch.setattr("ch_migrate.waiting_types.time.monotonic", lambda: now[0])
+    monkeypatch.setattr("ch_migrate.waiting.budget.time.monotonic", lambda: now[0])
     budget = WaitBudget(timeout=2, started=now[0])
     now[0] = 11.5
     assert budget.elapsed == 1.5

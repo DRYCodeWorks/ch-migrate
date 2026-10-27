@@ -10,7 +10,7 @@ from clickhouse_connect.driver.binding import bind_query, quote_identifier
 
 from ch_migrate.classify import _identifier, _tokens
 from ch_migrate.sql import _skip_quoted_or_comment
-from ch_migrate.waiting_types import WaitingError
+from ch_migrate.waiting.errors import WaitingError
 
 _WORD = re.compile(r"[A-Za-z_][A-Za-z_0-9]*")
 _MANAGED = frozenset(("mutations_sync", "alter_sync", "lightweight_deletes_sync"))

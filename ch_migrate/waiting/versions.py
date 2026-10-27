@@ -10,14 +10,14 @@ from sqlalchemy import text
 from sqlalchemy.sql.dml import Delete, Insert, Update
 
 from ch_migrate import ui
-from ch_migrate.waiting_sql import (
+from ch_migrate.waiting.errors import UnknownOutcome, WaitingError
+from ch_migrate.waiting.sql import (
     mutation_sql,
     qualified_table,
     query_settings,
     sql_string,
     statement_digest,
 )
-from ch_migrate.waiting_types import UnknownOutcome, WaitingError
 
 
 class VersionWrites:

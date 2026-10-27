@@ -7,9 +7,9 @@ from dataclasses import replace
 
 from clickhouse_connect.driver.exceptions import DatabaseError
 
-from ch_migrate.waiting_display import HostParts, MutationProgress
-from ch_migrate.waiting_sql import sql_string
-from ch_migrate.waiting_types import FailedMutation, MutationFailed, UnknownOutcome, WaitingError
+from ch_migrate.waiting.display import HostParts, MutationProgress
+from ch_migrate.waiting.errors import FailedMutation, MutationFailed, UnknownOutcome, WaitingError
+from ch_migrate.waiting.sql import sql_string
 
 VERSION_TABLE = "alembic_version"
 

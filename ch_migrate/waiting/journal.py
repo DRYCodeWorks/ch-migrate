@@ -10,8 +10,8 @@ from sqlalchemy import Column, MetaData, String, Table
 from sqlalchemy.schema import CreateTable
 
 from ch_migrate.version_table import migration_state_engine
-from ch_migrate.waiting_sql import qualified_table, query_settings
-from ch_migrate.waiting_types import UnknownOutcome
+from ch_migrate.waiting.errors import UnknownOutcome
+from ch_migrate.waiting.sql import qualified_table, query_settings
 
 JOURNAL_TABLE = "_ch_migrate_journal"
 

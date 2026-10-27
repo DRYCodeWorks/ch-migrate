@@ -460,7 +460,7 @@ def test_mutation_version_insert_lost_receipt_finishes_bookkeeping_only(project)
     project.client.command(f"CREATE TABLE {project.database}.audit (n UInt64) ENGINE=Memory")
     _upgrade_sql(project, "INSERT INTO {db}.audit VALUES (1)")
     code = """import os, signal
-from ch_migrate.waiting_versions import VersionWrites
+from ch_migrate.waiting.versions import VersionWrites
 original = VersionWrites._insert
 def crash(self, step, checkpoint):
     original(self, step, checkpoint)

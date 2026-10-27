@@ -8,8 +8,8 @@ from rich.console import Console
 from ch_migrate.migration_runner import Upgrade, _report_failure, _report_interrupt
 from ch_migrate.runner import _Progress
 from ch_migrate.sql import SqlStatementError
-from ch_migrate.waiting_display import DDLProgress, HostParts, MutationProgress, WaitDisplay
-from ch_migrate.waiting_types import FailedMutation, MutationFailed, UnknownOutcome, WaitTimeout
+from ch_migrate.waiting.display import DDLProgress, HostParts, MutationProgress, WaitDisplay
+from ch_migrate.waiting.errors import FailedMutation, MutationFailed, UnknownOutcome, WaitTimeout
 
 GIB = 1 << 30
 
@@ -17,7 +17,7 @@ GIB = 1 << 30
 @pytest.fixture
 def clock(monkeypatch):
     now = [100.0]
-    monkeypatch.setattr("ch_migrate.waiting_display.time.monotonic", lambda: now[0])
+    monkeypatch.setattr("ch_migrate.waiting.display.time.monotonic", lambda: now[0])
     return now
 
 

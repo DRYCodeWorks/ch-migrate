@@ -120,7 +120,7 @@ def assert_version_mutations_healthy(client, state: VersionTableState) -> None:
         settings=settings,
     ).result_rows
     if failed:
-        from ch_migrate.waiting_sql import sql_string
+        from ch_migrate.waiting.sql import sql_string
 
         host, mutation, reason = failed[0]
         raise VersionTableMutationError(
