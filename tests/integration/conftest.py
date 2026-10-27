@@ -81,6 +81,14 @@ class MigrationProject:
     database: str
     cloud: bool = False
 
+    # SharedMergeTree lists metadata-only ALTERs in system.mutations with no block numbers
+    # (DRY-1446). They rewrite no parts, so tests count only part-rewriting mutations.
+    # Needs {db:String} and {table:String} parameters.
+    REWRITES_PARTS = (
+        "NOT (empty(block_numbers.number) AND startsWith((SELECT engine FROM system.tables "
+        "WHERE database = {db:String} AND name = {table:String}), 'Shared'))"
+    )
+
     @property
     def sql_dir(self):
         return self.root / "migrations" / "sql"
