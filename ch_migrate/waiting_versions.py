@@ -50,7 +50,10 @@ class VersionWrites:
             for step in record["steps"]:
                 if step.get("done"):
                     continue
-                checkpoint = lambda: self.owner.journal.write(key, record)
+
+                def checkpoint() -> None:
+                    self.owner.journal.write(key, record)
+
                 if step["kind"] == "insert":
                     self._insert(step, checkpoint)
                 else:
