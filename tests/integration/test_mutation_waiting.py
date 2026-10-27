@@ -141,7 +141,11 @@ def test_failed_mutation_is_not_recorded_and_names_its_kill(project):
     _upgrade_sql(project, "ALTER TABLE {db}.counter UPDATE x = throwIf(x = 5) WHERE 1")
     result = project.run("up", "it")
     assert result.exit_code == 1, result.output
-    failed = next(row for row in _mutations(project) if row[4])
+    # On Cloud this client may reach a replica that hasn't received the failure reason yet.
+    failed = _until(
+        lambda: next((row for row in _mutations(project) if row[4]), None),
+        "the failed mutation's reason is not visible",
+    )
     assert failed[0] in result.output and "throwIf" in result.output
     assert f"mutation_id = '{failed[0]}'" in result.output
     assert _heads(project) == ["aaaa"]
