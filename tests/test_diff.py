@@ -84,40 +84,52 @@ class TestCompareSchemas:
         local = Schema(database="db")
         live = Schema(database="db")
         local.tables["users"] = self._base_table()
-        live.tables["users"] = self._base_table(columns=[
-            ColumnDefinition(name="id", type="UInt64"),
-            ColumnDefinition(name="name", type="String"),
-            ColumnDefinition(name="email", type="String"),
-        ])
+        live.tables["users"] = self._base_table(
+            columns=[
+                ColumnDefinition(name="id", type="UInt64"),
+                ColumnDefinition(name="name", type="String"),
+                ColumnDefinition(name="email", type="String"),
+            ]
+        )
 
         diffs = compare_schemas(local, live)
         modified = [d for d in diffs if d.status == DiffStatus.MODIFIED]
         assert len(modified) == 1
-        assert any("email" in fd.message and "in the database but not in the snapshot" in fd.message for fd in modified[0].field_diffs)
+        assert any(
+            "email" in fd.message and "in the database but not in the snapshot" in fd.message
+            for fd in modified[0].field_diffs
+        )
 
     def test_detects_removed_column(self):
         local = Schema(database="db")
         live = Schema(database="db")
-        local.tables["users"] = self._base_table(columns=[
-            ColumnDefinition(name="id", type="UInt64"),
-            ColumnDefinition(name="name", type="String"),
-            ColumnDefinition(name="phone", type="String"),
-        ])
+        local.tables["users"] = self._base_table(
+            columns=[
+                ColumnDefinition(name="id", type="UInt64"),
+                ColumnDefinition(name="name", type="String"),
+                ColumnDefinition(name="phone", type="String"),
+            ]
+        )
         live.tables["users"] = self._base_table()
 
         diffs = compare_schemas(local, live)
         modified = [d for d in diffs if d.status == DiffStatus.MODIFIED]
         assert len(modified) == 1
-        assert any("phone" in fd.message and "in the snapshot but not in the database" in fd.message for fd in modified[0].field_diffs)
+        assert any(
+            "phone" in fd.message and "in the snapshot but not in the database" in fd.message
+            for fd in modified[0].field_diffs
+        )
 
     def test_detects_column_type_change(self):
         local = Schema(database="db")
         live = Schema(database="db")
         local.tables["users"] = self._base_table()
-        live.tables["users"] = self._base_table(columns=[
-            ColumnDefinition(name="id", type="UInt64"),
-            ColumnDefinition(name="name", type="Nullable(String)"),
-        ])
+        live.tables["users"] = self._base_table(
+            columns=[
+                ColumnDefinition(name="id", type="UInt64"),
+                ColumnDefinition(name="name", type="Nullable(String)"),
+            ]
+        )
 
         diffs = compare_schemas(local, live)
         modified = [d for d in diffs if d.status == DiffStatus.MODIFIED]
@@ -193,8 +205,12 @@ class TestCompareSchemas:
     def test_views_fallback_to_raw_ddl(self):
         local = Schema(database="db")
         live = Schema(database="db")
-        local.views["v"] = ViewDefinition(name="v", select_query="SELECT 1", raw_ddl="CREATE VIEW v AS SELECT 1")
-        live.views["v"] = ViewDefinition(name="v", select_query="SELECT 2", raw_ddl="CREATE VIEW v AS SELECT 2")
+        local.views["v"] = ViewDefinition(
+            name="v", select_query="SELECT 1", raw_ddl="CREATE VIEW v AS SELECT 1"
+        )
+        live.views["v"] = ViewDefinition(
+            name="v", select_query="SELECT 2", raw_ddl="CREATE VIEW v AS SELECT 2"
+        )
 
         diffs = compare_schemas(local, live)
         modified = [d for d in diffs if d.status == DiffStatus.MODIFIED]
@@ -218,7 +234,9 @@ class TestCompareSchemas:
         local.tables["t1"] = self._base_table("t1")
         live.tables["t1"] = self._base_table("t1")
 
-        local.views["v1"] = ViewDefinition(name="v1", select_query="SELECT 1", raw_ddl="CREATE VIEW v1 AS SELECT 1")
+        local.views["v1"] = ViewDefinition(
+            name="v1", select_query="SELECT 1", raw_ddl="CREATE VIEW v1 AS SELECT 1"
+        )
         # v1 is local_only (not in live)
 
         live.dictionaries["d1"] = DictDefinition(name="d1", raw_ddl="CREATE DICTIONARY d1 (...)")
@@ -239,13 +257,15 @@ class TestCompareSchemas:
 @pytest.fixture
 def diff_runner(tmp_path: Path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    (tmp_path / "config.yaml").write_text("""
+    (tmp_path / "config.yaml").write_text(
+        """
 environments:
   dev:
     host: localhost
     database: testdb
     user: test
-""")
+"""
+    )
     monkeypatch.setenv("CH_DEV_PASSWORD", "pass")
 
     # Create a snapshot
@@ -277,6 +297,7 @@ class TestDiffCommand:
         mock_schema.return_value = live
 
         from ch_migrate.cli import main
+
         result = diff_runner.invoke(main, ["diff", "dev"])
         assert result.exit_code == 0
 
@@ -298,6 +319,7 @@ class TestDiffCommand:
         mock_schema.return_value = live
 
         from ch_migrate.cli import main
+
         result = diff_runner.invoke(main, ["diff", "dev"])
         assert result.exit_code == 1
 
@@ -305,16 +327,19 @@ class TestDiffCommand:
     @patch("ch_migrate.introspect.get_live_schema")
     def test_no_snapshot_exits_1(self, mock_schema, mock_client, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
-        (tmp_path / "config.yaml").write_text("""
+        (tmp_path / "config.yaml").write_text(
+            """
 environments:
   dev:
     host: localhost
     database: testdb
     user: test
-""")
+"""
+        )
         monkeypatch.setenv("CH_DEV_PASSWORD", "pass")
 
         from ch_migrate.cli import main
+
         runner = CliRunner()
         result = runner.invoke(main, ["diff", "dev"])
         assert result.exit_code == 1
@@ -342,9 +367,14 @@ class TestDiffDisplay:
         console = Console(file=output, force_terminal=True, width=80)
 
         diffs = [
-            SchemaDiff(name="users", obj_type="table", status=DiffStatus.MODIFIED, field_diffs=[
-                FieldDiff("engine", "MergeTree", "ReplacingMergeTree", "engine differs"),
-            ]),
+            SchemaDiff(
+                name="users",
+                obj_type="table",
+                status=DiffStatus.MODIFIED,
+                field_diffs=[
+                    FieldDiff("engine", "MergeTree", "ReplacingMergeTree", "engine differs"),
+                ],
+            ),
             SchemaDiff(name="new_table", obj_type="table", status=DiffStatus.REMOTE_ONLY),
             SchemaDiff(name="old_view", obj_type="view", status=DiffStatus.LOCAL_ONLY),
         ]

@@ -172,9 +172,7 @@ _RE_TTL = re.compile(r"TTL\s+(.+?)(?=\s*(?:SETTINGS|$))", re.IGNORECASE)
 _RE_SETTINGS = re.compile(r"SETTINGS\s+(.+)$", re.IGNORECASE | re.MULTILINE)
 
 _RE_CREATE_VIEW = re.compile(
-    r"CREATE\s+VIEW\s+(?:IF\s+NOT\s+EXISTS\s+)?"
-    r"(?:`?(\w+)`?\.)?`?(\w+)`?"
-    r"\s+AS\s+",
+    r"CREATE\s+VIEW\s+(?:IF\s+NOT\s+EXISTS\s+)?" r"(?:`?(\w+)`?\.)?`?(\w+)`?" r"\s+AS\s+",
     re.IGNORECASE,
 )
 
@@ -266,9 +264,7 @@ def _parse_single_column(line: str) -> ColumnDefinition | None:
     # Extract DEFAULT/MATERIALIZED/ALIAS
     default_kind = None
     default_expr = None
-    default_match = re.search(
-        r"\b(DEFAULT|MATERIALIZED|ALIAS)\s+(.+)$", rest, re.IGNORECASE
-    )
+    default_match = re.search(r"\b(DEFAULT|MATERIALIZED|ALIAS)\s+(.+)$", rest, re.IGNORECASE)
     if default_match:
         default_kind = default_match.group(1).upper()
         default_expr = default_match.group(2).strip()
@@ -481,15 +477,11 @@ def parse_create_dictionary(ddl: str) -> DictDefinition | None:
         source_type = source_match.group(1).lower()
 
         # Extract table from SOURCE(CLICKHOUSE(TABLE '...' DB '...'))
-        tbl_match = re.search(
-            r"TABLE\s+'([^']+)'", ddl[source_match.start() :], re.IGNORECASE
-        )
+        tbl_match = re.search(r"TABLE\s+'([^']+)'", ddl[source_match.start() :], re.IGNORECASE)
         if tbl_match:
             source_table = tbl_match.group(1)
 
-        db_match = re.search(
-            r"DB\s+'([^']+)'", ddl[source_match.start() :], re.IGNORECASE
-        )
+        db_match = re.search(r"DB\s+'([^']+)'", ddl[source_match.start() :], re.IGNORECASE)
         if db_match:
             source_db = db_match.group(1)
 
@@ -548,9 +540,7 @@ def parse_create_statement(
 # ---------------------------------------------------------------------------
 
 
-def list_objects(
-    client: Any, database: str, obj_type: str = "table"
-) -> list[str]:
+def list_objects(client: Any, database: str, obj_type: str = "table") -> list[str]:
     """List objects of a given type in a database.
 
     Args:
@@ -575,16 +565,13 @@ def list_objects(
     }.get(obj_type, "1=1")
 
     result = client.query(
-        f"SELECT name FROM system.tables "
-        f"WHERE database = {{db:String}} AND {engine_filter}",
+        f"SELECT name FROM system.tables " f"WHERE database = {{db:String}} AND {engine_filter}",
         parameters={"db": database},
     )
     return [row[0] for row in result.result_rows]
 
 
-def get_create_statement(
-    client: Any, database: str, name: str, obj_type: str = "table"
-) -> str:
+def get_create_statement(client: Any, database: str, name: str, obj_type: str = "table") -> str:
     """Get the CREATE statement for an object.
 
     Args:

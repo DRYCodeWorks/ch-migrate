@@ -12,9 +12,7 @@ def test_lint_pending_reports_only_second_revision(project, monkeypatch):
     (project.sql_dir / "b.sql").write_text(
         "-- pending change\n\nDROP TABLE IF EXISTS {db}.pending_only;\n"
     )
-    project.write_revision(
-        "aaaa", {"upgrade": "from ch_migrate import run_sql\nrun_sql('a.sql')"}
-    )
+    project.write_revision("aaaa", {"upgrade": "from ch_migrate import run_sql\nrun_sql('a.sql')"})
     project.write_revision(
         "bbbb",
         {"upgrade": "from ch_migrate import run_sql\nrun_sql('b.sql')"},

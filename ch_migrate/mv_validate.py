@@ -121,9 +121,7 @@ _RE_CREATE_MV = re.compile(
 # Handles: {db}.table, db.table, table (no db prefix)
 # Handles backtick-quoted identifiers and comma-separated user lists
 _RE_GRANT_INSERT = re.compile(
-    r"GRANT\s+INSERT\s+ON\s+"
-    r"(?:(?:\{[^}]*\}|`?\w+`?)\.)?`?(\w+)`?"
-    r"\s+TO\s+(.+?)(?:;|\n|\Z)",
+    r"GRANT\s+INSERT\s+ON\s+" r"(?:(?:\{[^}]*\}|`?\w+`?)\.)?`?(\w+)`?" r"\s+TO\s+(.+?)(?:;|\n|\Z)",
     re.IGNORECASE,
 )
 
@@ -162,11 +160,7 @@ def _parse_user_list(users_str: str) -> list[str]:
 
     Handles backtick-quoted identifiers and strips whitespace.
     """
-    return [
-        u.strip().strip("`").lower()
-        for u in users_str.split(",")
-        if u.strip().strip("`")
-    ]
+    return [u.strip().strip("`").lower() for u in users_str.split(",") if u.strip().strip("`")]
 
 
 def _find_grant_inserts(content: str) -> list[tuple[str, str]]:
@@ -203,8 +197,7 @@ def _find_row_policies(content: str) -> list[tuple[str, str]]:
     Returns list of (policy_name, table_name) tuples, lowercased.
     """
     return [
-        (m.group(1).lower(), m.group(2).lower())
-        for m in _RE_CREATE_ROW_POLICY.finditer(content)
+        (m.group(1).lower(), m.group(2).lower()) for m in _RE_CREATE_ROW_POLICY.finditer(content)
     ]
 
 
@@ -236,9 +229,7 @@ def _read_migration_sql_from_content(content: str, path: Path) -> str:
     """
     sql_parts: list[str] = []
 
-    for match in re.finditer(
-        r'op\.execute\(\s*(?:f?"""(.*?)"""|f?"([^"]*)")', content, re.DOTALL
-    ):
+    for match in re.finditer(r'op\.execute\(\s*(?:f?"""(.*?)"""|f?"([^"]*)")', content, re.DOTALL):
         sql_parts.append(match.group(1) or match.group(2) or "")
 
     for match in re.finditer(r'(?:read_sql|run_sql)\(\s*["\']([^"\']+)["\']', content):
@@ -308,18 +299,13 @@ def _check_grant_inserts(
     target = decl.target_table.lower()
 
     for user in decl.inserting_users:
-        has_grant = any(
-            table == target and u == user.lower() for table, u in grant_inserts
-        )
+        has_grant = any(table == target and u == user.lower() for table, u in grant_inserts)
         if not has_grant:
             errors.append(
                 MVValidationError(
                     file=file_name,
                     mv_name=decl.mv_name,
-                    message=(
-                        f"Missing: GRANT INSERT ON {{db}}.{decl.target_table} "
-                        f"TO {user}"
-                    ),
+                    message=(f"Missing: GRANT INSERT ON {{db}}.{decl.target_table} " f"TO {user}"),
                 )
             )
 
@@ -336,18 +322,13 @@ def _check_grant_selects(
     target = decl.target_table.lower()
 
     for user in decl.select_users:
-        has_grant = any(
-            table == target and u == user.lower() for table, u in grant_selects
-        )
+        has_grant = any(table == target and u == user.lower() for table, u in grant_selects)
         if not has_grant:
             errors.append(
                 MVValidationError(
                     file=file_name,
                     mv_name=decl.mv_name,
-                    message=(
-                        f"Missing: GRANT SELECT ON {{db}}.{decl.target_table} "
-                        f"TO {user}"
-                    ),
+                    message=(f"Missing: GRANT SELECT ON {{db}}.{decl.target_table} " f"TO {user}"),
                 )
             )
 
@@ -365,8 +346,7 @@ def _check_source_rls(
 
     for user in decl.source_rls_users:
         has_policy = any(
-            table == source
-            and user.lower() in [u.strip() for u in users_str.split(",")]
+            table == source and user.lower() in [u.strip() for u in users_str.split(",")]
             for table, users_str in permissive_policies
         )
         if not has_policy:
@@ -395,8 +375,7 @@ def _check_target_rls(
 
     for policy_name in decl.target_rls_policies:
         has_policy = any(
-            table == target and policy_name.lower() in policy
-            for policy, table in row_policies
+            table == target and policy_name.lower() in policy for policy, table in row_policies
         )
         if not has_policy:
             errors.append(
@@ -531,24 +510,16 @@ def validate_mv_migrations(
                 continue
 
             # Core check: GRANT INSERT on target for each inserting user
-            errors.extend(
-                _check_grant_inserts(decl, grant_inserts, file_name)
-            )
+            errors.extend(_check_grant_inserts(decl, grant_inserts, file_name))
 
             # Optional checks (only if the declaration includes them)
             if decl.select_users:
-                errors.extend(
-                    _check_grant_selects(decl, grant_selects, file_name)
-                )
+                errors.extend(_check_grant_selects(decl, grant_selects, file_name))
 
             if decl.source_rls_users:
-                errors.extend(
-                    _check_source_rls(decl, permissive_policies, file_name)
-                )
+                errors.extend(_check_source_rls(decl, permissive_policies, file_name))
 
             if decl.target_rls_policies:
-                errors.extend(
-                    _check_target_rls(decl, row_policies, file_name)
-                )
+                errors.extend(_check_target_rls(decl, row_policies, file_name))
 
     return errors

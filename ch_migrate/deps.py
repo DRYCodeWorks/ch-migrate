@@ -67,17 +67,21 @@ def validate_migration(sql: str, graph: DependencyGraph) -> list[MigrationWarnin
                             data_flow_deps.append(edge.target)
 
                 if schema_deps:
-                    warnings.append(MigrationWarning(
-                        severity="error",
-                        message=f"DROP TABLE {table_name} breaks schema dependencies: {', '.join(schema_deps)}",
-                        affected_objects=schema_deps,
-                    ))
+                    warnings.append(
+                        MigrationWarning(
+                            severity="error",
+                            message=f"DROP TABLE {table_name} breaks schema dependencies: {', '.join(schema_deps)}",
+                            affected_objects=schema_deps,
+                        )
+                    )
                 if data_flow_deps:
-                    warnings.append(MigrationWarning(
-                        severity="warning",
-                        message=f"DROP TABLE {table_name} breaks data flow to: {', '.join(data_flow_deps)}",
-                        affected_objects=data_flow_deps,
-                    ))
+                    warnings.append(
+                        MigrationWarning(
+                            severity="warning",
+                            message=f"DROP TABLE {table_name} breaks data flow to: {', '.join(data_flow_deps)}",
+                            affected_objects=data_flow_deps,
+                        )
+                    )
 
     # Check DROP VIEW / DROP MATERIALIZED VIEW
     for m in _RE_DROP_VIEW.finditer(sql):
@@ -86,11 +90,13 @@ def validate_migration(sql: str, graph: DependencyGraph) -> list[MigrationWarnin
             affected = graph.affected_by_drop(view_name)
             if affected:
                 affected_names = [n.name for n in affected]
-                warnings.append(MigrationWarning(
-                    severity="warning",
-                    message=f"DROP VIEW {view_name} affects: {', '.join(affected_names)}",
-                    affected_objects=affected_names,
-                ))
+                warnings.append(
+                    MigrationWarning(
+                        severity="warning",
+                        message=f"DROP VIEW {view_name} affects: {', '.join(affected_names)}",
+                        affected_objects=affected_names,
+                    )
+                )
 
     # Check DROP DICTIONARY
     for m in _RE_DROP_DICT.finditer(sql):
@@ -99,11 +105,13 @@ def validate_migration(sql: str, graph: DependencyGraph) -> list[MigrationWarnin
             affected = graph.affected_by_drop(dict_name)
             if affected:
                 affected_names = [n.name for n in affected]
-                warnings.append(MigrationWarning(
-                    severity="warning",
-                    message=f"DROP DICTIONARY {dict_name} affects: {', '.join(affected_names)}",
-                    affected_objects=affected_names,
-                ))
+                warnings.append(
+                    MigrationWarning(
+                        severity="warning",
+                        message=f"DROP DICTIONARY {dict_name} affects: {', '.join(affected_names)}",
+                        affected_objects=affected_names,
+                    )
+                )
 
     return warnings
 

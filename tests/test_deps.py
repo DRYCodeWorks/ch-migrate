@@ -34,7 +34,9 @@ def _make_graph() -> DependencyGraph:
     graph.edges = [
         DependencyEdge(source="events", target="hourly_events", dep_type=DepType.DATA_FLOW),
         DependencyEdge(source="events", target="hourly_events", dep_type=DepType.SCHEMA),
-        DependencyEdge(source="hourly_events", target="hourly_events_dest", dep_type=DepType.DATA_FLOW),
+        DependencyEdge(
+            source="hourly_events", target="hourly_events_dest", dep_type=DepType.DATA_FLOW
+        ),
         DependencyEdge(source="users", target="dict_users", dep_type=DepType.SCHEMA),
     ]
     return graph
@@ -136,6 +138,7 @@ class TestRenderDependencyTree:
 
     def test_shows_edge_count(self):
         import re as _re
+
         output = StringIO()
         console = Console(file=output, force_terminal=True, width=100)
         graph = _make_graph()
@@ -207,13 +210,15 @@ class TestRenderDependencyTree:
 @pytest.fixture
 def deps_runner(tmp_path: Path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    (tmp_path / "config.yaml").write_text("""
+    (tmp_path / "config.yaml").write_text(
+        """
 environments:
   dev:
     host: localhost
     database: testdb
     user: test
-""")
+"""
+    )
     monkeypatch.setenv("CH_DEV_PASSWORD", "pass")
     return CliRunner()
 
@@ -226,6 +231,7 @@ class TestDepsCommand:
         mock_deps.return_value = _make_graph()
 
         from ch_migrate.cli import main
+
         result = deps_runner.invoke(main, ["deps", "dev"])
         assert result.exit_code == 0
         assert "Dependency Graph" in result.output
@@ -240,6 +246,7 @@ class TestDepsCommand:
         sql_file.write_text("ALTER TABLE users ADD COLUMN email String")
 
         from ch_migrate.cli import main
+
         result = deps_runner.invoke(main, ["deps", "dev", "--validate", str(sql_file)])
         assert result.exit_code == 0
         assert "passed" in result.output
@@ -254,5 +261,6 @@ class TestDepsCommand:
         sql_file.write_text("DROP TABLE events")
 
         from ch_migrate.cli import main
+
         result = deps_runner.invoke(main, ["deps", "dev", "--validate", str(sql_file)])
         assert result.exit_code == 1

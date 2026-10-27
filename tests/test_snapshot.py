@@ -58,13 +58,15 @@ def runner(tmp_path: Path, monkeypatch):
     """Set up a CLI runner in a tmp project directory."""
     monkeypatch.chdir(tmp_path)
     (tmp_path / "migrations" / "sql" / "snapshots").mkdir(parents=True)
-    (tmp_path / "config.yaml").write_text("""
+    (tmp_path / "config.yaml").write_text(
+        """
 environments:
   dev:
     host: localhost
     database: testdb
     user: test
-""")
+"""
+    )
     monkeypatch.setenv("CH_DEV_PASSWORD", "pass")
     return CliRunner()
 
@@ -179,6 +181,7 @@ class TestSnapshotCommand:
 
         # Ensure a second snapshot creates a new directory (different timestamp)
         import time
+
         time.sleep(1.1)
 
         result2 = runner.invoke(main, ["snapshot", "dev"])
