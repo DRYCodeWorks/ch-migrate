@@ -124,6 +124,7 @@ def test_failed_mutation_names_reason_retry_and_kill(capsys):
     )
     assert "Cannot parse string 'n/a' as UInt32" in err
     assert "keeps retrying a failed mutation" in err and failure.kill in err
+    assert "If the cause is temporary" in err and "reconciles the journal" in err
 
 
 def test_timeout_says_the_work_continues_and_how_to_resume(capsys):

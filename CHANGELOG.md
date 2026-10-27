@@ -24,10 +24,9 @@ To stay on 0.6 until then, pin `ch-migrate-cli==0.6.0`.
 ### Changed
 
 - `up` waits before it records a migration as applied: for the mutations its statements start, on every required replica, and for `ON CLUSTER` DDL, on every host. It polls `system.mutations` and `system.distributed_ddl_queue` on the migration session instead of holding a request open with `mutations_sync`, so a dropped connection doesn't lose the outcome.
-- A failed mutation fails the migration with ClickHouse's `latest_fail_reason` and prints the scoped `KILL MUTATION` statement for an operator. `ch-migrate` never kills a mutation itself.
+- A failed mutation fails the migration with ClickHouse's `latest_fail_reason` and prints the scoped `KILL MUTATION` statement for an operator. `ch-migrate` never kills a mutation itself. Once a mutation is killed, or ClickHouse rejects a statement that would start one (for example `MODIFY COLUMN` on a sorting-key column), the migration can't be re-run or edited until that statement's journal entry is reconciled by hand; the README's "Unknown outcome" section has the steps.
 - `up` runs Alembic in its own process, so killing `up` can't leave a child process advancing the version table. Running `alembic upgrade` directly goes through the same environment and waits too; `--timeout` exists only on `ch-migrate up`.
 - The version table's delete goes through the same waiting, keeping 0.6's insert-first bookkeeping.
-- If ClickHouse rejects a statement that would start a mutation, for example `MODIFY COLUMN` on a sorting-key column, the migration can't be re-run or edited until that statement's journal entry is reconciled by hand. The README's "Unknown outcome" section has the steps.
 
 ### Added
 

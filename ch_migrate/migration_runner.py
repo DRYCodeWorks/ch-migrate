@@ -124,15 +124,20 @@ def _report_mutation_failure(environment: str, where: str, failure: FailedMutati
         )
     else:
         ui.error(f"{where} failed: mutation {failure.mutation} on {failure.table} failed{on_host}")
-    ui.detail(failure.reason, stderr=True)
+    ui.detail(clean_database_error(failure.reason), stderr=True)
     ui.hint(
         "It was not recorded as applied. ClickHouse keeps retrying a failed mutation, and later "
         f"mutations on {failure.table} wait behind it.",
         stderr=True,
     )
     ui.hint(
-        f"Fix the cause, then run `ch-migrate up {environment}` to wait for the retry. "
-        f"To stop it instead (operator only{on_host}): {failure.kill}",
+        "If the cause is temporary, such as memory or disk, fix it and run "
+        f"`ch-migrate up {environment}` to wait for the retry.",
+        stderr=True,
+    )
+    ui.hint(
+        f"If the statement itself is wrong, an operator stops it{on_host} with {failure.kill}, "
+        "then reconciles the journal as the README's Unknown outcome section describes.",
         stderr=True,
     )
 
