@@ -126,7 +126,9 @@ def test_ddl_queue_and_replicated_mutation_both_must_finish(cluster_project, cli
     for client in cluster.clients.values():
         client.command(f"SYSTEM STOP MERGES {table}")
     try:
-        result = project.run("up", "it", "--timeout", "1")
+        # Long enough for the queue entry to finish on both hosts on a slow CI runner, so the
+        # deadline falls in the mutation wait that STOP MERGES holds open.
+        result = project.run("up", "it", "--timeout", "5")
         assert result.exit_code == 1, result.output
         rows = _queue(project)
         assert rows and all(row[3] == "Finished" and row[4] == 0 for row in rows)
