@@ -7,7 +7,8 @@ import pytest
 from click.testing import CliRunner
 
 from ch_migrate import ui
-from ch_migrate.cli import _print_gate_findings, main
+from ch_migrate.cli import main
+from ch_migrate.gate import print_gate_findings
 from ch_migrate.lint import LintResult, Severity
 
 
@@ -70,12 +71,9 @@ def test_gate_findings_use_lint_markers(capsys):
             ),
         ]
     )
-    assert _print_gate_findings(report) is True
+    assert print_gate_findings(report) is True
     captured = capsys.readouterr()
-    assert (
-        captured.err
-        == "✗ a.up.sql:2  Use IF NOT EXISTS  [idempotency]\n  CREATE TABLE t\n"
-    )
+    assert captured.err == "✗ a.up.sql:2  Use IF NOT EXISTS  [idempotency]\n  CREATE TABLE t\n"
     assert captured.out == (
         "! config.yaml  Drops a column  [destructive_changes]\n"
         "✓ b.up.sql:5  Idempotency waiver: copies once  [idempotency]\n"

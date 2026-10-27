@@ -43,41 +43,6 @@ def render_template(template_path: Path, **kwargs: str) -> str:
     return content
 
 
-def _enforce_up_gate(environment: str, skip_mv_check: bool) -> None:
-    from ch_migrate.gate import lint_pending_up
-
-    try:
-        report = lint_pending_up(Path.cwd(), environment, skip_mv_check)
-    except Exception as error:
-        raise ui.Failure(f"Migration preflight failed: {error}") from error
-    if _print_gate_findings(report):
-        raise ui.Failure(
-            "Migration gate failed; nothing was applied.",
-            "Fix SQL or add a reasoned in-file waiver.",
-        )
-
-
-def _print_gate_findings(report) -> bool:
-    from ch_migrate.display import lint_finding_line
-    from ch_migrate.lint import GATE_RULES, Severity
-
-    blocked = False
-    for finding in report.results:
-        gate_error = finding.rule in GATE_RULES and finding.severity == Severity.ERROR
-        blocked |= gate_error
-        severity = finding.severity.value
-        if severity == "error" and not gate_error:
-            severity = "warn"
-        position = finding.file or "config.yaml"
-        if finding.line is not None:
-            position += f":{finding.line}"
-        console = ui.err if gate_error else ui.out
-        console.print(lint_finding_line(finding, location=position, severity=severity))
-        if finding.statement:
-            ui.detail(finding.statement, stderr=gate_error)
-    return blocked
-
-
 def _require_current_env() -> None:
     from ch_migrate.alembic_env import has_current_env
 
@@ -289,7 +254,9 @@ def up(
     if timeout is not None and not math.isfinite(timeout):
         raise click.BadParameter("must be finite", param_hint="--timeout")
     _require_current_env()
-    _enforce_up_gate(environment, skip_mv_check)
+    from ch_migrate.gate import enforce_up_gate
+
+    enforce_up_gate(Path.cwd(), environment, skip_mv_check)
     from ch_migrate.migration_runner import Upgrade, run_upgrade
 
     sys.exit(run_upgrade(Upgrade(environment, revision, timeout, verbose)))
