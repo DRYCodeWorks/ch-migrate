@@ -69,6 +69,10 @@ def run_upgrade(upgrade: Upgrade) -> int:
     try:
         with _restored_loggers("alembic", "ch_migrate"):
             command.upgrade(config, upgrade.revision)
+    except KeyboardInterrupt:
+        display.stop()
+        _report_interrupt(upgrade.environment, progress)
+        return 130
     except Exception as error:
         display.stop()
         _report_failure(upgrade, progress, error)
@@ -98,6 +102,16 @@ class _MigrationLog(logging.Handler):
             ui.warn(message)
         else:
             ui.detail(message)
+
+
+def _report_interrupt(environment: str, progress: _Progress) -> None:
+    ui.error(f"Interrupted{' during ' + progress.current if progress.current else ''}")
+    ui.hint(
+        "Work ClickHouse already started keeps running, and the migration is not recorded as "
+        f"applied. Run `ch-migrate up {environment}` to pick up where it stopped; it won't "
+        "reissue a statement it already sent.",
+        stderr=True,
+    )
 
 
 def _report_failure(upgrade: Upgrade, progress: _Progress, error: Exception) -> None:

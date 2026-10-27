@@ -5,7 +5,7 @@ import io
 import pytest
 from rich.console import Console
 
-from ch_migrate.migration_runner import Upgrade, _report_failure
+from ch_migrate.migration_runner import Upgrade, _report_failure, _report_interrupt
 from ch_migrate.runner import _Progress
 from ch_migrate.sql import SqlStatementError
 from ch_migrate.waiting_display import DDLProgress, HostParts, MutationProgress, WaitDisplay
@@ -144,6 +144,13 @@ def test_unknown_outcome_shows_the_operator_guidance(capsys):
     err = capsys.readouterr().err
     assert "outcome unknown, so the statement was not reissued" in err
     assert "  Read-only inspection: SELECT 1" in err
+
+
+def test_interrupt_says_the_work_continues(capsys):
+    _report_interrupt("dev", _current("3f9c2a1b  backfill"))
+    err = capsys.readouterr().err
+    assert err.startswith("✗ Interrupted during 3f9c2a1b  backfill")
+    assert "Run ch-migrate up dev to pick up where it stopped" in err
 
 
 def _current(label):
