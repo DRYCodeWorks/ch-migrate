@@ -26,6 +26,21 @@ def enforce_up_gate(project_root: Path, environment: str, skip_mv_check: bool = 
         )
 
 
+def lint_pending_up(
+    project_root: Path, environment: str, skip_mv_check: bool = False
+) -> LintReport:
+    load_dotenv(project_root / ".env.local")
+    config_path = project_root / "config.yaml"
+    config = LintConfig.from_config(load_config(config_path))
+    if skip_mv_check:
+        config.rules["mv_declarations"] = Severity.OFF
+    versions = project_root / "migrations" / "versions"
+    graph = build_revision_graph(versions)
+    env_config = get_env_config(environment, config_path)
+    pending = pending_revisions(graph, get_migration_state(env_config).heads)
+    return lint_migrations(versions, config=config, revisions=pending)
+
+
 def print_gate_findings(report: LintReport) -> bool:
     blocked = False
     for finding in report.results:
@@ -42,18 +57,3 @@ def print_gate_findings(report: LintReport) -> bool:
         if finding.statement:
             ui.detail(finding.statement, stderr=gate_error)
     return blocked
-
-
-def lint_pending_up(
-    project_root: Path, environment: str, skip_mv_check: bool = False
-) -> LintReport:
-    load_dotenv(project_root / ".env.local")
-    config_path = project_root / "config.yaml"
-    config = LintConfig.from_config(load_config(config_path))
-    if skip_mv_check:
-        config.rules["mv_declarations"] = Severity.OFF
-    versions = project_root / "migrations" / "versions"
-    graph = build_revision_graph(versions)
-    env_config = get_env_config(environment, config_path)
-    pending = pending_revisions(graph, get_migration_state(env_config).heads)
-    return lint_migrations(versions, config=config, revisions=pending)

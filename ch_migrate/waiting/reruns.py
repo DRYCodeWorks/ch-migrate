@@ -27,35 +27,6 @@ TABLE = "_ch_migrate_in_progress"
 logger = logging.getLogger(__name__)
 
 
-@dataclass(frozen=True)
-class Step:
-    revision: str
-    direction: str  # "upgrade" or "downgrade"
-    path: Path
-
-
-@dataclass(frozen=True)
-class Unvouched:
-    """A statement in an interrupted step that might not be safe to run again."""
-
-    statement: MigrationStatement
-    why: str
-
-
-class InterruptedStep(WaitingError):
-    """An interrupted step has statements that might not be safe to run again."""
-
-    def __init__(self, step: Step, unvouched: list[Unvouched]):
-        self.step, self.unvouched = step, unvouched
-        listed = "; ".join(f"{_where(item.statement)} ({item.why})" for item in unvouched)
-        super().__init__(
-            f"{step.revision[:8]} was interrupted on an earlier run, and ch-migrate can't vouch "
-            f"for running it again: {listed}. Check what the earlier run changed, then run it "
-            f"again with --rerun-interrupted {step.revision[:8]} "
-            f"(with alembic, -x rerun_interrupted={step.revision[:8]})."
-        )
-
-
 class RerunGuard:
     """Records each step as it starts and refuses an unsafe rerun of an interrupted one."""
 
@@ -101,9 +72,6 @@ class RerunGuard:
             "SETTINGS mutations_sync = 2"
         )
 
-    def _acknowledged(self, revision: str) -> bool:
-        return any(len(given) >= 4 and revision.startswith(given) for given in self.acknowledged)
-
     def _prepare(self) -> None:
         if self._ready:
             return
@@ -123,6 +91,9 @@ class RerunGuard:
                 settings={"select_sequential_consistency": 1} if self._shared() else None,
             )
         )
+
+    def _acknowledged(self, revision: str) -> bool:
+        return any(len(given) >= 4 and revision.startswith(given) for given in self.acknowledged)
 
     def _record(self, step: Step) -> None:
         self.client.command(
@@ -160,6 +131,35 @@ class RerunGuard:
         return self.state.database_engine == "Replicated" or (
             not self._shared() and bool(self.state.cluster)
         )
+
+
+@dataclass(frozen=True)
+class Step:
+    revision: str
+    direction: str  # "upgrade" or "downgrade"
+    path: Path
+
+
+class InterruptedStep(WaitingError):
+    """An interrupted step has statements that might not be safe to run again."""
+
+    def __init__(self, step: Step, unvouched: list[Unvouched]):
+        self.step, self.unvouched = step, unvouched
+        listed = "; ".join(f"{_where(item.statement)} ({item.why})" for item in unvouched)
+        super().__init__(
+            f"{step.revision[:8]} was interrupted on an earlier run, and ch-migrate can't vouch "
+            f"for running it again: {listed}. Check what the earlier run changed, then run it "
+            f"again with --rerun-interrupted {step.revision[:8]} "
+            f"(with alembic, -x rerun_interrupted={step.revision[:8]})."
+        )
+
+
+@dataclass(frozen=True)
+class Unvouched:
+    """A statement in an interrupted step that might not be safe to run again."""
+
+    statement: MigrationStatement
+    why: str
 
 
 def unvouched_statements(path: Path, direction: str) -> list[Unvouched]:

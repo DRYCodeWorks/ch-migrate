@@ -205,30 +205,6 @@ def _run_connection(connection, env_config: dict[str, Any], environment: str) ->
         waiter.close()
 
 
-def _rerun_guard(client, state: VersionTableState, environment: str) -> RerunGuard:
-    attributes = context.config.attributes
-    # `ch-migrate up` passes --rerun-interrupted directly; `down` and a direct alembic
-    # command pass it as -x rerun_interrupted=REV[,REV].
-    named = attributes.get("ch_migrate_rerun_interrupted") or context.get_x_argument(
-        as_dictionary=True
-    ).get("rerun_interrupted", "").split(",")
-    guard = RerunGuard(client, state, frozenset(name.strip() for name in named if name.strip()))
-    if not attributes.get("ch_migrate_gate_checked"):
-        # A direct `alembic upgrade` hasn't been through `ch-migrate up`'s gate.
-        guard.before_first_upgrade = partial(_enforce_gate, environment)
-    return guard
-
-
-def _enforce_gate(environment: str) -> None:
-    from ch_migrate.gate import enforce_up_gate  # lint imports this module
-
-    try:
-        enforce_up_gate(Path.cwd(), environment)
-    except ui.Failure as failure:
-        failure.show()
-        raise SystemExit(1) from None
-
-
 def _checked_session(connection, env_config: dict[str, Any]) -> VersionTableState:
     # Establish the session before requiring its existence on every later request.
     connection.exec_driver_sql("SELECT 1")
@@ -275,3 +251,27 @@ def _post_migrate(hooks: HookRegistry, database: str):
         )
 
     return after_revision
+
+
+def _rerun_guard(client, state: VersionTableState, environment: str) -> RerunGuard:
+    attributes = context.config.attributes
+    # `ch-migrate up` passes --rerun-interrupted directly; `down` and a direct alembic
+    # command pass it as -x rerun_interrupted=REV[,REV].
+    named = attributes.get("ch_migrate_rerun_interrupted") or context.get_x_argument(
+        as_dictionary=True
+    ).get("rerun_interrupted", "").split(",")
+    guard = RerunGuard(client, state, frozenset(name.strip() for name in named if name.strip()))
+    if not attributes.get("ch_migrate_gate_checked"):
+        # A direct `alembic upgrade` hasn't been through `ch-migrate up`'s gate.
+        guard.before_first_upgrade = partial(_enforce_gate, environment)
+    return guard
+
+
+def _enforce_gate(environment: str) -> None:
+    from ch_migrate.gate import enforce_up_gate  # lint imports this module
+
+    try:
+        enforce_up_gate(Path.cwd(), environment)
+    except ui.Failure as failure:
+        failure.show()
+        raise SystemExit(1) from None
