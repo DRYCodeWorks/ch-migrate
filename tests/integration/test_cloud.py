@@ -89,19 +89,7 @@ def test_cloud_killed_up_waits_for_its_mutation_then_runs_again(project):
     """SIGKILL mid-wait; the waived UPDATE's rerun stops until named, then waits and resends."""
     db = project.database
     _slow_update(project, "1", seconds=3)
-    log_path = project.root / "first-up.log"
-    with log_path.open("w") as log:
-        first = subprocess.Popen(
-            [sys.executable, "-m", "ch_migrate.cli", "up", "it"],
-            cwd=project.root,
-            stdout=log,
-            stderr=subprocess.STDOUT,
-        )
-        try:
-            _until_running_mutation(project)
-        finally:
-            first.kill()
-            first.wait(timeout=10)
+    _kill_up_once_its_mutation_runs(project)
     stopped = project.run("up", "it")
     assert stopped.exit_code == 1, stopped.output
     assert "was interrupted on an earlier run" in stopped.output
@@ -137,6 +125,21 @@ def _slow_update(project, value, seconds):
     project.write_revision(
         "aaaa", {"upgrade": "from ch_migrate import run_sql\nrun_sql('slow.sql')"}
     )
+
+
+def _kill_up_once_its_mutation_runs(project):
+    with (project.root / "first-up.log").open("w") as log:
+        first = subprocess.Popen(
+            [sys.executable, "-m", "ch_migrate.cli", "up", "it"],
+            cwd=project.root,
+            stdout=log,
+            stderr=subprocess.STDOUT,
+        )
+        try:
+            _until_running_mutation(project)
+        finally:
+            first.kill()
+            first.wait(timeout=10)
 
 
 def _until_running_mutation(project):
