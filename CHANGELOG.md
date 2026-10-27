@@ -4,6 +4,39 @@ Changes are recorded in [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 
 ## [Unreleased]
 
+## [0.7.0]
+
+0.7 waits for the work a migration starts. `up` doesn't record a migration as applied until the mutations and `ON CLUSTER` DDL its statements started have finished, and it shows their progress while it waits. A normal `pip install -U` reaches it from 0.6, so read this before upgrading:
+
+1. **`up` now blocks until that work finishes, with no default timeout.** If a CI job's time limit stops it mid-wait, ClickHouse keeps working and the next `up` reattaches to the same mutation instead of sending the statement again. `--timeout SECONDS` sets a limit of your own.
+2. **Migration roles that 0.6's `bootstrap` created on ClickHouse Cloud or a cluster need five more grants.** Self-hosted single servers already give the role `SELECT ON system.*`. As the admin user, replacing `<project>` with your project name:
+   ```sql
+   GRANT SELECT ON system.columns TO <project>_migration_role;
+   GRANT CURRENT GRANTS(SELECT ON system.replicas) TO <project>_migration_role;
+   GRANT CURRENT GRANTS(SELECT ON system.clusters) TO <project>_migration_role;
+   GRANT CURRENT GRANTS(SELECT ON system.distributed_ddl_queue) TO <project>_migration_role;
+   GRANT CURRENT GRANTS(SELECT ON system.parts) TO <project>_migration_role;
+   ```
+3. **No `upgrade-env` this time.** The environment 0.6 wrote is current.
+
+To stay on 0.6 until then, pin `ch-migrate-cli==0.6.0`.
+
+### Changed
+
+- `up` waits before it records a migration as applied: for the mutations its statements start, on every required replica, and for `ON CLUSTER` DDL, on every host. It polls `system.mutations` and `system.distributed_ddl_queue` on the migration session instead of holding a request open with `mutations_sync`, so a dropped connection doesn't lose the outcome.
+- A failed mutation fails the migration with ClickHouse's `latest_fail_reason` and prints the scoped `KILL MUTATION` statement for an operator. `ch-migrate` never kills a mutation itself.
+- `up` runs Alembic in its own process, so killing `up` can't leave a child process advancing the version table. Running `alembic upgrade` directly goes through the same environment and waits too; `--timeout` exists only on `ch-migrate up`.
+- The version table's delete goes through the same waiting, keeping 0.6's insert-first bookkeeping.
+- If ClickHouse rejects a statement that would start a mutation, for example `MODIFY COLUMN` on a sorting-key column, the migration can't be re-run or edited until that statement's journal entry is reconciled by hand. The README's "Unknown outcome" section has the steps.
+
+### Added
+
+- `up --timeout SECONDS`: one waiting budget for the whole run. When it runs out, `up` exits 1, names what is still pending and leaves the work running; the next `up` waits on it again.
+- `_ch_migrate_journal`, created by `up` in the project database with the version table's engine. It records which work each statement started before the statement is sent, so a rerun reattaches instead of reissuing. When the evidence can't prove what happened, `up` stops without reissuing the statement or completing the migration, and prints read-only inspection queries. Don't delete the journal or restore it separately from the database.
+- Progress while `up` waits: in a terminal, a live bar per mutation weighted by bytes from `system.parts`, with parts and time left, one row per replica, and a host count for `ON CLUSTER` DDL. Piped output gets plain lines when a wait starts, at each 10% or every 30 seconds, and when it finishes. Without access to `system.parts` the bar counts parts only.
+- Foreign mutations already queued on the same table are reported and waited for first; a failed one stops the run.
+- `bootstrap` grants `SELECT` on `system.columns`, `system.replicas`, `system.clusters`, `system.distributed_ddl_queue` and `system.parts`.
+
 ## [0.6.0]
 
 0.6 runs migrations on ClickHouse's official clickhouse-connect dialect in one session-safe connection, and stops a migration from running twice. A normal `pip install -U` reaches it from 0.5.x, so read this before upgrading:

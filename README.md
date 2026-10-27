@@ -23,8 +23,15 @@ This README describes the source checkout, which may be ahead of PyPI. To try an
 
 ## Upgrade from 0.x
 
-0.6 requires Python 3.10+; 0.5.x is the last line supporting Python 3.9.
-A loose requirement such as `ch-migrate-cli` or `~=0.5` upgrades to 0.6; pin
+**From 0.6:** 0.7 needs no `upgrade-env`. `up` now waits for the mutations and
+`ON CLUSTER` DDL its statements start (see [Migrations that wait](#migrations-that-wait)),
+so give CI jobs time to finish or pass `--timeout`. Migration roles that 0.6's
+`bootstrap` created on ClickHouse Cloud or a cluster need the five grants listed
+in the [CHANGELOG](CHANGELOG.md). A loose requirement such as `ch-migrate-cli`
+upgrades to 0.7; pin `ch-migrate-cli==0.6.0` to stay on 0.6.
+
+**From 0.5:** 0.6 and later require Python 3.10+; 0.5.x is the last line supporting Python 3.9.
+A loose requirement such as `ch-migrate-cli` or `~=0.5` upgrades past 0.5; pin
 `ch-migrate-cli==0.5.1` until each project has run the command below.
 After upgrading the package, run this in each migration project:
 
@@ -395,10 +402,11 @@ The reviewable classification corpus is `tests/corpus/idempotency.yaml`.
 
 **Recovery:** fix the cause of a partial failure, then run `ch-migrate up ENV`
 again. Earlier idempotent statements can run again; the version advances only
-when the revision completes. On ClickHouse Cloud, a column that the failed attempt
-dropped or renamed stays locked until that change's mutation finishes: a retry
-before then fails with "affected by mutation ... which is not finished yet", even
-with `IF EXISTS`. Wait for it in `system.mutations`, then run `up` again. Before retrying waived operations, review what the
+when the revision completes. A dropped or renamed column stays locked until that
+change's mutation finishes, and `up` waits for it before running the next
+statement, so a retry after a later failure doesn't hit "affected by mutation ...
+which is not finished yet". If `up` was stopped while it waited, run it again: it
+reattaches to that mutation. Before retrying waived operations, review what the
 earlier attempt actually changed.
 
 **Existing history:** `upgrade-env` records the current local script head(s) in
