@@ -1,7 +1,7 @@
 """`ch-migrate status` is a report: CI runs it as a non-blocking check.
 
-Sazabi's required "ClickHouse Migration Status" job relies on status exiting 0 when
-the database is unreachable or migrations are pending; only a broken project fails.
+A required CI status job can rely on status exiting 0 when the database is
+unreachable or migrations are pending; only a broken project fails.
 """
 
 import pytest
