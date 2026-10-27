@@ -1,4 +1,4 @@
-"""Why waiting stopped short: unfinished work, an unknown outcome, a deadline, a failed mutation."""
+"""Why waiting stopped short: a deadline, a failed mutation, or a deployment it can't check."""
 
 from __future__ import annotations
 
@@ -7,10 +7,6 @@ from dataclasses import dataclass
 
 class WaitingError(RuntimeError):
     """Server work is unfinished; the revision must not be completed."""
-
-
-class UnknownOutcome(WaitingError):
-    """Available evidence cannot justify replay or completion."""
 
 
 class WaitTimeout(WaitingError):

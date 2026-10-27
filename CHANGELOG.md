@@ -8,33 +8,30 @@ Changes are recorded in [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 
 0.7 waits for the work a migration starts. `up` doesn't record a migration as applied until the mutations and `ON CLUSTER` DDL its statements started have finished, and it shows their progress while it waits. A normal `pip install -U` reaches it from 0.6, so read this before upgrading:
 
-1. **`up` now blocks until that work finishes, with no default timeout.** If a CI job's time limit stops it mid-wait, ClickHouse keeps working and the next `up` reattaches to the same mutation instead of sending the statement again. `--timeout SECONDS` sets a limit of your own.
-2. **Migration roles that 0.6's `bootstrap` created on ClickHouse Cloud need five more grants.** On self-hosted servers the role usually has them already, because `bootstrap` grants `SELECT ON system.*` when the admin user can; Cloud's admin can't. As the admin user, replacing `<project>` with your project name:
+1. **`up` now blocks until that work finishes, with no default timeout.** If a CI job's time limit stops it mid-wait, ClickHouse keeps working, and the next `up` waits for that work before it runs the migration again. `--timeout SECONDS` sets a limit of your own.
+2. **A rerun runs the stopped migration again from its first statement.** 0.6's idempotency gate already requires statements that are safe to repeat, or a written waiver; check what a waived statement changed before you rerun it.
+3. **Two grants, only where `bootstrap` couldn't grant `SELECT ON system.*`**, such as on ClickHouse Cloud. As the admin user, replacing `<project>` with your project name:
    ```sql
-   GRANT SELECT ON system.columns TO <project>_migration_role;
-   GRANT CURRENT GRANTS(SELECT ON system.replicas) TO <project>_migration_role;
-   GRANT CURRENT GRANTS(SELECT ON system.clusters) TO <project>_migration_role;
-   GRANT CURRENT GRANTS(SELECT ON system.distributed_ddl_queue) TO <project>_migration_role;
    GRANT CURRENT GRANTS(SELECT ON system.parts) TO <project>_migration_role;
+   GRANT CURRENT GRANTS(SELECT ON system.replicas) TO <project>_migration_role;
    ```
-3. **No `upgrade-env` this time.** The environment 0.6 wrote is current.
+   `system.parts` gives the progress bar its bytes and time estimate; without it the bar counts parts. `system.replicas` is read only for self-hosted replicated tables, so Cloud needs just the first.
+4. **No `upgrade-env` this time.** The environment 0.6 wrote is current.
 
-To stay on 0.6 until then, pin `ch-migrate-cli==0.6.0`.
+To stay on 0.6, pin `ch-migrate-cli==0.6.0`.
 
 ### Changed
 
-- `up` waits before it records a migration as applied: for the mutations its statements start, on every required replica, and for `ON CLUSTER` DDL, on every host. It polls `system.mutations` and `system.distributed_ddl_queue` on the migration session instead of holding a request open with `mutations_sync`, so a dropped connection doesn't lose the outcome.
-- A failed mutation fails the migration with ClickHouse's `latest_fail_reason` and prints the scoped `KILL MUTATION` statement for an operator. `ch-migrate` never kills a mutation itself. Once a mutation is killed, or ClickHouse rejects a statement that would start one (for example `MODIFY COLUMN` on a sorting-key column), the migration can't be re-run or edited until that statement's journal entry is reconciled by hand; the README's "Unknown outcome" section has the steps.
-- `up` runs Alembic in its own process, so killing `up` can't leave a child process advancing the version table. Running `alembic upgrade` directly goes through the same environment and waits too; `--timeout` exists only on `ch-migrate up`.
-- The version table's delete goes through the same waiting, keeping 0.6's insert-first bookkeeping.
+- `up` waits before it records a migration as applied. After each statement that can write, it polls `system.mutations` on the migration session until the project database has no unfinished mutation on any replica that has to apply it, instead of holding a request open with `mutations_sync`. Mutations another writer started count too, and ones already queued are waited for before the first migration runs. The version table's own mutations stay with its 0.6 bookkeeping.
+- `ON CLUSTER` statements wait inside ClickHouse: `up` sends them with `distributed_ddl_output_mode = 'throw'` and a limit of 270 seconds, or what's left of `--timeout` if that's less, so a host that fails or doesn't finish in time fails the migration with ClickHouse's message.
+- A failed mutation fails the migration with ClickHouse's `latest_fail_reason` and prints the scoped `KILL MUTATION` statement for an operator; `ch-migrate` never kills a mutation itself. A failed mutation from before the run blocks it the same way. After a kill, fix the SQL and run `up` again.
+- `up` runs Alembic in its own process, so killing `up` can't leave a child process advancing the version table. `down` and a direct `alembic upgrade` go through the same environment and wait too; `--timeout` exists only on `ch-migrate up`.
 
 ### Added
 
-- `up --timeout SECONDS`: one waiting budget for the whole run. When it runs out, `up` exits 1, names what is still pending and leaves the work running; the next `up` waits on it again.
-- `_ch_migrate_journal`, created by `up` in the project database with the version table's engine. It records which work each statement started before the statement is sent, so a rerun reattaches instead of reissuing. When the evidence can't prove what happened, `up` stops without reissuing the statement or completing the migration, and prints read-only inspection queries. Don't delete the journal or restore it separately from the database.
-- Progress while `up` waits: in a terminal, a live bar per mutation weighted by bytes from `system.parts`, with parts and time left, one row per replica, and a host count for `ON CLUSTER` DDL. Piped output gets plain lines when a wait starts, at each 10% or every 30 seconds, and when it finishes. Without access to `system.parts` the bar counts parts only.
-- Foreign mutations already queued on the same table are reported and waited for first; a failed one stops the run.
-- `bootstrap` grants `SELECT` on `system.columns`, `system.replicas`, `system.clusters`, `system.distributed_ddl_queue` and `system.parts`.
+- `up --timeout SECONDS`: one waiting budget for the whole run. When it runs out, `up` exits 1, names what is still pending and leaves the work running; the next `up` waits on it again, then runs the migration.
+- Progress while `up` waits: in a terminal, a live bar per mutation weighted by bytes from `system.parts`, with parts and time left, and one row per replica. Piped output gets plain lines when a wait starts, at each 10% or every 30 seconds, and when it finishes. Without access to `system.parts` the bar counts parts only.
+- `bootstrap` grants `SELECT` on `system.replicas` and `system.parts`.
 
 ## [0.6.0]
 

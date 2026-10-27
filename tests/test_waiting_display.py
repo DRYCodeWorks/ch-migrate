@@ -8,8 +8,8 @@ from rich.console import Console
 from ch_migrate.migration_runner import Upgrade, _report_failure, _report_interrupt
 from ch_migrate.runner import _Progress
 from ch_migrate.sql import SqlStatementError
-from ch_migrate.waiting.display import DDLProgress, HostParts, MutationProgress, WaitDisplay
-from ch_migrate.waiting.errors import FailedMutation, MutationFailed, UnknownOutcome, WaitTimeout
+from ch_migrate.waiting.display import HostParts, MutationProgress, WaitDisplay
+from ch_migrate.waiting.errors import FailedMutation, MutationFailed, WaitTimeout
 
 GIB = 1 << 30
 
@@ -83,15 +83,6 @@ def test_each_replica_gets_its_own_row(clock):
     assert "· 2 replicas" in buffer.getvalue().splitlines()[-1]
 
 
-def test_on_cluster_ddl_counts_hosts(clock):
-    display, buffer = _display(terminal=True)
-    display.update(DDLProgress("query-0000000012", 2, 3))
-    assert "2/3 hosts" in buffer.getvalue()
-    piped, lines = _display(terminal=False)
-    piped.update(DDLProgress("query-0000000012", 2, 3))
-    assert lines.getvalue() == "  waiting on ON CLUSTER DDL query-0000000012: 2/3 hosts\n"
-
-
 def test_failed_mutation_names_reason_retry_and_kill(capsys):
     failure = FailedMutation(
         "demo_dev.events",
@@ -109,7 +100,10 @@ def test_failed_mutation_names_reason_retry_and_kill(capsys):
     )
     assert "Cannot parse string 'n/a' as UInt32" in err
     assert "keeps retrying a failed mutation" in err and failure.kill in err
-    assert "If the cause is temporary" in err and "reconciles the journal" in err
+    assert (
+        "If the cause is temporary" in err
+        and "then fixes the SQL and runs ch-migrate up dev" in err
+    )
 
 
 def test_timeout_says_the_work_continues_and_how_to_resume(capsys):
@@ -120,22 +114,14 @@ def test_timeout_says_the_work_continues_and_how_to_resume(capsys):
     err = capsys.readouterr().err
     assert err.startswith("✗ Timed out after 3.0s waiting on 3f9c2a1b  backfill")
     assert "Pending: demo_dev.events mutation mutation_7.txt; parts_to_do=3" in err
-    assert "ch-migrate up dev again to keep waiting; it won't reissue the statement" in err
-
-
-def test_unknown_outcome_shows_the_operator_guidance(capsys):
-    unknown = UnknownOutcome("Outcome unknown for demo_dev.events\nRead-only inspection: SELECT 1")
-    _report_failure(Upgrade("dev"), _current("3f9c2a1b  backfill"), _statement_error(unknown))
-    err = capsys.readouterr().err
-    assert "outcome unknown, so the statement was not reissued" in err
-    assert "  Read-only inspection: SELECT 1" in err
+    assert "ch-migrate up dev again: it waits for that work to finish" in err
 
 
 def test_interrupt_says_the_work_continues(capsys):
     _report_interrupt("dev", _current("3f9c2a1b  backfill"))
     err = capsys.readouterr().err
     assert err.startswith("✗ Interrupted during 3f9c2a1b  backfill")
-    assert "Run ch-migrate up dev to pick up where it stopped" in err
+    assert "Run ch-migrate up dev again: it waits for that work to finish" in err
 
 
 def _display(terminal):

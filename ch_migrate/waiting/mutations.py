@@ -1,207 +1,169 @@
-"""Mutation ownership, predecessor handling, and per-replica completion evidence."""
+"""Wait until a database has no unfinished mutations on any replica that has to apply them.
+
+The waiter doesn't track which statement started which mutation. After each write it
+records the unfinished mutations the connected server reports, then polls until each one
+is done everywhere it applies: on the service for SharedMergeTree, on every replica for
+ReplicatedMergeTree (a replica that hasn't pulled the mutation yet is still pending), and
+where it runs for anything else. Every unfinished mutation in the database counts, so a
+migration also waits for, and is stopped by, another writer's work.
+"""
 
 from __future__ import annotations
 
 import re
-from dataclasses import replace
+from dataclasses import dataclass, replace
 
 from clickhouse_connect.driver.exceptions import DatabaseError
 
 from ch_migrate.waiting.display import HostParts, MutationProgress
-from ch_migrate.waiting.errors import FailedMutation, MutationFailed, UnknownOutcome, WaitingError
+from ch_migrate.waiting.errors import FailedMutation, MutationFailed, WaitingError
 from ch_migrate.waiting.sql import sql_string
 
+SHARED = "shared"
+# version_table.py owns the version table's mutations: its DELETE waits on its own request,
+# and a stuck one is refused before the run starts.
 VERSION_TABLE = "alembic_version"
 
 
 class MutationWaiter:
+    """Polls `system.mutations` on the migration session; never kills or resends anything."""
+
     def __init__(self, client, state, budget):
         self.client, self.state, self.budget = client, state, budget
+        self._hosts: dict[str, tuple[str, ...] | None] = {}
         self._part_sizes: dict[tuple[str, str], int] = {}
 
-    def target(self, table: tuple[str, str]) -> dict | None:
-        rows = self.client.query(
-            "SELECT materialize(hostName()), toString(uuid), engine, sorting_key FROM system.tables "
-            "WHERE database = {db:String} AND name = {table:String}",
-            parameters={"db": table[0], "table": table[1]},
-        ).result_rows
-        if not rows:
-            return None
-        host, uuid, engine, sorting_key = rows[0]
-        target = {
-            "database": table[0],
-            "table": table[1],
-            "engine": engine,
-            "initiator": host,
-            "uuids": {host: uuid},
-            "cluster": None,
-            "sorting_key": sorting_key,
-        }
-        if engine.startswith("Shared"):
-            target["initiator"], target["uuids"] = "shared", {"shared": uuid}
-        elif engine.startswith("Replicated"):
-            self._replicated_target(target)
-        return target
-
-    def prepare(self, target: dict, token: str) -> dict:
-        while True:
-            rows = self._rows(target)
-            pending = [row for row in rows if not row[3]]
-            self._failures(target, pending, "Blocked by foreign mutation")
+    def wait(self, before_run: bool = False) -> None:
+        """Return once every unfinished mutation seen now has finished where it applies."""
+        self._hosts.clear()
+        expected = {(row.table, row.mutation) for row in self._rows(set())}
+        while expected:
+            rows = self._rows(expected)
+            expected |= {(row.table, row.mutation) for row in rows if not row.done}
+            _raise_failures(self.state.database, rows, before_run)
+            pending = self._pending(expected, rows)
             if not pending:
-                self.budget.complete(f"{target['database']}.{target['table']} foreign predecessors")
-                break
-            self.budget.pause("foreign predecessor " + self._progress(target, pending))
-        target = dict(target)
-        target.update(token=token, ids={}, done_hosts=[], baseline={})
-        for host in target["uuids"]:
-            target["baseline"][host] = sorted({row[1] for row in rows if row[0] == host})
-        return target
-
-    def wait(self, receipt: dict, checkpoint) -> None:
-        while True:
-            identities = self._identities(receipt)
-            self._visible_hosts = set(identities)
-            for host, uuid in identities.items():
-                if host in receipt["uuids"] and uuid != receipt["uuids"][host]:
-                    raise UnknownOutcome(
-                        f"Table {receipt['database']}.{receipt['table']} was replaced on {host}; statement not reissued"
-                    )
-            if receipt["initiator"] not in identities and not receipt.get("cluster"):
-                raise UnknownOutcome(
-                    f"Table {receipt['database']}.{receipt['table']} disappeared; statement not reissued"
-                )
-            rows = self._rows(receipt)
-            self._bind_markers(receipt, rows, checkpoint)
-            pending = self._pending(receipt, rows, checkpoint)
-            if not pending:
-                self.budget.complete(
-                    f"{receipt['database']}.{receipt['table']}; every required replica finished"
-                )
+                self.budget.complete(f"{self.state.database} mutations")
                 return
-            self.budget.pause("; ".join(pending), self._snapshot(receipt, rows))
+            self.budget.pause(_pending_text(self.state.database, pending), self._snapshot(pending))
 
-    def _replicated_target(self, target: dict) -> None:
+    def _rows(self, expected: set[tuple[str, str]]) -> list[_Row]:
+        """Unfinished mutations in the database, and every row for the ones already expected."""
+        cluster = self.state.health_cluster
+        source = (
+            "clusterAllReplicas({cluster:String}, system.mutations)"
+            if cluster
+            else "system.mutations"
+        )
+        rows = self.client.query(
+            "SELECT materialize(hostName()), table, mutation_id, is_done, parts_to_do, "
+            f"latest_fail_reason, parts_to_do_names FROM {source} WHERE database = {{db:String}} "
+            "AND table != {version:String} "
+            "AND (NOT is_done OR has({expected:Array(String)}, concat(table, '/', mutation_id)))",
+            parameters={
+                "db": self.state.database,
+                "version": VERSION_TABLE,
+                "cluster": cluster,
+                "expected": sorted(f"{table}/{mutation}" for table, mutation in expected),
+            },
+            settings=_cluster_settings() if cluster else None,
+        ).result_rows
+        return [self._row(values) for values in rows]
+
+    def _row(self, values: tuple) -> _Row:
+        host, table, mutation, done, parts, reason, names = values
+        # Every replica of a SharedMergeTree table reports the same shared mutation.
+        if self._required_hosts(table) == (SHARED,):
+            host = SHARED
+        return _Row(host, table, mutation, bool(done), parts, reason, frozenset(names))
+
+    def _pending(self, expected: set[tuple[str, str]], rows: list[_Row]) -> list[_Row]:
+        """Unfinished rows, plus a placeholder for each replica that hasn't reported one yet."""
+        pending = [row for row in rows if not row.done]
+        seen = {(row.host, row.table, row.mutation) for row in rows}
+        for table, mutation in sorted(expected):
+            for host in self._required_hosts(table) or ():
+                if host != SHARED and (host, table, mutation) not in seen:
+                    pending.append(
+                        _Row(host, table, mutation, False, 0, "", frozenset(), missing=True)
+                    )
+        return pending
+
+    def _required_hosts(self, table: str) -> tuple[str, ...] | None:
+        """Hosts that must each report a mutation done; None means wherever it appears."""
+        if table not in self._hosts:
+            self._hosts[table] = self._resolve_hosts(table)
+        return self._hosts[table]
+
+    def _resolve_hosts(self, table: str) -> tuple[str, ...] | None:
+        rows = self.client.query(
+            "SELECT engine FROM system.tables WHERE database = {db:String} AND name = {table:String}",
+            parameters={"db": self.state.database, "table": table},
+        ).result_rows
+        engine = rows[0][0] if rows else ""
+        if engine.startswith("Shared"):
+            return (SHARED,)
+        if engine.startswith("Replicated"):
+            return self._replicas(table)
+        return None
+
+    def _replicas(self, table: str) -> tuple[str, ...]:
         path, total = self.client.query(
             "SELECT zookeeper_path, total_replicas FROM system.replicas "
             "WHERE database = {db:String} AND table = {table:String}",
-            parameters=self._parameters(target),
+            parameters={"db": self.state.database, "table": table},
         ).result_rows[0]
         cluster = self.state.health_cluster
         if not cluster:
             if total > 1:
                 raise WaitingError(
-                    "Replicated mutation waiting requires an environment cluster covering every replica"
+                    f"{self.state.database}.{table} has {total} replicas; set `cluster` in "
+                    "config.yaml so `up` can wait for the mutation on every one"
                 )
-            return
-        target["cluster"] = cluster
-        while True:
-            replicas = self.client.query(
-                "SELECT materialize(hostName()), replica_name FROM "
-                "clusterAllReplicas({cluster:String}, system.replicas) "
-                "WHERE database = {db:String} AND table = {table:String} AND zookeeper_path = {path:String}",
-                parameters={**self._parameters(target), "cluster": cluster, "path": path},
-                settings=self._settings(),
-            ).result_rows
-            if len({replica for _, replica in replicas}) == total:
-                hosts = {host for host, _ in replicas}
-                target["uuids"] = {
-                    host: uuid for host, uuid in self._identities(target).items() if host in hosts
-                }
-                if len(target["uuids"]) == total:
-                    return
+            return (self.client.command("SELECT hostName()"),)
+        while len(hosts := self._cluster_replicas(table, path)) < total:
             self.budget.pause(
-                f"{target['database']}.{target['table']}: cluster {cluster} exposes {len(replicas)}/{total} required replicas"
+                f"{self.state.database}.{table}: cluster {cluster} shows {len(hosts)}/{total} replicas"
             )
+        return hosts
 
-    def _bind_markers(self, receipt: dict, rows: list, checkpoint) -> None:
-        found = False
-        for host in receipt["uuids"]:
-            if host in receipt["done_hosts"] or host in receipt["ids"]:
-                found = True
-                continue
-            local = [row for row in rows if row[0] == host]
-            markers = {row[1] for row in local if receipt["token"] in row[2]}
-            if not markers:
-                continue
-            if len(markers) != receipt.get("expected_markers", 1):
-                raise UnknownOutcome(
-                    f"Outcome unknown for partially submitted batch on {host}; statement not reissued"
-                )
-            found = True
-            barrier = max(_order(value) for value in markers)
-            baseline = set(receipt["baseline"].get(host, []))
-            receipt["ids"][host] = sorted(
-                markers
-                | {
-                    row[1]
-                    for row in local
-                    if not row[3] and row[1] not in baseline and _order(row[1]) <= barrier
-                }
-            )
-            checkpoint()
-        if not found:
-            raise UnknownOutcome(
-                f"Outcome unknown for {receipt['database']}.{receipt['table']} token {receipt['token']}: "
-                "ownership evidence is missing or expired; statement not reissued; migration incomplete. "
-                "Stop runners and reconcile the journal with independent server evidence."
-            )
+    def _cluster_replicas(self, table: str, path: str) -> tuple[str, ...]:
+        """Hosts the cluster can reach that hold a replica of this table's Keeper path."""
+        rows = self.client.query(
+            "SELECT DISTINCT materialize(hostName()) FROM clusterAllReplicas({cluster:String}, "
+            "system.replicas) WHERE database = {db:String} AND table = {table:String} "
+            "AND zookeeper_path = {path:String}",
+            parameters={
+                "cluster": self.state.health_cluster,
+                "db": self.state.database,
+                "table": table,
+                "path": path,
+            },
+            settings=_cluster_settings(),
+        ).result_rows
+        return tuple(sorted(host for (host,) in rows))
 
-    def _pending(self, receipt: dict, rows: list, checkpoint) -> list[str]:
-        pending = []
-        for host in receipt["uuids"]:
-            if host in receipt["done_hosts"]:
-                continue
-            ids = receipt["ids"].get(host)
-            if not ids:
-                pending.append(
-                    f"{receipt['database']}.{receipt['table']}: host {host} has not supplied the owned mutation"
-                )
-                continue
-            local = [row for row in rows if row[0] == host and row[1] in ids]
-            missing = set(ids) - {row[1] for row in local}
-            if missing:
-                if host not in self._visible_hosts:
-                    pending.append(
-                        f"{receipt['database']}.{receipt['table']}: host {host} missing mutation evidence {sorted(missing)}"
-                    )
-                    continue
-                raise UnknownOutcome(
-                    f"Outcome unknown: mutation evidence {sorted(missing)} disappeared on {host}; statement not reissued"
-                )
-            self._failures(receipt, local, "Mutation or preceding work failed")
-            unfinished = [row for row in local if not row[3]]
-            if unfinished:
-                pending.append(self._progress(receipt, unfinished))
-            else:
-                receipt["done_hosts"].append(host)
-                checkpoint()
-        return pending
-
-    def _snapshot(self, receipt: dict, rows: list) -> MutationProgress | None:
-        """What the display shows about this statement's unfinished mutations; never a verdict."""
+    def _snapshot(self, pending: list[_Row]) -> MutationProgress:
+        """The oldest pending mutation, as the display shows it."""
+        table, mutation = min(((row.table, row.mutation) for row in pending), key=_mutation_order)
+        rows = [row for row in pending if (row.table, row.mutation) == (table, mutation)]
+        # A replica that hasn't received the mutation has every part its peers report.
+        most = max((len(row.names) or row.parts for row in rows if not row.missing), default=0)
         hosts = [
-            parts
-            for host in receipt["uuids"]
-            if host not in receipt["done_hosts"]
-            and (parts := _host_parts(host, receipt["ids"].get(host) or [], rows)) is not None
+            HostParts(row.host, row.names, most if row.missing else len(row.names) or row.parts)
+            for row in rows
         ]
-        owned = [mutation for ids in receipt["ids"].values() for mutation in ids]
-        if not hosts or not owned:
-            return None
         if self.budget.display.wants_bytes:
-            hosts = self._with_sizes(receipt, hosts)
-        table = f"{receipt['database']}.{receipt['table']}"
-        bookkeeping = receipt["table"] == VERSION_TABLE
-        return MutationProgress(table, min(owned, key=_order), tuple(hosts), bookkeeping)
+            hosts = self._with_sizes(table, hosts)
+        return MutationProgress(f"{self.state.database}.{table}", mutation, tuple(hosts))
 
-    def _with_sizes(self, receipt: dict, hosts: list[HostParts]) -> list[HostParts]:
+    def _with_sizes(self, table: str, hosts: list[HostParts]) -> list[HostParts]:
         # Parts never change size, so each is read once; only new names cost a query.
         wanted = {(host.host, name) for host in hosts for name in host.names}
         unknown = {name for _, name in wanted - self._part_sizes.keys()}
         if unknown:
             try:
-                self._part_sizes.update(self._read_sizes(receipt, unknown))
+                self._part_sizes.update(self._read_sizes(table, unknown))
             except DatabaseError as error:
                 self.budget.display.parts_only(_sizes_unreadable(error))
                 return hosts
@@ -214,100 +176,82 @@ class MutationWaiter:
             for host in hosts
         ]
 
-    def _read_sizes(self, receipt: dict, names: set[str]) -> dict[tuple[str, str], int]:
-        source, parameters = self._source(receipt, "parts")
+    def _read_sizes(self, table: str, names: set[str]) -> dict[tuple[str, str], int]:
+        cluster = self.state.health_cluster
+        source = "clusterAllReplicas({cluster:String}, system.parts)" if cluster else "system.parts"
         rows = self.client.query(
-            "SELECT materialize(hostName()), name, bytes_on_disk "
-            f"FROM {source} WHERE database = {{db:String}} AND table = {{table:String}} "
-            "AND active AND has({names:Array(String)}, name)",
-            parameters={**parameters, "names": sorted(names)},
-            settings=self._settings() if receipt.get("cluster") else None,
+            f"SELECT materialize(hostName()), name, bytes_on_disk FROM {source} "
+            "WHERE database = {db:String} AND table = {table:String} AND active "
+            "AND has({names:Array(String)}, name)",
+            parameters={
+                "cluster": cluster,
+                "db": self.state.database,
+                "table": table,
+                "names": sorted(names),
+            },
+            settings=_cluster_settings() if cluster else None,
         ).result_rows
-        shared = receipt["engine"].startswith("Shared")
-        return {("shared" if shared else host, name): size for host, name, size in rows}
+        shared = self._required_hosts(table) == (SHARED,)
+        return {(SHARED if shared else host, name): size for host, name, size in rows}
 
-    def _rows(self, target: dict) -> list:
-        source, parameters = self._source(target, "mutations")
-        rows = self.client.query(
-            "SELECT materialize(hostName()), mutation_id, command, is_done, parts_to_do, "
-            f"latest_fail_reason, parts_to_do_names FROM {source} WHERE database = {{db:String}} AND table = {{table:String}}",
-            parameters=parameters,
-            settings=self._settings() if target.get("cluster") else None,
-        ).result_rows
-        if target["engine"].startswith("Shared"):
-            return [("shared", *row[1:]) for row in rows]
-        return [row for row in rows if row[0] in target["uuids"]]
 
-    def _identities(self, target: dict) -> dict[str, str]:
-        source, parameters = self._source(target, "tables")
-        rows = self.client.query(
-            f"SELECT materialize(hostName()), toString(uuid) FROM {source} "
-            "WHERE database = {db:String} AND name = {table:String}",
-            parameters=parameters,
-            settings=self._settings() if target.get("cluster") else None,
-        ).result_rows
-        if target["engine"].startswith("Shared"):
-            return {"shared": rows[0][1]} if rows else {}
-        return dict(rows)
+@dataclass(frozen=True)
+class _Row:
+    """One host's view of one mutation, or a placeholder for a replica that hasn't got it."""
 
-    def _source(self, target: dict, table: str) -> tuple[str, dict]:
-        parameters = self._parameters(target)
-        if target.get("cluster"):
-            parameters["cluster"] = target["cluster"]
-            return f"clusterAllReplicas({{cluster:String}}, system.{table})", parameters
-        return f"system.{table}", parameters
+    host: str
+    table: str
+    mutation: str
+    done: bool
+    parts: int
+    reason: str
+    names: frozenset[str]
+    missing: bool = False
 
-    def _settings(self) -> dict:
-        return {
-            "skip_unavailable_shards": 1,
-            "connect_timeout_with_failover_ms": 250,
-            "receive_timeout": 2,
-        }
 
-    @staticmethod
-    def _parameters(target: dict) -> dict:
-        return {"db": target["database"], "table": target["table"]}
-
-    @staticmethod
-    def _failures(target: dict, rows: list, prefix: str) -> None:
-        for host, mutation, _, done, _, reason, *_ in rows:
-            if not done and reason:
-                kill = (
-                    f"KILL MUTATION WHERE database = {sql_string(target['database'])} "
-                    f"AND table = {sql_string(target['table'])} AND mutation_id = {sql_string(mutation)}"
-                )
-                table = f"{target['database']}.{target['table']}"
-                raise MutationFailed(
-                    f"{prefix}: {table} mutation {mutation} on {host}: {reason}\nOperator only on {host}: {kill}",
-                    FailedMutation(
-                        table, mutation, host, reason, kill, prefix.startswith("Blocked")
-                    ),
-                )
-
-    @staticmethod
-    def _progress(target: dict, rows: list) -> str:
-        parts = {}
-        for host, mutation, _, _, count, *_ in rows:
-            parts[(host, mutation)] = max(parts.get((host, mutation), 0), count)
-        return "; ".join(
-            f"{target['database']}.{target['table']} mutation {mutation} host {host}; parts_to_do={count}"
-            for (host, mutation), count in sorted(parts.items())
+def _raise_failures(database: str, rows: list[_Row], before_run: bool) -> None:
+    for row in rows:
+        if row.done or not row.reason:
+            continue
+        kill = (
+            f"KILL MUTATION WHERE database = {sql_string(database)} "
+            f"AND table = {sql_string(row.table)} AND mutation_id = {sql_string(row.mutation)}"
         )
+        table = f"{database}.{row.table}"
+        prefix = "Blocked by a failed mutation" if before_run else "Mutation failed"
+        raise MutationFailed(
+            f"{prefix}: {table} mutation {row.mutation} on {row.host}: {row.reason}\n"
+            f"Operator only on {row.host}: {kill}",
+            FailedMutation(table, row.mutation, row.host, row.reason, kill, before_run),
+        )
+
+
+def _pending_text(database: str, pending: list[_Row]) -> str:
+    parts = []
+    for row in sorted(pending, key=lambda row: (row.table, _order(row.mutation), row.host)):
+        where = f"{database}.{row.table} mutation {row.mutation} host {row.host}"
+        parts.append(
+            f"{where}; not received yet" if row.missing else f"{where}; parts_to_do={row.parts}"
+        )
+    return "; ".join(parts)
+
+
+def _mutation_order(key: tuple[str, str]) -> tuple[int, str]:
+    return _order(key[1]), key[0]
 
 
 def _order(mutation: str) -> int:
     numbers = re.findall(r"\d+", mutation)
-    if len(numbers) != 1:
-        raise WaitingError(f"Unrecognized mutation ordering identifier: {mutation}")
-    return int(numbers[0])
+    return int(numbers[-1]) if numbers else 0
 
 
-def _host_parts(host: str, ids: list, rows: list) -> HostParts | None:
-    unfinished = [row for row in rows if row[0] == host and row[1] in ids and not row[3]]
-    if not unfinished:
-        return None
-    names = frozenset(name for row in unfinished for name in row[6])
-    return HostParts(host, names, len(names) or max(row[4] for row in unfinished))
+def _cluster_settings() -> dict:
+    # A replica that's down is skipped, so its missing rows read as pending, not as done.
+    return {
+        "skip_unavailable_shards": 1,
+        "connect_timeout_with_failover_ms": 250,
+        "receive_timeout": 2,
+    }
 
 
 def _sizes_unreadable(error: Exception) -> str:

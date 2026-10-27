@@ -33,7 +33,6 @@ from ch_migrate.waiting.display import WaitDisplay
 from ch_migrate.waiting.errors import (
     FailedMutation,
     MutationFailed,
-    UnknownOutcome,
     WaitingError,
     WaitTimeout,
 )
@@ -114,8 +113,8 @@ def _report_interrupt(environment: str, progress: _Progress) -> None:
     ui.error(f"Interrupted{' during ' + progress.current if progress.current else ''}")
     ui.hint(
         "Work ClickHouse already started keeps running, and the migration is not recorded as "
-        f"applied. Run `ch-migrate up {environment}` to pick up where it stopped; it won't "
-        "reissue a statement it already sent.",
+        f"applied. Run `ch-migrate up {environment}` again: it waits for that work to finish, "
+        "then runs the migration again.",
         stderr=True,
     )
 
@@ -129,8 +128,8 @@ def _report_failure(upgrade: Upgrade, progress: _Progress, error: Exception) -> 
         _report_mutation_failure(upgrade.environment, where, waiting.failure)
     elif isinstance(waiting, WaitTimeout):
         _report_timeout(upgrade.environment, where, waiting)
-    elif isinstance(waiting, UnknownOutcome):
-        _report_unknown_outcome(where, waiting)
+    elif waiting is not None:
+        ui.error(f"{where}: {waiting}")
     else:
         _report_statement_failure(upgrade, where, error)
 
@@ -139,8 +138,8 @@ def _report_mutation_failure(environment: str, where: str, failure: FailedMutati
     on_host = "" if failure.host == "shared" else f" on {failure.host}"
     if failure.foreign:
         ui.error(
-            f"{where} is blocked: foreign mutation {failure.mutation} on {failure.table} "
-            f"failed{on_host}"
+            f"{where} is blocked: mutation {failure.mutation} on {failure.table}, started "
+            f"before this run, failed{on_host}"
         )
     else:
         ui.error(f"{where} failed: mutation {failure.mutation} on {failure.table} failed{on_host}")
@@ -157,7 +156,7 @@ def _report_mutation_failure(environment: str, where: str, failure: FailedMutati
     )
     ui.hint(
         f"If the statement itself is wrong, an operator stops it{on_host} with {failure.kill}, "
-        "then reconciles the journal as the README's Unknown outcome section describes.",
+        f"then fixes the SQL and runs `ch-migrate up {environment}` again.",
         stderr=True,
     )
 
@@ -167,16 +166,10 @@ def _report_timeout(environment: str, where: str, timeout: WaitTimeout) -> None:
     ui.detail(f"Pending: {timeout.pending}", stderr=True)
     ui.hint(
         "ClickHouse keeps doing the work, and the migration is not recorded as applied. "
-        f"Run `ch-migrate up {environment}` again to keep waiting; it won't reissue the statement.",
+        f"Run `ch-migrate up {environment}` again: it waits for that work to finish, then runs "
+        "the migration again.",
         stderr=True,
     )
-
-
-def _report_unknown_outcome(where: str, unknown: UnknownOutcome) -> None:
-    ui.error(f"{where}: outcome unknown, so the statement was not reissued")
-    for line in str(unknown).strip().splitlines():
-        ui.detail(line, stderr=True)
-    ui.hint("Follow the README's Unknown outcome steps before you run `up` again.", stderr=True)
 
 
 def _report_statement_failure(upgrade: Upgrade, where: str, error: Exception) -> None:

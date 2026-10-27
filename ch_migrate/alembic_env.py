@@ -6,15 +6,17 @@ import logging
 import os
 from logging.config import fileConfig
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
+from uuid import uuid4
 
 import clickhouse_connect.cc_sqlalchemy.alembic  # Registers the official implementation.
 from alembic import context
 from clickhouse_connect.cc_sqlalchemy.alembic.impl import ClickHouseImpl
 from clickhouse_connect.driver.httputil import get_pool_manager
 from dotenv import load_dotenv
-from sqlalchemy import URL, Column, MetaData, String, Table, create_engine, pool
-from sqlalchemy.sql.dml import Delete, Insert, Update
+from sqlalchemy import URL, Column, MetaData, String, Table, create_engine, pool, text
+from sqlalchemy.sql.dml import Insert
 
 from ch_migrate.config import get_env_config
 from ch_migrate.hooks import HookRegistry, run_hooks
@@ -27,7 +29,6 @@ from ch_migrate.version_table import (
     sync_version_replica,
 )
 from ch_migrate.waiting import MigrationWaiter
-from ch_migrate.waiting.versions import write_unjournaled
 
 ENV_VERSION = 2
 DEFAULT_SESSION_TIMEOUT = 1800
@@ -58,18 +59,37 @@ class ChMigrateImpl(ClickHouseImpl):
         )
 
     def _exec(self, construct, execution_options=None, multiparams=None, params=None):
-        # The official implementation owns these SQLAlchemy version constructs;
-        # all user SQL, including raw bind execution, is covered by cursor events.
-        if isinstance(construct, (Insert, Update, Delete)) and self._is_version_table_construct(
-            construct
-        ):
-            waiter = self.context_opts.get("ch_migrate_waiter")
-            if waiter is not None and waiter.revision is not None:
-                return waiter.versions.execute(construct, self)
-            if not isinstance(construct, Delete):
-                return write_unjournaled(construct, self)
+        if isinstance(construct, Insert) and self._is_version_table_construct(construct):
+            self._insert_version_row(construct)
+            return SimpleNamespace(rowcount=1)
         return super()._exec(
             construct, execution_options=execution_options, multiparams=multiparams, params=params
+        )
+
+    def _exec_version_update(self, construct, execution_options=None):
+        # The official INSERT then waited DELETE, with the INSERT written by _insert_version_row.
+        self._insert_version_row(construct)
+        where = self._compile_version_where(construct)
+        super()._exec(
+            text(
+                f"ALTER TABLE {self._version_table_name} DELETE WHERE {where} "
+                "SETTINGS mutations_sync = 2"
+            )
+        )
+        return SimpleNamespace(rowcount=1)
+
+    def _insert_version_row(self, construct) -> None:
+        # Replicated and Shared MergeTree silently drop a block identical to an earlier insert
+        # (DRY-1447), so re-inserting a previous head after `down` left no version row at all.
+        # A token unique to this write keeps every intentional version row.
+        value = self._compile_clause(next(iter(construct._values.values())))
+        token = f"'chm_version_{uuid4().hex}'"
+        super()._exec(
+            text(
+                f"INSERT INTO {self._version_table_name} (version_num) "
+                f"SETTINGS insert_deduplication_token = {token}, async_insert = 0 "
+                f"VALUES ({value})"
+            )
         )
 
 
@@ -77,6 +97,7 @@ def run() -> None:
     """Run the selected environment on one official-dialect session."""
     root = Path.cwd()
     load_dotenv(root / ".env.local")
+    # `ch-migrate up` runs Alembic in its own process and names the environment directly.
     environment = context.config.attributes.get(
         "ch_migrate_environment", os.environ.get("CH_ENVIRONMENT", "dev")
     )
@@ -150,7 +171,36 @@ def _run_online(env_config: dict[str, Any]) -> None:
 
 
 def _run_connection(connection, env_config: dict[str, Any]) -> None:
-    # The checked session and listener registration share this failure boundary.
+    hooks = HookRegistry.from_config(env_config.get("hooks"))
+    state = _checked_session(connection, env_config)
+    context.configure(
+        connection=connection,
+        target_metadata=None,
+        version_table="alembic_version",
+        version_table_schema=state.database,
+        on_version_apply=_post_migrate(hooks, state.database),
+        ch_migrate_version_state=state,
+    )
+    waiter = MigrationWaiter(connection, state, context.config.attributes.get("ch_migrate_timeout"))
+    try:
+        waiter.install(context.config)
+        with context.begin_transaction():
+            # Work an earlier run left unfinished finishes before anything is sent again.
+            waiter.wait(before_run=True)
+            run_hooks(
+                connection,
+                hooks.pre_migrate,
+                db=state.database,
+                phase="pre_migrate",
+                revision="all",
+            )
+            context.run_migrations()
+    finally:
+        waiter.close()
+
+
+def _checked_session(connection, env_config: dict[str, Any]) -> VersionTableState:
+    # Establish the session before requiring its existence on every later request.
     connection.exec_driver_sql("SELECT 1")
     client = connection.connection.dbapi_connection.client
     client.set_client_setting("session_check", 1)
@@ -160,40 +210,7 @@ def _run_connection(connection, env_config: dict[str, Any]) -> None:
     if warning := state.warning():
         logger.warning(warning)
     connection.dialect.ddl_compiler = VersionTableDDLCompiler
-    waiter = MigrationWaiter(connection, state, context.config.attributes.get("ch_migrate_timeout"))
-    try:
-        waiter.install(context.config)
-        context.configure(
-            connection=connection,
-            target_metadata=None,
-            version_table="alembic_version",
-            version_table_schema=state.database,
-            ch_migrate_waiter=waiter,
-            ch_migrate_version_state=state,
-        )
-        _run_context(waiter, HookRegistry.from_config(env_config.get("hooks")))
-    finally:
-        waiter.close()
-
-
-def _run_context(waiter: MigrationWaiter, hooks: HookRegistry) -> None:
-    runtime = context.get_context()
-    runtime._migrations_fn = waiter.steps(runtime._migrations_fn, hooks)
-    with context.begin_transaction():
-        if _is_upgrade():
-            waiter.ensure_version_table(runtime._version)
-            waiter.versions.resume()
-            waiter.run_pre_hooks(hooks)
-        else:
-            run_hooks(
-                waiter.connection,
-                hooks.pre_migrate,
-                db=waiter.state.database,
-                phase="pre_migrate",
-                revision="all",
-            )
-        context.run_migrations()
-        waiter.finish_run()
+    return state
 
 
 def _url(env_config: dict[str, Any]) -> URL:
@@ -212,9 +229,19 @@ def _url(env_config: dict[str, Any]) -> URL:
     )
 
 
-def _is_upgrade() -> bool:
-    explicit = context.config.attributes.get("ch_migrate_command")
-    if explicit is not None:
-        return explicit == "upgrade"
-    command = getattr(context.config.cmd_opts, "cmd", None)
-    return bool(command and command[0].__name__ == "upgrade")
+def _post_migrate(hooks: HookRegistry, database: str):
+    def after_revision(ctx, step, heads, run_args):
+        revision = (
+            step.up_revision
+            if step.is_upgrade
+            else (step.down_revisions[0] if step.down_revisions else "unknown")
+        )
+        run_hooks(
+            ctx.connection,
+            hooks.post_migrate,
+            db=database,
+            phase="post_migrate",
+            revision=revision,
+        )
+
+    return after_revision

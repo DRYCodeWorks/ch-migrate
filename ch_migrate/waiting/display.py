@@ -1,4 +1,4 @@
-"""What `up` shows while it waits for mutations and ON CLUSTER DDL.
+"""What `up` shows while it waits for mutations.
 
 Waiters hand over what the server reports; this module only draws it, and nothing
 here decides whether work is done. On a terminal each wait is a live bar on
@@ -25,8 +25,8 @@ PIPED_INTERVAL = 30.0
 PIPED_STEPS = 10
 BAR_WIDTH = 38
 
-# What a waiter reports: a mutation, an ON CLUSTER queue entry, or a plain status line.
-Progress = Union["MutationProgress", "DDLProgress", str]
+# What a waiter reports: a mutation, or a plain status line.
+Progress = Union["MutationProgress", str]
 
 
 class WaitDisplay:
@@ -48,8 +48,6 @@ class WaitDisplay:
         return self._terminal and not self._parts_only
 
     def update(self, progress: Progress) -> None:
-        if isinstance(progress, MutationProgress) and progress.bookkeeping:
-            return
         wait = self._wait_for(progress)
         wait.observe(progress)
         if self._terminal:
@@ -111,7 +109,6 @@ class MutationProgress:
     table: str
     mutation: str
     hosts: tuple[HostParts, ...]
-    bookkeeping: bool = False  # the version table's own delete: waited for, not shown
 
 
 @dataclass(frozen=True)
@@ -128,15 +125,6 @@ class HostParts:
         if self.sizes is None or not self.names.issubset(self.sizes):
             return None
         return sum(self.sizes[name] for name in self.names)
-
-
-@dataclass(frozen=True)
-class DDLProgress:
-    """An ON CLUSTER statement's distributed DDL queue entry."""
-
-    entry: str
-    finished: int
-    total: int
 
 
 @dataclass
@@ -160,9 +148,6 @@ class _Wait:
     def renderable(self):
         elapsed = _duration(time.monotonic() - self.started)
         progress = self.latest
-        if isinstance(progress, DDLProgress):
-            stats = f"{progress.finished}/{progress.total} hosts · {elapsed}"
-            return _bar_row("", _bar(progress.finished, progress.total), stats)
         if isinstance(progress, str):
             return Text(f"  waiting: {progress} · {elapsed}", style="dim")
         rows = [self._host_row(host, len(progress.hosts) > 1) for host in progress.hosts]
@@ -181,9 +166,6 @@ class _Wait:
     def summary(self, migration: str, fallback: str) -> str:
         elapsed = _duration(time.monotonic() - self.started)
         progress = self.latest
-        if isinstance(progress, DDLProgress):
-            label = migration or f"ON CLUSTER DDL {progress.entry}"
-            return f"{label}  ON CLUSTER DDL on {progress.total} hosts · {elapsed}"
         if isinstance(progress, str):
             return f"{migration or fallback}  waited for {progress} · {elapsed}"
         return f"{migration or progress.table}  {self._mutation_totals(progress)} · {elapsed}"
@@ -210,8 +192,6 @@ class _Wait:
 
     def _fraction(self) -> float:
         progress = self.latest
-        if isinstance(progress, DDLProgress):
-            return progress.finished / progress.total if progress.total else 0.0
         if isinstance(progress, str):
             return 0.0
         total = sum(self.parts_total.values())
@@ -220,8 +200,6 @@ class _Wait:
 
     def _piped_text(self) -> str:
         progress = self.latest
-        if isinstance(progress, DDLProgress):
-            return f"waiting on ON CLUSTER DDL {progress.entry}: {progress.finished}/{progress.total} hosts"
         if isinstance(progress, str):
             return f"waiting: {progress}"
         total = sum(self.parts_total.values())
@@ -242,8 +220,6 @@ class _Wait:
 def _key(progress: Progress) -> str:
     if isinstance(progress, MutationProgress):
         return f"mutation {progress.table} {progress.mutation}"
-    if isinstance(progress, DDLProgress):
-        return f"ddl {progress.entry}"
     return "status"
 
 

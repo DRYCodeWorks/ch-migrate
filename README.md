@@ -25,10 +25,10 @@ This README describes the source checkout, which may be ahead of PyPI. To try an
 
 **From 0.6:** 0.7 needs no `upgrade-env`. `up` now waits for the mutations and
 `ON CLUSTER` DDL its statements start (see [Migrations that wait](#migrations-that-wait)),
-so give CI jobs time to finish or pass `--timeout`. Migration roles that 0.6's
-`bootstrap` created on ClickHouse Cloud need the five grants listed in the
-[CHANGELOG](CHANGELOG.md); self-hosted roles usually have them through `SELECT ON system.*`. A loose requirement such as `ch-migrate-cli`
-upgrades to 0.7; pin `ch-migrate-cli==0.6.0` to stay on 0.6.
+so give CI jobs time to finish or pass `--timeout`. Where `bootstrap` couldn't grant
+`SELECT ON system.*`, such as on ClickHouse Cloud, add the grants listed in the
+[CHANGELOG](CHANGELOG.md). A loose requirement such as `ch-migrate-cli` upgrades to
+0.7; pin `ch-migrate-cli==0.6.0` to stay on 0.6.
 
 **From 0.5:** 0.6 and later require Python 3.10+; 0.5.x is the last line supporting Python 3.9.
 A loose requirement such as `ch-migrate-cli` or `~=0.5` upgrades past 0.5; pin
@@ -180,14 +180,13 @@ New `alembic_version` tables use `ORDER BY version_num`. The runtime inspects
 | Atomic database with `cluster` configured | `ReplicatedMergeTree` created `ON CLUSTER`, with a Keeper path containing the database name and shard macro |
 | Single server | `MergeTree` |
 
-Version advancement remains **insert the new row, then delete the old row**;
-there is no asynchronous version UPDATE. Online `up` journals that bookkeeping
-and polls its owned DELETE rather than holding an HTTP request open with
-`mutations_sync`. If interrupted, both rows can remain. A subsequent `up`
-finishes the proven bookkeeping without running the revision again. Overlapping
-heads without an owned journal receipt are still refused. Failed version
-mutations report their reason and an operator-only KILL statement; ch-migrate
-never kills them itself.
+The official Alembic implementation advances a version by **inserting the new
+row, then deleting the old row with `mutations_sync = 2`**. It does not issue an
+asynchronous version UPDATE. If the process stops while the delete is pending,
+both rows remain and Alembic refuses their overlapping history rather than
+repeating the migration. Let the version mutation finish, then retry. A
+server-reported failed version mutation stops the run with its reason; ch-migrate
+never kills that mutation.
 
 Before reading replicated heads, the tool catches up replicated database
 metadata and inserted version parts. The table barrier uses
@@ -237,16 +236,41 @@ is separate from the local suite; the local replicated harness has one shard.
 
 ### Migrations that wait
 
-`up` waits for the mutations its statements create before completing a revision.
-It uses the same checked ClickHouse session for submission and polling, so prior
-`SET` statements stay effective. `op.execute`, raw `op.get_bind()` execution, and
-`run_sql` all pass through the cursor boundary. Upgrades run in the CLI process:
-killing that process cannot leave a child Alembic runner advancing revisions.
+`up` doesn't record a migration as applied until the work its statements started
+has finished. After each statement that can write, it polls `system.mutations` on
+the same checked ClickHouse session, so earlier `SET` statements stay in effect.
+`op.execute`, raw `op.get_bind()` execution and `run_sql` all pass through that
+check. Upgrades run in the CLI process, so killing it can't leave a child Alembic
+runner advancing revisions. `down` waits the same way.
 
 ```bash
 ch-migrate up dev                 # No default waiting timeout
 ch-migrate up dev --timeout 120   # One waiting budget across the invocation
 ```
+
+What `up` waits for:
+
+- **Every unfinished mutation in the project database,** including one another
+  writer started. Before the first migration runs, `up` waits for any already
+  queued, and a failed one blocks the run. The version table's own mutations are
+  left to [its bookkeeping](#the-version-table).
+- **Each replica that has to apply it.** Zero parts left isn't completion on its
+  own: the mutation must report `is_done`. A ReplicatedMergeTree mutation must be
+  finished on every replica, and a replica that hasn't received it yet is still
+  pending. Configure `cluster` for self-hosted replicated tables, or use a
+  Replicated database's automatic cluster; without either, `up` refuses a table
+  with more than one replica. SharedMergeTree on ClickHouse Cloud reports one
+  shared mutation.
+- **`ON CLUSTER` DDL on every host.** `up` sends these statements with
+  `distributed_ddl_output_mode = 'throw'`, so ClickHouse answers once every host
+  has run the statement, and a host that fails or doesn't finish in time fails the
+  migration with ClickHouse's message. The limit is 270 seconds, below the
+  client's read timeout, or what's left of `--timeout` if that's less. Mutations
+  the statement starts are then waited for as above.
+
+Statements ClickHouse already holds until they finish, such as a type-changing
+`MODIFY COLUMN`, a `MODIFY TTL` that materializes, or a lightweight `DELETE`,
+still hold their request as they did in 0.6.
 
 While it waits, `up` shows progress on stderr. In a terminal, each mutation gets a
 live bar weighted by bytes, with its parts and an estimate of the time left:
@@ -257,10 +281,10 @@ live bar weighted by bytes, with its parts and an estimate of the time left:
 ✓ 3f9c2a1b  backfill_digest  mutation_7.txt · 41 parts · 41.0 GiB · 2:03
 ```
 
-Self-hosted replicated tables get one row per replica, and `ON CLUSTER` DDL
-counts the hosts that have finished. When output isn't a terminal (CI logs,
-pipes, coding agents), `up` prints plain lines instead: one when a wait starts,
-one at each 10% of the parts or every 30 seconds, and one when it finishes:
+Self-hosted replicated tables get one row per replica. When output isn't a
+terminal (CI logs, pipes, coding agents), `up` prints plain lines instead: one
+when a wait starts, one at each 10% of the parts or every 30 seconds, and one
+when it finishes:
 
 ```text
 → Applying 3f9c2a1b  backfill_digest
@@ -270,88 +294,26 @@ one at each 10% of the parts or every 30 seconds, and one when it finishes:
 ```
 
 Part sizes come from `system.parts`. If the migration role can't read it, the bar
-counts parts only and says so once; progress never changes whether `up`
-succeeds. After a resume the bar counts the parts still left when it reattached.
-A failed mutation shows ClickHouse's `latest_fail_reason` and the scoped
-`KILL MUTATION` statement; a timeout names what is still pending and how to
-resume. Zero remaining parts alone does not count as completion: every
-required replica must report its owned mutation finished. Configure `cluster`
-for self-hosted replicated tables, or use a Replicated database's automatic
-cluster. Missing replicas or missing evidence are never treated as success.
+counts parts only and says so once; progress never changes whether `up` succeeds.
 
-An active foreign mutation ahead of ours is reported and waited before more work
-is submitted. A failed predecessor stops the run. Foreign work queued after our
-completion barrier is not claimed as ours and does not hold our revision open.
+**When `up` stops short.** After a timeout, Ctrl-C, dropped connection or killed
+process, ClickHouse keeps working and the migration isn't recorded. Run `up`
+again: it waits for that work to finish, then runs the migration again from its
+first statement. That's safe because the idempotency gate below requires every
+statement to be safe to repeat, or to carry a written waiver; before rerunning a
+waived statement, check what the first attempt changed.
 
-Ownership is persisted in `_ch_migrate_journal` **before** SQL submission. The
-journal follows the version table's deployment policy and uses the same session.
-It records revision/statement identities, table UUIDs and progress receipts.
-Run only one migration runner per database, using a CI concurrency key or an
-external lock: this journal is not a distributed lock. Do not delete or restore
-it independently of the database state it describes.
+**Failed mutation.** ClickHouse's `latest_fail_reason` stops the run, and `up`
+prints the scoped `KILL MUTATION` statement for an operator; ch-migrate never
+runs it. ClickHouse keeps retrying a failed mutation, and later mutations on that
+table queue behind it. If the cause is temporary, such as memory or disk, fix it
+and run `up` again. If the statement itself is wrong, kill the mutation, fix the
+SQL and run `up` again. Killing a mutation doesn't undo the parts it already
+rewrote.
 
-After a timeout, dropped connection or killed process, ClickHouse may still be
-working. Run the same `up` again: it skips proven completed statements and
-reattaches to its known unfinished mutation instead of issuing it again.
-Successful downgrade starts a fresh journal generation so a later upgrade
-actually executes. A changed unresolved statement or replaced table is refused.
-An explicitly rejected repeat-safe metadata statement can be repaired and retried;
-transport errors do not establish rejection.
-
-**Unknown outcome:** if ownership/completion evidence is missing or expired,
-`up` exits nonzero, does not reissue the statement and does not complete the
-migration. The error names the journal key, token and recorded UUIDs and provides
-read-only inspection queries. Operator recovery is deliberately not a retry flag:
-
-1. Stop migration runners and quiesce other writers as needed. Back up the
-   affected journal key and relevant data before making changes.
-2. Establish whether the original statement took effect using independent data,
-   schema and server evidence on every required replica. An absent mutation row
-   is not proof either way.
-3. Reconcile that **specific** statement and journal key in a reviewed manual
-   operation. For a proven applied operation, its completed receipt must carry
-   the actual post-operation UUID map (`after_target.uuids`, or null for a dropped
-   target). For a proven unapplied operation, remove only that key's attempt
-   records after restoring any partial effects, and wait for that journal
-   change on every replica. Preserve the other completed statement receipts.
-4. Recheck the recorded heads and rerun `up`. Never blindly stamp the revision,
-   delete the whole journal, or replay a non-idempotent statement to guess its
-   outcome.
-
-**Failed mutation:** `latest_fail_reason` stops the run and prints a scoped
-`KILL MUTATION` statement for the operator. The tool does not execute it. Fix the
-cause and reattach, or review a cancellation and reconcile its effects; killing
-a mutation is not proof that it completed.
-
-`MODIFY TTL` has a separate metadata/materialization boundary: when materialization
-is enabled, the runtime journals the metadata change with automatic materialization
-disabled, then submits a separately owned `MATERIALIZE TTL`. This avoids confusing
-TTL's comma-separated rules with ALTER actions. Session and per-query
-`materialize_ttl_after_modify = 0` are honored. Parameter batches are executed
-sequentially through the same single-statement path, with a receipt and completion
-barrier for each parameter set; intermediate TTL effects are not collapsed.
-Lightweight DELETE keeps its row-mask semantics; lightweight UPDATE is synchronous
-patch work, not a fabricated `system.mutations` record.
-
-For `ON CLUSTER` statements, the same journal first records a unique distributed
-DDL marker. `up` submits without a server-side synchronous DDL wait, then polls
-`system.distributed_ddl_queue`. Every configured target host must report
-`Finished` **and** exception code zero. A failed host is named with its error;
-a down host remains pending until it returns or the shared `--timeout` expires.
-The tool neither deletes the queue entry nor resubmits the DDL on rerun.
-
-The queue entry is found by its recorded `log_comment`, not by matching SQL text
-(the server can insert UUIDs into that text). Caller log comments are preserved
-in the journal. A lost acknowledgement can reattach to the existing entry;
-missing/expired queue evidence follows the unknown-outcome procedure above.
-Mutation-producing distributed ALTERs must satisfy **both** barriers: DDL execution
-on all hosts and completion of their owned mutations. TTL metadata and explicit
-materialization retain separate queue receipts.
-
-Single-node statements without `ON CLUSTER` do not consult that queue. Ordinary
-Cloud DDL does not need `ON CLUSTER`; Cloud qualification remains separate from
-the local harness. Re-run bootstrap when upgrading a restricted migration user
-to obtain the available cluster and distributed-queue inspection grants.
+Run one migration runner per database, using a CI concurrency key or an external
+lock. Re-run `bootstrap` when upgrading a restricted migration user to obtain the
+`system.replicas` and `system.parts` grants.
 
 ### Re-runnable migrations
 
@@ -406,8 +368,8 @@ when the revision completes. A dropped or renamed column stays locked until that
 change's mutation finishes, and `up` waits for it before running the next
 statement, so a retry after a later failure doesn't hit "affected by mutation ...
 which is not finished yet". If `up` was stopped while it waited, run it again: it
-reattaches to that mutation. Before retrying waived operations, review what the
-earlier attempt actually changed.
+waits for that mutation, then runs the revision again. Before retrying waived
+operations, review what the earlier attempt actually changed.
 
 **Existing history:** `upgrade-env` records the current local script head(s) in
 `config.yaml` as `lint.gate_baseline`, preserving YAML comments. It records

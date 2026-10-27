@@ -70,7 +70,7 @@ def test_cloud_version_table_is_shared_and_round_trips(project):
 def test_cloud_up_advances_version_only_after_mutation_finishes(project):
     """Cloud cannot hold a mutation with STOP MERGES; a deliberately slow one shows the wait."""
     db = project.database
-    _slow_increment(project, seconds=2)
+    _slow_update(project, "x + 1", seconds=2)
     result = project.run("up", "it")
     assert result.exit_code == 0, result.output
     assert (
@@ -85,10 +85,10 @@ def test_cloud_up_advances_version_only_after_mutation_finishes(project):
     assert versioned >= mutated
 
 
-def test_cloud_killed_up_reattaches_to_its_running_mutation(project):
-    """SIGKILL mid-wait; the rerun must resume from its journal, never resubmit the UPDATE."""
+def test_cloud_killed_up_waits_for_its_mutation_then_runs_again(project):
+    """SIGKILL mid-wait; the rerun waits out the running UPDATE, then sends it again."""
     db = project.database
-    _slow_increment(project, seconds=3)
+    _slow_update(project, "1", seconds=3)
     log_path = project.root / "first-up.log"
     with log_path.open("w") as log:
         first = subprocess.Popen(
@@ -104,31 +104,32 @@ def test_cloud_killed_up_reattaches_to_its_running_mutation(project):
             first.wait(timeout=10)
     resumed = project.run("up", "it")
     assert resumed.exit_code == 0, resumed.output
-    assert "not reissuing SQL" in resumed.output, resumed.output
-    increments = project.client.command(
+    value = project.client.command(
         f"SELECT x FROM {db}.counter", settings={"select_sequential_consistency": 1}
     )
-    rewrites = project.client.command(
-        "SELECT uniqExact(mutation_id) FROM system.mutations "
-        "WHERE database = {db:String} AND table = {table:String} AND " + project.REWRITES_PARTS,
+    rewrites = project.client.query(
+        "SELECT create_time, is_done FROM system.mutations "
+        "WHERE database = {db:String} AND table = {table:String} AND "
+        + project.REWRITES_PARTS
+        + " ORDER BY create_time",
         parameters={"db": db, "table": "counter"},
-    )
-    print(f"\nCLOUD_SIGKILL increments={increments} owned_mutations={rewrites}")
-    assert (increments, rewrites) == (1, 1)
+    ).result_rows
+    print(f"\nCLOUD_SIGKILL value={value} mutations={len(rewrites)}")
+    assert value == 1 and len(rewrites) == 2 and all(done for _, done in rewrites)
     assert project.client.query(f"SELECT version_num FROM {db}.alembic_version").result_rows == [
         ("aaaa",)
     ]
 
 
-def _slow_increment(project, seconds):
+def _slow_update(project, value, seconds):
     db = project.database
     project.client.command(
         f"CREATE TABLE {db}.counter (id UInt64, x UInt64) ENGINE = MergeTree ORDER BY id"
     )
     project.client.command(f"INSERT INTO {db}.counter VALUES (1, 0)")
     (project.sql_dir / "slow.sql").write_text(
-        "-- ch-migrate: allow-non-idempotent One controlled increment\n"
-        f"ALTER TABLE {{db}}.counter UPDATE x = x + 1 + sleepEachRow({seconds}) WHERE id = 1;\n"
+        "-- ch-migrate: allow-non-idempotent One controlled, slow update\n"
+        f"ALTER TABLE {{db}}.counter UPDATE x = {value} + sleepEachRow({seconds}) WHERE id = 1;\n"
     )
     project.write_revision(
         "aaaa", {"upgrade": "from ch_migrate import run_sql\nrun_sql('slow.sql')"}
