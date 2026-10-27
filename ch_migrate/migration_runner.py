@@ -56,14 +56,7 @@ class Upgrade:
 def run_upgrade(upgrade: Upgrade) -> int:
     """Apply migrations in this process, one reported line each; return the exit status."""
     progress, display = _Progress(), WaitDisplay()
-    config = Config(str(Path.cwd() / "alembic.ini"))
-    config.attributes.update(
-        ch_migrate_environment=upgrade.environment,
-        ch_migrate_command="upgrade",
-        ch_migrate_timeout=upgrade.timeout,
-        ch_migrate_display=display,
-        ch_migrate_log_handler=_MigrationLog(progress, display),
-    )
+    config = _alembic_config(upgrade, progress, display)
     # Project helpers intentionally read these during migration execution only.
     saved = {name: os.environ.get(name) for name in ("CH_DATABASE", "CH_CLUSTER")}
     try:
@@ -102,6 +95,19 @@ class _MigrationLog(logging.Handler):
             ui.warn(message)
         else:
             ui.detail(message)
+
+
+def _alembic_config(upgrade: Upgrade, progress: _Progress, display: WaitDisplay) -> Config:
+    """The project's Alembic config, carrying what env.py needs from this invocation."""
+    config = Config(str(Path.cwd() / "alembic.ini"))
+    config.attributes.update(
+        ch_migrate_environment=upgrade.environment,
+        ch_migrate_command="upgrade",
+        ch_migrate_timeout=upgrade.timeout,
+        ch_migrate_display=display,
+        ch_migrate_log_handler=_MigrationLog(progress, display),
+    )
+    return config
 
 
 def _report_interrupt(environment: str, progress: _Progress) -> None:

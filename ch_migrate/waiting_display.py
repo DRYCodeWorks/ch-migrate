@@ -25,6 +25,9 @@ PIPED_INTERVAL = 30.0
 PIPED_STEPS = 10
 BAR_WIDTH = 38
 
+# What a waiter reports: a mutation, an ON CLUSTER queue entry, or a plain status line.
+Progress = Union["MutationProgress", "DDLProgress", str]
+
 
 @dataclass(frozen=True)
 class HostParts:
@@ -61,9 +64,6 @@ class DDLProgress:
     total: int
 
 
-Progress = Union[MutationProgress, DDLProgress, str]
-
-
 class WaitDisplay:
     """Draws one wait at a time; `complete` prints its result line, `stop` clears it."""
 
@@ -91,7 +91,7 @@ class WaitDisplay:
         if isinstance(progress, MutationProgress) and progress.bookkeeping:
             return
         wait = self._wait_for(progress)
-        wait.observe(progress, time.monotonic())
+        wait.observe(progress)
         if self._terminal:
             self._draw_live(wait)
         else:
@@ -149,7 +149,7 @@ class _Wait:
     printed_at: float | None = None
     printed_step: int = -1
 
-    def observe(self, progress: Progress, now: float) -> None:
+    def observe(self, progress: Progress) -> None:
         self.latest = progress
         if isinstance(progress, MutationProgress):
             for host in progress.hosts:
@@ -162,7 +162,7 @@ class _Wait:
         progress = self.latest
         if isinstance(progress, DDLProgress):
             stats = f"{progress.finished}/{progress.total} hosts · {elapsed}"
-            return _bar_row("", progress.finished, progress.total, stats)
+            return _bar_row("", _bar(progress.finished, progress.total), stats)
         if isinstance(progress, str):
             return Text(f"  waiting: {progress} · {elapsed}", style="dim")
         rows = [self._host_row(host, len(progress.hosts) > 1) for host in progress.hosts]
@@ -193,14 +193,14 @@ class _Wait:
         parts = f"{total - host.count}/{total} parts"
         left, size_total = host.bytes_left, self.bytes_total.get(host.host)
         if left is None or not size_total:
-            return _bar_row(host.host if named else "", total - host.count, total, parts)
+            return _bar_row(host.host if named else "", _bar(total - host.count, total), parts)
         done = size_total - left
         stats = (
             f"{_sizes(done, size_total)} · {parts} · {_duration(time.monotonic() - self.started)}"
         )
         if eta := self._eta(done, left):
             stats += f" · ~{eta} left"
-        return _bar_row(host.host if named else "", done, size_total, stats)
+        return _bar_row(host.host if named else "", _bar(done, size_total), stats)
 
     def _eta(self, done: int, left: int) -> str:
         elapsed = time.monotonic() - self.started
@@ -252,14 +252,17 @@ def _key(progress: Progress) -> str:
     return "status"
 
 
-def _bar_row(label: str, completed: float, total: float, stats: str) -> Table:
+def _bar_row(label: str, bar: ProgressBar, stats: str) -> Table:
     row = Table.grid(padding=(0, 1))
     row.add_column(no_wrap=True)
     row.add_column(width=BAR_WIDTH)
     row.add_column(no_wrap=True)
-    bar = ProgressBar(total=max(total, 1), completed=min(completed, total), width=BAR_WIDTH)
     row.add_row(Text(f"  {label}".rstrip() if label else " "), bar, Text(stats))
     return row
+
+
+def _bar(completed: float, total: float) -> ProgressBar:
+    return ProgressBar(total=max(total, 1), completed=min(completed, total), width=BAR_WIDTH)
 
 
 def _duration(seconds: float) -> str:
