@@ -119,7 +119,8 @@ def _report_interrupt(environment: str, progress: _Progress) -> None:
     ui.hint(
         "Work ClickHouse already started keeps running, and the migration is not recorded as "
         f"applied. Run `ch-migrate up {environment}` again: it waits for that work to finish, "
-        "then runs the migration again.",
+        "then runs the migration again, or stops first if a waived statement may already have "
+        "applied.",
         stderr=True,
     )
 
@@ -174,7 +175,7 @@ def _report_timeout(environment: str, where: str, timeout: WaitTimeout) -> None:
     ui.hint(
         "ClickHouse keeps doing the work, and the migration is not recorded as applied. "
         f"Run `ch-migrate up {environment}` again: it waits for that work to finish, then runs "
-        "the migration again.",
+        "the migration again, or stops first if a waived statement may already have applied.",
         stderr=True,
     )
 
