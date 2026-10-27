@@ -246,7 +246,9 @@ def test_mutation_waits_for_every_replica(cluster_project, clickhouse_cluster):
                 .result_rows
             )
             assert second and all(not row[0] for row in second)
-            _until(lambda: "parts_to_do=" in log.read_text(), "replica wait was not reported")
+            _until(
+                lambda: "waiting on mutation" in log.read_text(), "replica wait was not reported"
+            )
             assert process.poll() is None
             for action in ("MERGES", "FETCHES", "REPLICATION QUEUES"):
                 cluster.clients[2].command(f"SYSTEM START {action} {table}")
@@ -551,6 +553,30 @@ def test_mutation_ttl_resume_does_not_materialize_twice(project):
     assert _heads(project) == ["bbbb"]
 
 
+def test_mutation_piped_progress_prints_plain_lines(project):
+    """CI logs and agents get a start line naming the mutation, never a redrawn bar."""
+    _seed(project)
+    _upgrade_sql(project, "ALTER TABLE {db}.counter UPDATE x=x+1 WHERE id=1")
+    project.client.command(f"SYSTEM STOP MERGES {project.database}.counter")
+    try:
+        result = subprocess.run(
+            [sys.executable, "-m", "ch_migrate.cli", "up", "it", "--timeout", "1"],
+            cwd=project.root,
+            env={**os.environ, "TERM": "xterm-256color"},
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        assert result.returncode == 1, result.stderr
+        start = f"  waiting on mutation_2.txt ({project.database}.counter): 0/1 parts"
+        assert start in result.stderr.splitlines(), result.stderr
+        assert "\x1b" not in result.stderr and "\r" not in result.stderr
+        assert "Run ch-migrate up it again to keep waiting" in result.stderr
+    finally:
+        project.client.command(f"SYSTEM START MERGES {project.database}.counter")
+    assert _heads(project) == ["aaaa"]
+
+
 @pytest.mark.skipif(os.name != "posix", reason="A real PTY is required for terminal progress")
 def test_mutation_terminal_progress_uses_a_live_line(project):
     import pty
@@ -565,6 +591,7 @@ def test_mutation_terminal_progress_uses_a_live_line(project):
         process = subprocess.Popen(
             [sys.executable, "-m", "ch_migrate.cli", "up", "it", "--timeout", "0.8"],
             cwd=project.root,
+            env={**os.environ, "TERM": "xterm-256color"},
             stdout=subprocess.DEVNULL,
             stderr=slave,
         )
@@ -578,7 +605,9 @@ def test_mutation_terminal_progress_uses_a_live_line(project):
                 chunks.append(os.read(master, 4096))
         assert process.wait(timeout=5) == 1
         output = b"".join(chunks)
-        assert b"\x1b[K" in output and b"parts_to_do=" in output
+        # The live bar redraws in place; the timeout still names what was pending.
+        assert "━".encode() in output and b" parts" in output
+        assert b"Timed out" in output and b"parts_to_do=" in output
         assert _heads(project) == ["aaaa"]
     finally:
         if process is not None and process.poll() is None:
@@ -699,9 +728,7 @@ def _until(predicate, message):
 @contextmanager
 def _running(project, args, code=None):
     path = project.root / f"run-{time.monotonic_ns()}.log"
-    command = (
-        [sys.executable, "-c", code] if code else [sys.executable, "-m", "ch_migrate.cli"]
-    )
+    command = [sys.executable, "-c", code] if code else [sys.executable, "-m", "ch_migrate.cli"]
     with path.open("w") as log:
         process = subprocess.Popen(
             [*command, *args],

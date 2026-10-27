@@ -123,11 +123,15 @@ def _report_irreversible_range(
         summary = "The migration it would revert is irreversible:"
     else:
         verb = "is" if len(blocked) == 1 else "are"
-        summary = f"Of the {len(reasons)} migrations it would revert, {len(blocked)} {verb} irreversible:"
+        summary = (
+            f"Of the {len(reasons)} migrations it would revert, {len(blocked)} {verb} irreversible:"
+        )
     ui.error(f"Downgrade refused; nothing was run. {summary}")
     for rev, reason in reasons.items():
         name = graph.migrations[rev].description or ""
-        marker, status = ("✗", f"irreversible: {reason}") if reason is not None else (" ", "reversible")
+        marker, status = (
+            ("✗", f"irreversible: {reason}") if reason is not None else (" ", "reversible")
+        )
         ui.detail(f"{marker} {rev[:8]}  {name}  ({status})", stderr=True)
     newest_blocked = blocked[0]
     above = list(reasons).index(newest_blocked)
@@ -271,7 +275,9 @@ def bootstrap(environment: str, dry_run: bool, verbose: bool) -> None:
     help="Skip materialized view declaration validation",
 )
 @click.option("--verbose", is_flag=True, help="Show the full traceback if a migration fails")
-def up(environment: str, revision: str, skip_mv_check: bool, timeout: float | None, verbose: bool) -> None:
+def up(
+    environment: str, revision: str, skip_mv_check: bool, timeout: float | None, verbose: bool
+) -> None:
     """Apply pending migrations.
 
     Runs all unapplied migrations to bring the database to the latest version.
@@ -284,14 +290,9 @@ def up(environment: str, revision: str, skip_mv_check: bool, timeout: float | No
         raise click.BadParameter("must be finite", param_hint="--timeout")
     _require_current_env()
     _enforce_up_gate(environment, skip_mv_check)
-    from ch_migrate.migration_runner import run_upgrade
+    from ch_migrate.migration_runner import Upgrade, run_upgrade
 
-    try:
-        run_upgrade(environment, revision, timeout)
-    except Exception as error:
-        if verbose:
-            raise
-        raise click.ClickException(str(error)) from error
+    sys.exit(run_upgrade(Upgrade(environment, revision, timeout, verbose)))
 
 
 @main.command()
@@ -321,7 +322,9 @@ def status(environment: str) -> None:
     from ch_migrate.display import render_status
 
     state = _load_migration_state(environment)
-    render_status(environment, state.env_config, state.graph, state.applied, db_error=state.db_error)
+    render_status(
+        environment, state.env_config, state.graph, state.applied, db_error=state.db_error
+    )
     if state.db_error:
         ui.warn(f"Could not reach the database: {state.db_error.strip().splitlines()[0]}")
         return
@@ -832,8 +835,13 @@ def lint(environment: str | None) -> None:
 
 @main.command()
 @click.argument("environment")
-@click.option("--validate", "-v", "validate_sql", type=click.Path(exists=True),
-              help="Validate a SQL file against the dependency graph")
+@click.option(
+    "--validate",
+    "-v",
+    "validate_sql",
+    type=click.Path(exists=True),
+    help="Validate a SQL file against the dependency graph",
+)
 def deps(environment: str, validate_sql: str | None) -> None:
     """Show materialized view and dictionary dependency graph.
 
@@ -957,6 +965,7 @@ def diff_cmd(environment: str, snapshot_dir: str | None) -> None:
                     TableDefinition,
                     ViewDefinition,
                 )
+
                 fallback_types = {
                     "table": lambda: TableDefinition(name=name, engine="", raw_ddl=ddl),
                     "view": lambda: ViewDefinition(name=name, select_query="", raw_ddl=ddl),
