@@ -296,24 +296,34 @@ when it finishes:
 Part sizes come from `system.parts`. If the migration role can't read it, the bar
 counts parts only and says so once; progress never changes whether `up` succeeds.
 
-**When `up` stops short.** After a timeout, Ctrl-C, dropped connection or killed
-process, ClickHouse keeps working and the migration isn't recorded. Run `up`
-again: it waits for that work to finish, then runs the migration again from its
-first statement. That's safe because the idempotency gate below requires every
-statement to be safe to repeat, or to carry a written waiver; before rerunning a
-waived statement, check what the first attempt changed.
+**When `up` stops short.** After a timeout, Ctrl-C, dropped connection, killed
+process or failed statement, ClickHouse keeps working and the migration isn't
+recorded. `up` and `down` note each migration in `_ch_migrate_in_progress` when it
+starts and clear the note once its version is recorded, so the next run knows the
+migration was interrupted. That run waits for unfinished work, then:
+
+- **Runs the migration again on its own** when every statement in it passes the
+  idempotency gate without a waiver, so a repeat leaves the same result.
+- **Stops before sending anything** when the migration has a waived statement or
+  SQL the gate can't read, because that statement may already have applied. It
+  names each one. Check what the earlier run changed, fix the SQL if needed, then
+  name the revision: `ch-migrate up ENV --rerun-interrupted REV` (or `down`), or
+  `-x rerun_interrupted=REV` with `alembic`. Naming it accepts the repeat.
+
+Every `UPDATE`, `DELETE` and `INSERT ... SELECT` needs a waiver, so an interrupted
+backfill always takes that second path.
 
 **Failed mutation.** ClickHouse's `latest_fail_reason` stops the run, and `up`
 prints the scoped `KILL MUTATION` statement for an operator; ch-migrate never
 runs it. ClickHouse keeps retrying a failed mutation, and later mutations on that
 table queue behind it. If the cause is temporary, such as memory or disk, fix it
 and run `up` again. If the statement itself is wrong, kill the mutation, fix the
-SQL and run `up` again. Killing a mutation doesn't undo the parts it already
-rewrote.
+SQL and run `up` again, naming the revision with `--rerun-interrupted` if it's
+waived. Killing a mutation doesn't undo the parts it already rewrote.
 
 Run one migration runner per database, using a CI concurrency key or an external
-lock. Re-run `bootstrap` when upgrading a restricted migration user to obtain the
-`system.replicas` and `system.parts` grants.
+lock; the in-progress notes aren't a lock. Re-run `bootstrap` when upgrading a
+restricted migration user to obtain the `system.replicas` and `system.parts` grants.
 
 ### Re-runnable migrations
 
@@ -321,7 +331,14 @@ lock. Re-run `bootstrap` when upgrading a restricted migration user to obtain th
 them. Idempotency and standalone-SET errors refuse the whole run and print the source file, line,
 statement, and suggested fix. There is no command-line bypass; `--skip-mv-check`
 does not skip this gate. Other findings are warnings in `up`; standalone `lint`
-retains their configured severities.
+retains their configured severities. A direct `alembic upgrade` runs the same gate
+from `env.py` before its first migration.
+
+The gate reads SQL in `run_sql` files and in literal strings, f-strings and
+`text("...")` passed to `op.execute`, or to `execute` and `exec_driver_sql` on a
+connection such as `op.get_bind()`. SQL that only exists at run time, such as a
+variable, a built string or `run_sql(name)`, can't be checked, so it needs a
+reasoned waiver like any other statement the gate can't vouch for.
 
 Static lint rejects a standalone `SET` when `migrations/env.py` lacks the
 `CH_MIGRATE_ENV_VERSION = 2` marker: that statement would be ignored on the old
@@ -355,7 +372,7 @@ INSERT INTO {db}.target SELECT id FROM {db}.source;
 ```
 
 For inline Python SQL, use the same directive in a `#` comment directly above
-`op.execute`. Empty reasons remain errors. Waivers print as INFO with their
+the call that sends it. Empty reasons remain errors. Waivers print as INFO with their
 reasons in `lint` and `up`; they do not make the statement idempotent.
 `MODIFY`, `MATERIALIZE`, `CLEAR COLUMN`, `TRUNCATE`, `OPTIMIZE`, `SYSTEM`, grants,
 revokes, `REPLACE PARTITION`, attaching or detaching a whole partition, and
@@ -368,8 +385,8 @@ when the revision completes. A dropped or renamed column stays locked until that
 change's mutation finishes, and `up` waits for it before running the next
 statement, so a retry after a later failure doesn't hit "affected by mutation ...
 which is not finished yet". If `up` was stopped while it waited, run it again: it
-waits for that mutation, then runs the revision again. Before retrying waived
-operations, review what the earlier attempt actually changed.
+waits for that mutation, then runs the revision again, unless the revision has a
+statement the gate can't vouch for (see below).
 
 **Existing history:** `upgrade-env` records the current local script head(s) in
 `config.yaml` as `lint.gate_baseline`, preserving YAML comments. It records

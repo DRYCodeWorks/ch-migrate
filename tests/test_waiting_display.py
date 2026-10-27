@@ -8,8 +8,10 @@ from rich.console import Console
 from ch_migrate.migration_runner import Upgrade, _report_failure, _report_interrupt
 from ch_migrate.runner import _Progress
 from ch_migrate.sql import SqlStatementError
+from ch_migrate.statements import MigrationStatement
 from ch_migrate.waiting.display import HostParts, MutationProgress, WaitDisplay
 from ch_migrate.waiting.errors import FailedMutation, MutationFailed, WaitTimeout
+from ch_migrate.waiting.reruns import InterruptedStep, Step, Unvouched
 
 GIB = 1 << 30
 
@@ -115,6 +117,24 @@ def test_timeout_says_the_work_continues_and_how_to_resume(capsys):
     assert err.startswith("✗ Timed out after 3.0s waiting on 3f9c2a1b  backfill")
     assert "Pending: demo_dev.events mutation mutation_7.txt; parts_to_do=3" in err
     assert "ch-migrate up dev again: it waits for that work to finish" in err
+
+
+def test_interrupted_step_names_what_it_cannot_vouch_for(capsys):
+    statement = MigrationStatement(
+        "ALTER TABLE {db}.events UPDATE n = n + 1 WHERE 1",
+        "migrations/sql/bump.up.sql",
+        2,
+        (),
+        "upgrade",
+    )
+    stop = InterruptedStep(
+        Step("3f9c2a1b5d6e", "upgrade", None), [Unvouched(statement, "waiver: counted once")]
+    )
+    _report_failure(Upgrade("dev"), _current("3f9c2a1b  bump"), stop)
+    err = capsys.readouterr().err
+    assert err.startswith("✗ 3f9c2a1b was interrupted on an earlier run")
+    assert "migrations/sql/bump.up.sql:2  waiver: counted once: ALTER TABLE {db}.events" in err
+    assert "ch-migrate up dev --rerun-interrupted 3f9c2a1b" in err
 
 
 def test_interrupt_says_the_work_continues(capsys):

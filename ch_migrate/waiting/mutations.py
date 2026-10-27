@@ -15,14 +15,15 @@ from dataclasses import dataclass, replace
 
 from clickhouse_connect.driver.exceptions import DatabaseError
 
+from ch_migrate.waiting import reruns
 from ch_migrate.waiting.display import HostParts, MutationProgress
 from ch_migrate.waiting.errors import FailedMutation, MutationFailed, WaitingError
 from ch_migrate.waiting.sql import sql_string
 
 SHARED = "shared"
-# version_table.py owns the version table's mutations: its DELETE waits on its own request,
-# and a stuck one is refused before the run starts.
-VERSION_TABLE = "alembic_version"
+# ch-migrate's own tables: version_table.py waits on the version table's DELETE itself and
+# refuses a stuck one before the run starts, and the rerun markers' DELETE waits the same way.
+INTERNAL_TABLES = ("alembic_version", reruns.TABLE)
 
 
 class MutationWaiter:
@@ -58,11 +59,11 @@ class MutationWaiter:
         rows = self.client.query(
             "SELECT materialize(hostName()), table, mutation_id, is_done, parts_to_do, "
             f"latest_fail_reason, parts_to_do_names FROM {source} WHERE database = {{db:String}} "
-            "AND table != {version:String} "
+            "AND NOT has({internal:Array(String)}, table) "
             "AND (NOT is_done OR has({expected:Array(String)}, concat(table, '/', mutation_id)))",
             parameters={
                 "db": self.state.database,
-                "version": VERSION_TABLE,
+                "internal": list(INTERNAL_TABLES),
                 "cluster": cluster,
                 "expected": sorted(f"{table}/{mutation}" for table, mutation in expected),
             },

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+from functools import partial
 from logging.config import fileConfig
 from pathlib import Path
 from types import SimpleNamespace
@@ -18,6 +19,7 @@ from dotenv import load_dotenv
 from sqlalchemy import URL, Column, MetaData, String, Table, create_engine, pool, text
 from sqlalchemy.sql.dml import Insert
 
+from ch_migrate import ui
 from ch_migrate.config import get_env_config
 from ch_migrate.hooks import HookRegistry, run_hooks
 from ch_migrate.rebase import _literal_assignment
@@ -29,6 +31,7 @@ from ch_migrate.version_table import (
     sync_version_replica,
 )
 from ch_migrate.waiting import MigrationWaiter
+from ch_migrate.waiting.reruns import RerunGuard
 
 ENV_VERSION = 2
 DEFAULT_SESSION_TIMEOUT = 1800
@@ -113,7 +116,7 @@ def run() -> None:
     if context.is_offline_mode():
         _run_offline(env_config)
     else:
-        _run_online(env_config)
+        _run_online(env_config, environment)
 
 
 def has_current_env(path: Path) -> bool:
@@ -153,7 +156,7 @@ def _run_offline(env_config: dict[str, Any]) -> None:
         context.run_migrations()
 
 
-def _run_online(env_config: dict[str, Any]) -> None:
+def _run_online(env_config: dict[str, Any], environment: str) -> None:
     # The session lives on whichever replica its connection reached: ClickHouse Cloud routes
     # each TCP connection, not each session id. A pool of its own keeps the session on one
     # connection instead of sharing the driver's default pool with other in-process clients.
@@ -164,13 +167,13 @@ def _run_online(env_config: dict[str, Any]) -> None:
     )
     try:
         with engine.connect() as connection:
-            _run_connection(connection, env_config)
+            _run_connection(connection, env_config, environment)
     finally:
         engine.dispose()
         session_pool.clear()
 
 
-def _run_connection(connection, env_config: dict[str, Any]) -> None:
+def _run_connection(connection, env_config: dict[str, Any], environment: str) -> None:
     hooks = HookRegistry.from_config(env_config.get("hooks"))
     state = _checked_session(connection, env_config)
     context.configure(
@@ -182,6 +185,7 @@ def _run_connection(connection, env_config: dict[str, Any]) -> None:
         ch_migrate_version_state=state,
     )
     waiter = MigrationWaiter(connection, state, context.config.attributes.get("ch_migrate_timeout"))
+    guard = _rerun_guard(waiter.client, state, environment)
     try:
         waiter.install(context.config)
         with context.begin_transaction():
@@ -194,9 +198,35 @@ def _run_connection(connection, env_config: dict[str, Any]) -> None:
                 phase="pre_migrate",
                 revision="all",
             )
+            runtime = context.get_context()
+            runtime._migrations_fn = guard.steps(runtime._migrations_fn)
             context.run_migrations()
     finally:
         waiter.close()
+
+
+def _rerun_guard(client, state: VersionTableState, environment: str) -> RerunGuard:
+    attributes = context.config.attributes
+    # `ch-migrate up` passes --rerun-interrupted directly; `down` and a direct alembic
+    # command pass it as -x rerun_interrupted=REV[,REV].
+    named = attributes.get("ch_migrate_rerun_interrupted") or context.get_x_argument(
+        as_dictionary=True
+    ).get("rerun_interrupted", "").split(",")
+    guard = RerunGuard(client, state, frozenset(name.strip() for name in named if name.strip()))
+    if not attributes.get("ch_migrate_gate_checked"):
+        # A direct `alembic upgrade` hasn't been through `ch-migrate up`'s gate.
+        guard.before_first_upgrade = partial(_enforce_gate, environment)
+    return guard
+
+
+def _enforce_gate(environment: str) -> None:
+    from ch_migrate.gate import enforce_up_gate  # lint imports this module
+
+    try:
+        enforce_up_gate(Path.cwd(), environment)
+    except ui.Failure as failure:
+        failure.show()
+        raise SystemExit(1) from None
 
 
 def _checked_session(connection, env_config: dict[str, Any]) -> VersionTableState:

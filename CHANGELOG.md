@@ -9,14 +9,15 @@ Changes are recorded in [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 0.7 waits for the work a migration starts. `up` doesn't record a migration as applied until the mutations and `ON CLUSTER` DDL its statements started have finished, and it shows their progress while it waits. A normal `pip install -U` reaches it from 0.6, so read this before upgrading:
 
 1. **`up` now blocks until that work finishes, with no default timeout.** If a CI job's time limit stops it mid-wait, ClickHouse keeps working, and the next `up` waits for that work before it runs the migration again. `--timeout SECONDS` sets a limit of your own.
-2. **A rerun runs the stopped migration again from its first statement.** 0.6's idempotency gate already requires statements that are safe to repeat, or a written waiver; check what a waived statement changed before you rerun it.
-3. **Two grants, only where `bootstrap` couldn't grant `SELECT ON system.*`**, such as on ClickHouse Cloud. As the admin user, replacing `<project>` with your project name:
+2. **A rerun runs the stopped migration again from its first statement, but only on its own when every statement passes the idempotency gate without a waiver.** An interrupted migration with a waived statement, which includes every `UPDATE`, `DELETE` and `INSERT ... SELECT`, stops the next run until you check what the earlier one changed and name it with `--rerun-interrupted REV`. CI jobs that retry `up` after a timeout need that step.
+3. **The gate now reads more of your migrations.** SQL in `text("...")` and SQL sent through `op.get_bind().execute(...)` or `exec_driver_sql(...)` is checked, and SQL built at run time needs a waiver. `lint` and `up` can report migrations that passed before; waive them or keep them behind `lint.gate_baseline`.
+4. **Two grants, only where `bootstrap` couldn't grant `SELECT ON system.*`**, such as on ClickHouse Cloud. As the admin user, replacing `<project>` with your project name:
    ```sql
    GRANT CURRENT GRANTS(SELECT ON system.parts) TO <project>_migration_role;
    GRANT CURRENT GRANTS(SELECT ON system.replicas) TO <project>_migration_role;
    ```
    `system.parts` gives the progress bar its bytes and time estimate; without it the bar counts parts. `system.replicas` is read only for self-hosted replicated tables, so Cloud needs just the first.
-4. **No `upgrade-env` this time.** The environment 0.6 wrote is current.
+5. **No `upgrade-env` this time.** The environment 0.6 wrote is current. `up` creates one small table, `_ch_migrate_in_progress`, in the project database.
 
 To stay on 0.6, pin `ch-migrate-cli==0.6.0`.
 
@@ -24,13 +25,15 @@ To stay on 0.6, pin `ch-migrate-cli==0.6.0`.
 
 - `up` waits before it records a migration as applied. After each statement that can write, it polls `system.mutations` on the migration session until the project database has no unfinished mutation on any replica that has to apply it, instead of holding a request open with `mutations_sync`. Mutations another writer started count too, and ones already queued are waited for before the first migration runs. The version table's own mutations stay with its 0.6 bookkeeping.
 - `ON CLUSTER` statements wait inside ClickHouse: `up` sends them with `distributed_ddl_output_mode = 'throw'` and a limit of 270 seconds, or what's left of `--timeout` if that's less, so a host that fails or doesn't finish in time fails the migration with ClickHouse's message.
-- A failed mutation fails the migration with ClickHouse's `latest_fail_reason` and prints the scoped `KILL MUTATION` statement for an operator; `ch-migrate` never kills a mutation itself. A failed mutation from before the run blocks it the same way. After a kill, fix the SQL and run `up` again.
+- A failed mutation fails the migration with ClickHouse's `latest_fail_reason` and prints the scoped `KILL MUTATION` statement for an operator; `ch-migrate` never kills a mutation itself. A failed mutation from before the run blocks it the same way. After a kill, fix the SQL and run `up` again, naming the revision with `--rerun-interrupted` if it's waived.
 - `up` runs Alembic in its own process, so killing `up` can't leave a child process advancing the version table. `down` and a direct `alembic upgrade` go through the same environment and wait too; `--timeout` exists only on `ch-migrate up`.
+- The idempotency gate checks literal SQL in `text("...")` and in `execute`/`exec_driver_sql` on any connection, requires a waiver for SQL that only exists at run time, and runs from `env.py` for a direct `alembic upgrade`.
 
 ### Added
 
 - `up --timeout SECONDS`: one waiting budget for the whole run. When it runs out, `up` exits 1, names what is still pending and leaves the work running; the next `up` waits on it again, then runs the migration.
 - Progress while `up` waits: in a terminal, a live bar per mutation weighted by bytes from `system.parts`, with parts and time left, and one row per replica. Piped output gets plain lines when a wait starts, at each 10% or every 30 seconds, and when it finishes. Without access to `system.parts` the bar counts parts only.
+- `up --rerun-interrupted REV` and `down --rerun-interrupted REV` (`-x rerun_interrupted=REV` with `alembic`): run an interrupted migration again after checking what its earlier run changed. Each migration is noted in `_ch_migrate_in_progress` while it runs, created with the version table's engine.
 - `bootstrap` grants `SELECT` on `system.replicas` and `system.parts`.
 
 ## [0.6.0]

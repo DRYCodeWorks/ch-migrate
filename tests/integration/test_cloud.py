@@ -86,7 +86,7 @@ def test_cloud_up_advances_version_only_after_mutation_finishes(project):
 
 
 def test_cloud_killed_up_waits_for_its_mutation_then_runs_again(project):
-    """SIGKILL mid-wait; the rerun waits out the running UPDATE, then sends it again."""
+    """SIGKILL mid-wait; the waived UPDATE's rerun stops until named, then waits and resends."""
     db = project.database
     _slow_update(project, "1", seconds=3)
     log_path = project.root / "first-up.log"
@@ -102,7 +102,10 @@ def test_cloud_killed_up_waits_for_its_mutation_then_runs_again(project):
         finally:
             first.kill()
             first.wait(timeout=10)
-    resumed = project.run("up", "it")
+    stopped = project.run("up", "it")
+    assert stopped.exit_code == 1, stopped.output
+    assert "was interrupted on an earlier run" in stopped.output
+    resumed = project.run("up", "it", "--rerun-interrupted", "aaaa")
     assert resumed.exit_code == 0, resumed.output
     value = project.client.command(
         f"SELECT x FROM {db}.counter", settings={"select_sequential_consistency": 1}

@@ -239,9 +239,21 @@ def bootstrap(environment: str, dry_run: bool, verbose: bool) -> None:
     is_flag=True,
     help="Skip materialized view declaration validation",
 )
+@click.option(
+    "--rerun-interrupted",
+    "rerun_interrupted",
+    multiple=True,
+    metavar="REVISION",
+    help="Run this interrupted revision again after checking what its earlier run changed",
+)
 @click.option("--verbose", is_flag=True, help="Show the full traceback if a migration fails")
 def up(
-    environment: str, revision: str, skip_mv_check: bool, timeout: float | None, verbose: bool
+    environment: str,
+    revision: str,
+    skip_mv_check: bool,
+    timeout: float | None,
+    rerun_interrupted: tuple[str, ...],
+    verbose: bool,
 ) -> None:
     """Apply pending migrations.
 
@@ -250,6 +262,8 @@ def up(
 
     Idempotency and standalone-SET gate errors refuse the run before Alembic.
     Other findings are warnings; --skip-mv-check only skips MV declaration checks.
+    A revision interrupted on an earlier run reruns on its own only if every statement
+    in it passes the gate without a waiver; otherwise name it with --rerun-interrupted.
     """
     if timeout is not None and not math.isfinite(timeout):
         raise click.BadParameter("must be finite", param_hint="--timeout")
@@ -259,21 +273,34 @@ def up(
     enforce_up_gate(Path.cwd(), environment, skip_mv_check)
     from ch_migrate.migration_runner import Upgrade, run_upgrade
 
-    sys.exit(run_upgrade(Upgrade(environment, revision, timeout, verbose)))
+    sys.exit(run_upgrade(Upgrade(environment, revision, timeout, verbose, rerun_interrupted)))
 
 
 @main.command()
 @click.argument("environment")
 @click.option("--revision", "-r", default="-1", help="Revision to downgrade to (default: -1)")
+@click.option(
+    "--rerun-interrupted",
+    "rerun_interrupted",
+    multiple=True,
+    metavar="REVISION",
+    help="Run this interrupted revision again after checking what its earlier run changed",
+)
 @click.option("--verbose", is_flag=True, help="Show the full traceback if a migration fails")
-def down(environment: str, revision: str, verbose: bool) -> None:
+def down(
+    environment: str, revision: str, rerun_interrupted: tuple[str, ...], verbose: bool
+) -> None:
     """Rollback migrations.
 
     By default, rolls back the last migration. Use --revision to specify a target.
+    A downgrade interrupted on an earlier run reruns on its own only if every statement
+    in it passes the gate without a waiver; otherwise name it with --rerun-interrupted.
     """
     _require_current_env()
     _refuse_irreversible_downgrade(environment, revision)
-    sys.exit(run_migrations(environment, ["downgrade", revision], verbose=verbose))
+    # The downgrade runs in an Alembic subprocess; -x passes the names on to env.py.
+    named = ["-x", f"rerun_interrupted={','.join(rerun_interrupted)}"] if rerun_interrupted else []
+    sys.exit(run_migrations(environment, [*named, "downgrade", revision], verbose=verbose))
 
 
 @main.command()

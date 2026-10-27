@@ -36,6 +36,7 @@ from ch_migrate.waiting.errors import (
     WaitingError,
     WaitTimeout,
 )
+from ch_migrate.waiting.reruns import InterruptedStep
 
 _LOCATION = re.compile(
     r"^(?P<path>migrations/sql/\S+) \(statement \d+ of \d+, line (?P<line>\d+)\): "
@@ -44,12 +45,13 @@ _LOCATION = re.compile(
 
 @dataclass(frozen=True)
 class Upgrade:
-    """One `ch-migrate up`: where, how far, how long to wait, and how much to show."""
+    """One `ch-migrate up`: where, how far, how long to wait, what to rerun, what to show."""
 
     environment: str
     revision: str = "head"
     timeout: float | None = None
     verbose: bool = False
+    rerun_interrupted: tuple[str, ...] = ()
 
 
 def run_upgrade(upgrade: Upgrade) -> int:
@@ -102,6 +104,9 @@ def _alembic_config(upgrade: Upgrade, progress: _Progress, display: WaitDisplay)
     config.attributes.update(
         ch_migrate_environment=upgrade.environment,
         ch_migrate_command="upgrade",
+        # `ch-migrate up` has already run the gate; env.py runs it only for a direct upgrade.
+        ch_migrate_gate_checked=True,
+        ch_migrate_rerun_interrupted=upgrade.rerun_interrupted,
         ch_migrate_timeout=upgrade.timeout,
         ch_migrate_display=display,
         ch_migrate_log_handler=_MigrationLog(progress, display),
@@ -128,6 +133,8 @@ def _report_failure(upgrade: Upgrade, progress: _Progress, error: Exception) -> 
         _report_mutation_failure(upgrade.environment, where, waiting.failure)
     elif isinstance(waiting, WaitTimeout):
         _report_timeout(upgrade.environment, where, waiting)
+    elif isinstance(waiting, InterruptedStep):
+        _report_interrupted_step(upgrade.environment, waiting)
     elif waiting is not None:
         ui.error(f"{where}: {waiting}")
     else:
@@ -168,6 +175,22 @@ def _report_timeout(environment: str, where: str, timeout: WaitTimeout) -> None:
         "ClickHouse keeps doing the work, and the migration is not recorded as applied. "
         f"Run `ch-migrate up {environment}` again: it waits for that work to finish, then runs "
         "the migration again.",
+        stderr=True,
+    )
+
+
+def _report_interrupted_step(environment: str, stop: InterruptedStep) -> None:
+    revision = stop.step.revision[:8]
+    ui.error(
+        f"{revision} was interrupted on an earlier run, and ch-migrate can't vouch for "
+        "running it again"
+    )
+    for item in stop.unvouched:
+        where = f"{item.statement.source}:{item.statement.line}"
+        ui.detail(f"{where}  {item.why}: {item.statement.sql.splitlines()[0]}", stderr=True)
+    ui.hint(
+        "Some of its statements may already have applied. Check what the earlier run changed, "
+        f"then run `ch-migrate up {environment} --rerun-interrupted {revision}`.",
         stderr=True,
     )
 

@@ -31,10 +31,109 @@ def test_up_records_a_migration_only_after_its_mutation(project, statement):
         assert _heads(project) == ["aaaa"]
     finally:
         project.client.command(f"SYSTEM START MERGES {project.database}.counter")
-    resumed = project.run("up", "it")
+    resumed = project.run("up", "it", "--rerun-interrupted", "bbbb")
     assert resumed.exit_code == 0, resumed.output
     assert all(row[2] for row in _mutations(project))
     assert _heads(project) == ["bbbb"]
+
+
+def test_interrupted_step_with_a_waiver_stops_until_it_is_named(project):
+    """A waived statement may already have applied, so a rerun needs someone to check first."""
+    db = project.database
+    _seed(project)
+    _upgrade_sql(project, "ALTER TABLE {db}.counter UPDATE x = x + 1 WHERE id = 1")
+    project.stop_merges(f"{db}.counter")
+    try:
+        held = project.run("up", "it", "--timeout", "1")
+        assert held.exit_code == 1 and "Timed out" in held.output, held.output
+    finally:
+        project.client.command(f"SYSTEM START MERGES {db}.counter")
+    _until(lambda: all(row[2] for row in _mutations(project)), "first increment did not finish")
+    stopped = project.run("up", "it")
+    assert stopped.exit_code == 1, stopped.output
+    assert "was interrupted on an earlier run" in stopped.output
+    assert "waiver: Controlled waiting acceptance scenario" in stopped.output
+    assert "--rerun-interrupted bbbb" in stopped.output
+    assert project.client.command(f"SELECT x FROM {db}.counter WHERE id = 1") == 1
+    assert _heads(project) == ["aaaa"]
+    named = project.run("up", "it", "--rerun-interrupted", "bbbb")
+    assert named.exit_code == 0, named.output
+    # Naming the revision accepts the repeat: this increment runs a second time.
+    assert project.client.command(f"SELECT x FROM {db}.counter WHERE id = 1") == 2
+    assert _markers(project) == 0
+    assert _heads(project) == ["bbbb"]
+
+
+def test_interrupted_step_the_gate_passes_runs_again_on_its_own(project):
+    db = project.database
+    _seed(project)
+    _upgrade_sql(project, "ALTER TABLE {db}.counter MATERIALIZE COLUMN doubled", waived=False)
+    project.stop_merges(f"{db}.counter")
+    try:
+        held = project.run("up", "it", "--timeout", "1")
+        assert held.exit_code == 1 and "Timed out" in held.output, held.output
+    finally:
+        project.client.command(f"SYSTEM START MERGES {db}.counter")
+    resumed = project.run("up", "it")
+    assert resumed.exit_code == 0, resumed.output
+    assert "was interrupted on an earlier run; running it again" in resumed.output
+    assert _markers(project) == 0
+    assert _heads(project) == ["bbbb"]
+
+
+def test_completed_steps_leave_no_marker(project):
+    _seed(project)
+    _upgrade_sql(project, "ALTER TABLE {db}.counter MATERIALIZE COLUMN doubled", waived=False)
+    assert project.run("up", "it").exit_code == 0
+    assert _markers(project) == 0
+
+
+def test_direct_alembic_upgrade_runs_the_gate(project):
+    _seed(project)
+    _upgrade_sql(project, "ALTER TABLE {db}.counter UPDATE x = x + 1 WHERE id = 1", waived=False)
+    result = subprocess.run(
+        [sys.executable, "-m", "alembic", "upgrade", "head"],
+        cwd=project.root,
+        env={**os.environ, "CH_ENVIRONMENT": "it"},
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "Migration gate failed; nothing was applied." in result.stderr
+    assert "[idempotency]" in result.stdout + result.stderr
+    assert project.client.command(f"SELECT x FROM {project.database}.counter WHERE id = 1") == 0
+    assert _heads(project) == ["aaaa"]
+
+
+def test_interrupted_downgrade_with_a_waiver_stops_until_it_is_named(project):
+    db = project.database
+    _seed(project)
+    project.write_revision(
+        "bbbb",
+        {
+            "upgrade": 'op.execute("SELECT 1")',
+            "downgrade": "# ch-migrate: allow-non-idempotent Controlled downgrade backfill\n"
+            "op.execute(f'ALTER TABLE {db}.counter UPDATE x = x + 1 WHERE id = 5')",
+        },
+        "aaaa",
+    )
+    assert project.run("up", "it").exit_code == 0
+    project.stop_merges(f"{db}.counter")
+    try:
+        with _running(project, ("down", "it")) as (process, log):
+            _until(lambda: _mutations(project), "downgrade mutation was not submitted")
+            process.kill()
+    finally:
+        project.client.command(f"SYSTEM START MERGES {db}.counter")
+    _until(lambda: all(row[2] for row in _mutations(project)), "downgrade mutation did not finish")
+    stopped = project.run("down", "it")
+    assert stopped.exit_code == 1, stopped.output
+    assert "was interrupted on an earlier run" in stopped.output
+    assert _heads(project) == ["bbbb"]
+    named = project.run("down", "it", "--rerun-interrupted", "bbbb")
+    assert named.exit_code == 0, named.output
+    assert _heads(project) == ["aaaa"]
 
 
 def test_failed_mutation_is_not_recorded_and_names_its_kill(project):
@@ -69,7 +168,10 @@ def test_killed_mutation_then_fixed_sql_runs_again(project):
     )
     _until(lambda: not any(row[4] for row in _mutations(project, "orders")), "kill did not land")
     _write_sql(path, "ALTER TABLE {db}.orders UPDATE qty = toUInt64OrZero(raw) WHERE 1")
-    fixed = project.run("up", "it")
+    # The killed backfill may have rewritten some parts, so the waived rerun is named.
+    stopped = project.run("up", "it")
+    assert stopped.exit_code == 1 and "was interrupted on an earlier run" in stopped.output
+    fixed = project.run("up", "it", "--rerun-interrupted", "bbbb")
     assert fixed.exit_code == 0, fixed.output
     rows = project.client.query(f"SELECT id, qty FROM {db}.orders ORDER BY id").result_rows
     assert rows == [(1, 3), (2, 0)]
@@ -85,7 +187,7 @@ def test_rejected_statement_can_be_fixed_and_run_again(project):
         rejected.exit_code == 1 and "ALTER_OF_COLUMN_IS_FORBIDDEN" in rejected.output
     ), rejected.output
     assert _heads(project) == ["aaaa"]
-    _write_sql(path, "ALTER TABLE {db}.counter UPDATE x = 1 WHERE id = 1")
+    _write_sql(path, "ALTER TABLE {db}.counter ADD COLUMN IF NOT EXISTS note String", waived=False)
     fixed = project.run("up", "it")
     assert fixed.exit_code == 0, fixed.output
     assert _heads(project) == ["bbbb"]
@@ -342,7 +444,7 @@ def test_mutation_on_a_down_replica_is_not_success(cluster_project, clickhouse_c
             cluster.start_node(2)
         for client in cluster.clients.values():
             client.command(f"SYSTEM START MERGES {table}")
-    resumed = project.run("up", "it")
+    resumed = project.run("up", "it", "--rerun-interrupted", "bbbb")
     assert resumed.exit_code == 0, resumed.output
     assert _heads(project) == ["bbbb"]
 
@@ -375,9 +477,9 @@ def _baseline(project):
     assert result.exit_code == 0, result.output
 
 
-def _upgrade_sql(project, sql):
+def _upgrade_sql(project, sql, waived=True):
     path = project.sql_dir / "mutation.sql"
-    _write_sql(path, sql)
+    _write_sql(path, sql, waived)
     project.write_revision(
         "bbbb",
         {"upgrade": "from ch_migrate import run_sql\nrun_sql('mutation.sql')"},
@@ -386,10 +488,13 @@ def _upgrade_sql(project, sql):
     return path
 
 
-def _write_sql(path, sql):
-    path.write_text(
-        "-- ch-migrate: allow-non-idempotent Controlled waiting acceptance scenario\n" + sql + ";\n"
-    )
+def _write_sql(path, sql, waived=True):
+    waiver = "-- ch-migrate: allow-non-idempotent Controlled waiting acceptance scenario\n"
+    path.write_text((waiver if waived else "") + sql + ";\n")
+
+
+def _markers(project):
+    return project.client.command(f"SELECT count() FROM {project.database}._ch_migrate_in_progress")
 
 
 def _mutations(project, table="counter"):

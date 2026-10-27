@@ -34,6 +34,7 @@ def test_on_cluster_down_host_times_out_then_runs_again(cluster_project, clickho
         [
             f"CREATE TABLE IF NOT EXISTS {{db}}.owned ON CLUSTER {cluster.name} (id UInt64) ENGINE=Memory"
         ],
+        waived=False,
     )
     cluster.stop_node(2)
     try:
@@ -90,7 +91,7 @@ def test_on_cluster_and_replicated_mutation_both_must_finish(cluster_project, cl
     finally:
         for client in cluster.clients.values():
             client.command(f"SYSTEM START MERGES {table}")
-    resumed = project.run("up", "it")
+    resumed = project.run("up", "it", "--rerun-interrupted", "bbbb")
     assert resumed.exit_code == 0, resumed.output
     for client in cluster.clients.values():
         assert client.command(f"SELECT x FROM {table}") == 1
@@ -111,6 +112,7 @@ def test_on_cluster_ttl_materialization_is_waited(cluster_project, clickhouse_cl
     _revision(
         project,
         [f"ALTER TABLE {{db}}.expiry ON CLUSTER {cluster.name} MODIFY TTL ts + INTERVAL 100 YEAR"],
+        waived=False,
     )
     for client in cluster.clients.values():
         client.command(f"SYSTEM STOP MERGES {table}")
@@ -151,7 +153,7 @@ def test_on_cluster_nonreplicated_mutations_wait_on_each_host(cluster_project, c
         assert cluster.clients[2].command(f"SELECT x FROM {table}") == 0
     finally:
         cluster.clients[2].command(f"SYSTEM START MERGES {table}")
-    resumed = project.run("up", "it")
+    resumed = project.run("up", "it", "--rerun-interrupted", "bbbb")
     assert resumed.exit_code == 0, resumed.output
     for client in cluster.clients.values():
         assert client.command(f"SELECT x FROM {table}") == 1
@@ -178,14 +180,11 @@ def _baseline(project):
     assert result.exit_code == 0, result.output
 
 
-def _revision(project, statements):
+def _revision(project, statements, waived=True):
+    """Waived statements need --rerun-interrupted after an interruption; the rest rerun alone."""
+    waiver = "-- ch-migrate: allow-non-idempotent Controlled distributed DDL scenario\n"
     path = project.sql_dir / "ddl.sql"
-    path.write_text(
-        "\n".join(
-            "-- ch-migrate: allow-non-idempotent Controlled distributed DDL scenario\n" + sql + ";"
-            for sql in statements
-        )
-    )
+    path.write_text("\n".join((waiver if waived else "") + sql + ";" for sql in statements))
     project.write_revision(
         "bbbb", {"upgrade": "from ch_migrate import run_sql\nrun_sql('ddl.sql')"}, "aaaa"
     )
