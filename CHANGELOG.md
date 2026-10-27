@@ -9,7 +9,7 @@ Changes are recorded in [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 0.7 waits for the work a migration starts. `up` doesn't record a migration as applied until the mutations and `ON CLUSTER` DDL its statements started have finished, and it shows their progress while it waits. A normal `pip install -U` reaches it from 0.6, so read this before upgrading:
 
 1. **`up` now blocks until that work finishes, with no default timeout.** If a CI job's time limit stops it mid-wait, ClickHouse keeps working and the next `up` reattaches to the same mutation instead of sending the statement again. `--timeout SECONDS` sets a limit of your own.
-2. **Migration roles that 0.6's `bootstrap` created on ClickHouse Cloud or a cluster need five more grants.** Self-hosted single servers already give the role `SELECT ON system.*`. As the admin user, replacing `<project>` with your project name:
+2. **Migration roles that 0.6's `bootstrap` created on ClickHouse Cloud need five more grants.** On self-hosted servers the role usually has them already, because `bootstrap` grants `SELECT ON system.*` when the admin user can; Cloud's admin can't. As the admin user, replacing `<project>` with your project name:
    ```sql
    GRANT SELECT ON system.columns TO <project>_migration_role;
    GRANT CURRENT GRANTS(SELECT ON system.replicas) TO <project>_migration_role;

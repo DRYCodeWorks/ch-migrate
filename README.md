@@ -26,8 +26,8 @@ This README describes the source checkout, which may be ahead of PyPI. To try an
 **From 0.6:** 0.7 needs no `upgrade-env`. `up` now waits for the mutations and
 `ON CLUSTER` DDL its statements start (see [Migrations that wait](#migrations-that-wait)),
 so give CI jobs time to finish or pass `--timeout`. Migration roles that 0.6's
-`bootstrap` created on ClickHouse Cloud or a cluster need the five grants listed
-in the [CHANGELOG](CHANGELOG.md). A loose requirement such as `ch-migrate-cli`
+`bootstrap` created on ClickHouse Cloud need the five grants listed in the
+[CHANGELOG](CHANGELOG.md); self-hosted roles usually have them through `SELECT ON system.*`. A loose requirement such as `ch-migrate-cli`
 upgrades to 0.7; pin `ch-migrate-cli==0.6.0` to stay on 0.6.
 
 **From 0.5:** 0.6 and later require Python 3.10+; 0.5.x is the last line supporting Python 3.9.
