@@ -5,7 +5,7 @@ name: ci
 
 on:
   push:
-    branches: [main, dy/ch-migrate-0.7]
+    branches: [main]
   pull_request:
   workflow_call:
 
