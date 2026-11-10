@@ -23,6 +23,10 @@ This README describes the source checkout, which may be ahead of PyPI. To try an
 
 ## Upgrade from 0.x
 
+**From 0.7:** 0.8 needs no `upgrade-env`, and nothing changes unless you pass
+`--json` (see [Drift detection in CI](#drift-detection-in-ci)). A loose requirement
+such as `ch-migrate-cli` upgrades to 0.8; pin `ch-migrate-cli==0.7.0` to stay on 0.7.
+
 **From 0.6:** 0.7 needs no `upgrade-env`. `up` now waits for the mutations and
 `ON CLUSTER` DDL its statements start (see [Migrations that wait](#migrations-that-wait)),
 so give CI jobs time to finish or pass `--timeout`. Where `bootstrap` couldn't grant
@@ -500,7 +504,7 @@ Configure these repository variables:
 
 | Variable | Value |
 |---|---|
-| `CH_MIGRATE_PACKAGE` | An approved, pinned `ch-migrate-cli` requirement that supports `diff --json`. There is no fallback to an older release. |
+| `CH_MIGRATE_PACKAGE` | A pinned `ch-migrate-cli` requirement, such as `ch-migrate-cli==0.8.0`. 0.8.0 is the first release with `diff --json`; there is no fallback to an older one. |
 | `CH_MIGRATE_ENV` | An environment name in `config.yaml`, such as `dev`. |
 | `CH_MIGRATE_SNAPSHOT_DIR` | That environment's committed snapshot directory. |
 
@@ -512,9 +516,9 @@ value and removes the file even when comparison fails.
 `diff --json` exits **0** for matching schemas, **1** for drift, and **2** for a
 configuration/connection error. The workflow saves `drift.json`, uploads it even
 on comparison failure, then fails the job for either nonzero result. The report
-names changed tables and fields. The example's install and shell steps are tested
-locally against the source checkout; that does not publish the package or prove
-that a previously released version contains JSON support.
+names changed tables and fields. ch-migrate's own test suite runs the example's
+shell steps against a real ClickHouse server, installing from the source checkout,
+for both a matching and a drifted schema.
 
 Without `--snapshot-dir`, `diff` sorts entries in `migrations/sql/snapshots/` by
 name and chooses the last one. It does not select a snapshot by environment or

@@ -15,9 +15,9 @@ jobs:
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     env:
-      # Set to an approved ch-migrate-cli requirement with --json support.
-      # For example, pin a released version after that feature is published.
-      # There is no fallback to an older release without the required command.
+      # Set to a pinned ch-migrate-cli requirement with --json support, such as
+      # ch-migrate-cli==0.8.0 (the first release with it). There is no
+      # fallback to an older release without the required command.
       CH_MIGRATE_PACKAGE: ${{ vars.CH_MIGRATE_PACKAGE }}
       CH_MIGRATE_PYTHON: '3.12'
       # These name a config.yaml environment and its committed snapshot folder.

@@ -4,6 +4,19 @@ Changes are recorded in [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 
 ## [Unreleased]
 
+## [0.8.0]
+
+0.8 gives CI a machine-readable view of a migration project. `status`, `history`, `lint` and `diff` take `--json` and print one versioned document to stdout, and the README has a GitHub Actions job that fails a build when the live schema drifts from a committed snapshot. Without `--json` nothing changes: output and exit codes are the same as 0.7, and there is no `upgrade-env`.
+
+Every document carries `"schema_version": 1`. The format can still change before 1.0.
+
+To stay on 0.7, pin `ch-migrate-cli==0.7.0`.
+
+### Added
+
+- Versioned `--json` output and published JSON Schemas for status, history, lint, and diff, with machine-readable errors, graph-resolved applied revisions, explicit waiver reasons, and CI-friendly exit codes.
+- A SHA-pinned GitHub Actions drift gate that preserves the JSON report on failure; its install, credential, comparison, and exit steps run against the integration fixture for both matching and out-of-band schemas.
+
 ## [0.7.0]
 
 0.7 waits for the work a migration starts. `up` doesn't record a migration as applied until the mutations and `ON CLUSTER` DDL its statements started have finished, and it shows their progress while it waits. A normal `pip install -U` reaches it from 0.6, so read this before upgrading:
@@ -59,8 +72,6 @@ To stay on 0.5.x until then, pin `ch-migrate-cli==0.5.1`.
 
 ### Added
 
-- Versioned `--json` output and published JSON Schemas for status, history, lint, and diff, with machine-readable errors, graph-resolved applied revisions, explicit waiver reasons, and CI-friendly exit codes.
-- A SHA-pinned GitHub Actions drift gate that preserves the JSON report on failure; its install, credential, comparison, and exit steps run against the integration fixture for both matching and out-of-band schemas.
 - Reviewed idempotency corpus covering DDL, mutations, inserts, and partition operations.
 - Required-reason `ch-migrate: allow-non-idempotent` statement waivers, reported as INFO.
 - Gate findings say how to make the flagged statement safe to run twice, using its own names: the exact `IF NOT EXISTS` or `IF EXISTS` rewrite, or what a retry would do and the usual fix, such as `TRUNCATE` before a backfill or `REPLACE PARTITION` instead of `ATTACH PARTITION ... FROM`.
