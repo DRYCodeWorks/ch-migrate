@@ -531,7 +531,7 @@ Every command accepts `--help`. Top-level `ch-migrate --version` reports the ins
 
 Output lines start with `→` for a step, `✓` for a result, `!` for a warning and `✗` for an error; warnings and errors go to stderr. Colour is dropped when output is not a terminal or `NO_COLOR` is set, and lines are never wrapped, so paths and SQL can be copied or grepped.
 
-`status`, `history`, `lint`, and `diff` accept `--json`. JSON mode writes one document to stdout; diagnostics go to stderr. Every document includes `"schema_version": 1` and `"command"`. From 1.0 this is a public interface: breaking changes require a major version. Errors include an `error` string rather than inventing a successful empty result. The schemas linked below use JSON Schema draft 2020-12.
+`status`, `history`, `lint`, and `diff` accept `--json`. JSON mode writes one document to stdout; diagnostics go to stderr. Every document includes `"schema_version": 1` and `"command"`. The format can still change before 1.0; `schema_version` says which one a document follows. Errors include an `error` string rather than inventing a successful empty result. The schemas linked below use JSON Schema draft 2020-12.
 
 ### `init`
 
