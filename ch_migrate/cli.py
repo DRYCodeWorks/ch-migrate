@@ -31,6 +31,8 @@ from ch_migrate.json_output import (
 from ch_migrate.runner import alembic_failure, run_alembic, run_migrations
 
 if TYPE_CHECKING:
+    from ch_migrate.introspect import Schema
+    from ch_migrate.lint import LintConfig, LintReport
     from ch_migrate.rebase import RevisionGraph
 
 # Load .env.local if it exists in the current directory
@@ -804,65 +806,78 @@ def lint(environment: str | None, json_output: bool) -> None:
       ch-migrate lint              # Static only (CI-friendly)
       ch-migrate lint dev          # Static + runtime (needs DB)
     """
-    from ch_migrate.config import load_config
     from ch_migrate.display import render_lint_report
-    from ch_migrate.lint import LintConfig, lint_migrations
-    from ch_migrate.rebase import build_revision_graph
-    from ch_migrate.statements import pending_revisions
 
     versions_dir = _versions_dir_or_fail()
-
-    config_path = Path.cwd() / "config.yaml"
-    lint_config = LintConfig()
-    if config_path.exists():
-        try:
-            raw_config = load_config(config_path)
-            lint_config = LintConfig.from_config(raw_config)
-        except Exception as error:
-            raise ui.Failure(f"Invalid lint configuration: {error}") from error
-
-    client = None
-    database = None
-    revisions = None
-
-    if environment:
-        try:
-            env_config = get_env_config(environment, config_path)
-            database = env_config["database"]
-
-            from ch_migrate.connection import get_client, get_migration_state
-
-            revisions = pending_revisions(
-                build_revision_graph(versions_dir), get_migration_state(env_config).heads
-            )
-            client = get_client(env_config)
-        except Exception as e:
-            if json_output:
-                command_failure(f"Could not work out the pending revisions for {environment}: {e}")
-            ui.fail(f"Could not work out the pending revisions for {environment}: {e}")
-
-    try:
-        report = lint_migrations(
-            versions_dir,
-            config=lint_config,
-            client=client,
-            database=database,
-            revisions=revisions,
-        )
-    except (OSError, SyntaxError, ValueError) as e:
-        if json_output:
-            command_failure(str(e))
-        ui.fail(str(e))
-    finally:
-        if client is not None:
-            client.close()
-
+    lint_config = _lint_config(Path.cwd() / "config.yaml")
+    scope = _lint_scope(environment, versions_dir) if environment else _LintScope()
+    report = _run_lint(versions_dir, lint_config, scope)
     if json_output:
         emit_json("lint", lint_document(report))
     else:
         render_lint_report(report, runtime=environment is not None)
 
     sys.exit(1 if report.has_errors else 0)
+
+
+@dataclass(frozen=True)
+class _LintScope:
+    """What a runtime lint checks against; empty for a static lint."""
+
+    client: Any = None
+    database: str | None = None
+    revisions: set[str] | None = None
+
+
+def _lint_config(config_path: Path) -> LintConfig:
+    from ch_migrate.config import load_config
+    from ch_migrate.lint import LintConfig
+
+    if not config_path.exists():
+        return LintConfig()
+    try:
+        return LintConfig.from_config(load_config(config_path))
+    except Exception as error:
+        raise ui.Failure(f"Invalid lint configuration: {error}") from error
+
+
+def _lint_scope(environment: str, versions_dir: Path) -> _LintScope:
+    """The environment's pending revisions and a client for the live checks."""
+    from ch_migrate.connection import get_client, get_migration_state
+    from ch_migrate.rebase import build_revision_graph
+    from ch_migrate.statements import pending_revisions
+
+    try:
+        env_config = get_env_config(environment, Path.cwd() / "config.yaml")
+        revisions = pending_revisions(
+            build_revision_graph(versions_dir), get_migration_state(env_config).heads
+        )
+        return _LintScope(get_client(env_config), env_config["database"], revisions)
+    except Exception as e:
+        message = f"Could not work out the pending revisions for {environment}: {e}"
+        if click.get_current_context().params.get("json_output"):
+            command_failure(message)
+        ui.fail(message)
+
+
+def _run_lint(versions_dir: Path, lint_config: LintConfig, scope: _LintScope) -> LintReport:
+    from ch_migrate.lint import lint_migrations
+
+    try:
+        return lint_migrations(
+            versions_dir,
+            config=lint_config,
+            client=scope.client,
+            database=scope.database,
+            revisions=scope.revisions,
+        )
+    except (OSError, SyntaxError, ValueError) as e:
+        if click.get_current_context().params.get("json_output"):
+            command_failure(str(e))
+        ui.fail(str(e))
+    finally:
+        if scope.client is not None:
+            scope.client.close()
 
 
 @main.command()
@@ -938,92 +953,17 @@ def diff_cmd(environment: str, snapshot_dir: str | None, json_output: bool) -> N
       ch-migrate diff dev
       ch-migrate diff dev --snapshot-dir migrations/sql/snapshots/20260305_120000
     """
-    from ch_migrate.connection import get_client
     from ch_migrate.diff import DiffStatus, compare_schemas
     from ch_migrate.display import render_diff_report
-    from ch_migrate.introspect import (
-        VERSION_TABLE,
-        Schema,
-        get_live_schema,
-        parse_create_statement,
-    )
 
     env_config = _env_config_or_fail(environment)
     database = env_config["database"]
-
-    # Resolve snapshot directory
-    if snapshot_dir:
-        snap_path = Path(snapshot_dir)
-    else:
-        snapshots_base = Path.cwd() / "migrations" / "sql" / "snapshots"
-        dirs = sorted(snapshots_base.iterdir()) if snapshots_base.exists() else []
-        if not dirs:
-            if json_output:
-                command_failure(f"No snapshots found. Run `ch-migrate snapshot {environment}` first.")
-            ui.fail("No snapshots found.", f"Run `ch-migrate snapshot {environment}` first.")
-        snap_path = dirs[-1]
-
+    snap_path = Path(snapshot_dir) if snapshot_dir else _latest_snapshot(environment)
     if not json_output:
         ui.step(f"Comparing snapshot {snap_path.name} with {environment} ({database})")
 
-    # Load local schema from snapshot files
-    local_schema = Schema(database=database)
-    type_dirs = {
-        "tables": "table",
-        "views": "view",
-        "materialized_views": "materialized_view",
-        "dictionaries": "dictionary",
-    }
-    schema_attrs = {
-        "table": local_schema.tables,
-        "view": local_schema.views,
-        "materialized_view": local_schema.materialized_views,
-        "dictionary": local_schema.dictionaries,
-    }
-
-    for dir_name, obj_type in type_dirs.items():
-        type_path = snap_path / dir_name
-        if not type_path.exists():
-            continue
-        for sql_file in sorted(type_path.glob("*.sql")):
-            name = sql_file.stem
-            if name == VERSION_TABLE:
-                continue  # older snapshots captured Alembic's own table
-            ddl = sql_file.read_text()
-            parsed = parse_create_statement(ddl)
-            if parsed:
-                schema_attrs[obj_type][name] = parsed
-            else:
-                # Store minimal object with raw DDL
-                from ch_migrate.introspect import (
-                    DictDefinition,
-                    MVDefinition,
-                    TableDefinition,
-                    ViewDefinition,
-                )
-
-                fallback_types = {
-                    "table": lambda: TableDefinition(name=name, engine="", raw_ddl=ddl),
-                    "view": lambda: ViewDefinition(name=name, select_query="", raw_ddl=ddl),
-                    "materialized_view": lambda: MVDefinition(name=name, raw_ddl=ddl),
-                    "dictionary": lambda: DictDefinition(name=name, raw_ddl=ddl),
-                }
-                schema_attrs[obj_type][name] = fallback_types[obj_type]()
-
-    # Get live schema
-    try:
-        client = get_client(env_config)
-        try:
-            live_schema = get_live_schema(client, database)
-        finally:
-            client.close()
-    except Exception as e:
-        if json_output:
-            command_failure(f"Error connecting to {environment}: {e}")
-        ui.fail(f"Could not read the live schema from {environment}: {e}")
-
-    # Compare
-    diffs = compare_schemas(local_schema, live_schema)
+    local_schema = _snapshot_schema(snap_path, database)
+    diffs = compare_schemas(local_schema, _live_schema(env_config, environment))
     if json_output:
         emit_json("diff", diff_document(diffs))
     else:
@@ -1035,6 +975,86 @@ def diff_cmd(environment: str, snapshot_dir: str | None, json_output: bool) -> N
             "to accept the live schema."
         )
         sys.exit(1)
+
+
+_SNAPSHOT_TYPE_DIRS = {
+    "tables": "table",
+    "views": "view",
+    "materialized_views": "materialized_view",
+    "dictionaries": "dictionary",
+}
+
+
+def _latest_snapshot(environment: str) -> Path:
+    """The last snapshot directory by name; it is not matched to the environment."""
+    snapshots_base = Path.cwd() / "migrations" / "sql" / "snapshots"
+    dirs = sorted(snapshots_base.iterdir()) if snapshots_base.exists() else []
+    if not dirs:
+        if click.get_current_context().params.get("json_output"):
+            command_failure(f"No snapshots found. Run `ch-migrate snapshot {environment}` first.")
+        ui.fail("No snapshots found.", f"Run `ch-migrate snapshot {environment}` first.")
+    return dirs[-1]
+
+
+def _snapshot_schema(snap_path: Path, database: str) -> Schema:
+    """Load the CREATE statements a snapshot directory holds."""
+    from ch_migrate.introspect import VERSION_TABLE, Schema
+
+    local_schema = Schema(database=database)
+    schema_attrs = {
+        "table": local_schema.tables,
+        "view": local_schema.views,
+        "materialized_view": local_schema.materialized_views,
+        "dictionary": local_schema.dictionaries,
+    }
+    for dir_name, obj_type in _SNAPSHOT_TYPE_DIRS.items():
+        type_path = snap_path / dir_name
+        if not type_path.exists():
+            continue
+        for sql_file in sorted(type_path.glob("*.sql")):
+            name = sql_file.stem
+            if name == VERSION_TABLE:
+                continue  # older snapshots captured Alembic's own table
+            schema_attrs[obj_type][name] = _snapshot_object(obj_type, name, sql_file.read_text())
+    return local_schema
+
+
+def _snapshot_object(obj_type: str, name: str, ddl: str) -> Any:
+    """Parse one object's DDL, or keep the raw DDL when it can't be parsed."""
+    from ch_migrate.introspect import (
+        DictDefinition,
+        MVDefinition,
+        TableDefinition,
+        ViewDefinition,
+        parse_create_statement,
+    )
+
+    parsed = parse_create_statement(ddl)
+    if parsed:
+        return parsed
+    fallback_types = {
+        "table": lambda: TableDefinition(name=name, engine="", raw_ddl=ddl),
+        "view": lambda: ViewDefinition(name=name, select_query="", raw_ddl=ddl),
+        "materialized_view": lambda: MVDefinition(name=name, raw_ddl=ddl),
+        "dictionary": lambda: DictDefinition(name=name, raw_ddl=ddl),
+    }
+    return fallback_types[obj_type]()
+
+
+def _live_schema(env_config: dict[str, Any], environment: str) -> Schema:
+    from ch_migrate.connection import get_client
+    from ch_migrate.introspect import get_live_schema
+
+    try:
+        client = get_client(env_config)
+        try:
+            return get_live_schema(client, env_config["database"])
+        finally:
+            client.close()
+    except Exception as e:
+        if click.get_current_context().params.get("json_output"):
+            command_failure(f"Error connecting to {environment}: {e}")
+        ui.fail(f"Could not read the live schema from {environment}: {e}")
 
 
 @main.command(name="upgrade-env")

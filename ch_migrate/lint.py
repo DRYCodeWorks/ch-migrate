@@ -393,17 +393,8 @@ class IdempotencyRule(LintRule):
                 "ch-migrate: allow-non-idempotent <reason> waiver"
             )
         first_line = sql.strip().splitlines()[0] if sql.strip() else ""
-        return [
-            LintResult(
-                self.name,
-                message,
-                severity,
-                kwargs.get("file_path"),
-                1,
-                first_line,
-                waived=reason or None,
-            )
-        ]
+        location = (kwargs.get("file_path"), 1, first_line)
+        return [LintResult(self.name, message, severity, *location, waived=reason or None)]
 
 
 class StandaloneSetRule(LintRule):
