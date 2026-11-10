@@ -1,5 +1,9 @@
-"""Errors and warnings from `up`, its gate and `upgrade-env` use the `ui` markers."""
+"""Errors and warnings from `up`, its gate and `upgrade-env` use the `ui` markers.
 
+`--json` callers must still get the error message unchanged, as plain text.
+"""
+
+import json
 from types import SimpleNamespace
 
 import click
@@ -10,6 +14,10 @@ from ch_migrate import ui
 from ch_migrate.cli import main
 from ch_migrate.gate import print_gate_findings
 from ch_migrate.lint import LintResult, Severity
+
+OLD_ENV_MESSAGE = (
+    "This project's migrations/env.py is from ch-migrate 0.x. Run `ch-migrate upgrade-env`."
+)
 
 
 @pytest.fixture
@@ -31,7 +39,7 @@ def test_failure_prints_marker_then_hints():
     assert result.stderr == "✗ It broke.\nRun ch-migrate lint.\n"
 
 
-def test_failure_message_keeps_hints():
+def test_failure_message_keeps_hints_for_json():
     failure = ui.Failure("It broke.", "Run `ch-migrate lint`.")
     assert failure.format_message() == "It broke. Run `ch-migrate lint`."
 
@@ -44,6 +52,13 @@ def test_old_env_refusal(project):
         "✗ This project's migrations/env.py is from ch-migrate 0.x.\n"
         "Run ch-migrate upgrade-env.\n"
     )
+
+
+def test_old_env_refusal_json_message_is_unchanged(project):
+    (project / "migrations" / "env.py").write_text("# ch-migrate 0.5 env.py\n")
+    result = CliRunner().invoke(main, ["history", "dev", "--json"])
+    assert result.exit_code == 2
+    assert json.loads(result.stdout)["error"] == OLD_ENV_MESSAGE
 
 
 def test_gate_findings_use_lint_markers(capsys):
