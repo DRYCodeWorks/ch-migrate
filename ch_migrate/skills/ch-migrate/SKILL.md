@@ -39,15 +39,22 @@ The `standalone_set` gate rule cannot be lowered through configuration.
 | `ch-migrate new ENV NAME [--table X] [--irreversible REASON]` | Create upgrade/downgrade SQL and their revision |
 | `ch-migrate up ENV [-r REV]` | Apply migrations (default: head, or to REV) |
 | `ch-migrate down ENV [-r REV]` | Rollback (default: last, or to REV) |
-| `ch-migrate status ENV` | Show current migration state |
-| `ch-migrate history ENV` | Show migration history |
-| `ch-migrate lint [ENV]` | Check upgrade statements; ENV restricts to pending revisions and adds live checks |
+| `ch-migrate status ENV [--json]` | Show current migration state |
+| `ch-migrate history ENV [--json]` | Show migration history |
+| `ch-migrate lint [ENV] [--json]` | Check upgrade statements; ENV restricts to pending revisions and adds live checks |
 | `ch-migrate deps ENV [--validate PATH]` | Inspect live dependencies |
 | `ch-migrate snapshot ENV [--exclude GLOB] [--filter GLOB]` | Capture schema |
-| `ch-migrate diff ENV [--snapshot-dir PATH]` | Compare snapshot and live schema |
+| `ch-migrate diff ENV [--snapshot-dir PATH] [--json]` | Compare snapshot and live schema |
 | `ch-migrate rebase ENV [--onto REV] [--dry-run]` | Preview/rewrite dangling revision branches |
 | `ch-migrate upgrade-env` | Refresh env.py, keeping env.py.bak |
 | `ch-migrate skill [--user\|--project]` | Install Claude skill for ch-migrate |
+
+**`--json`:** `status`, `history`, `lint` and `diff` print one document to stdout
+with `schema_version` and `command`; diagnostics go to stderr. Prefer it when a
+script or agent reads the result. Exit codes in JSON mode: `status` 0 at head,
+1 pending or diverged, 2 unreadable; `diff` 0 in sync, 1 drift, 2 error; `history` 2 when
+the database can't be read; `lint` as without `--json`. Schemas are in the
+repository's `docs/schemas/`.
 
 **Options for `new`:** choose one of `--table NAME`, `--view NAME`, and
 `--dict NAME`. SQL lives under `migrations/sql/history/{tables|views|dictionaries}/NAME/`;
