@@ -21,7 +21,8 @@ The old environment is backed up, and repeating the command preserves that backu
 It also records current script heads as `lint.gate_baseline`, preserving YAML
 comments. Review that committed boundary; it exempts those revisions and their
 ancestors in every environment. Repeating `upgrade-env` updates the boundary.
-Old environments are refused by `up`, `down`, `status`, and `history` before connecting.
+Old environments are refused by `up`, `down`, and `history` before connecting;
+`status` still reports.
 One checked HTTP session spans the whole run: `SET` carries into subsequent
 revisions. Prefer statement-level `SETTINGS` for query-local changes. An expired
 session fails loudly. Configure idle `session_timeout` in seconds (default 1800).
