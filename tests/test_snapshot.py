@@ -46,9 +46,9 @@ def _make_schema() -> Schema:
         name="hourly_events",
         raw_ddl="CREATE MATERIALIZED VIEW testdb.hourly_events TO testdb.hourly_dest AS SELECT count() FROM events",
     )
-    schema.dictionaries["dict_topic"] = DictDefinition(
-        name="dict_topic",
-        raw_ddl="CREATE DICTIONARY testdb.dict_topic (key String) PRIMARY KEY key SOURCE(CLICKHOUSE(TABLE 'topics' DB 'testdb')) LAYOUT(HASHED()) LIFETIME(300)",
+    schema.dictionaries["dict_product"] = DictDefinition(
+        name="dict_product",
+        raw_ddl="CREATE DICTIONARY testdb.dict_product (key String) PRIMARY KEY key SOURCE(CLICKHOUSE(TABLE 'products' DB 'testdb')) LAYOUT(HASHED()) LIFETIME(300)",
     )
     return schema
 
@@ -95,7 +95,7 @@ class TestSnapshotCommand:
         assert (snap / "tables" / "peerdb_staging.sql").exists()
         assert (snap / "views" / "active_users.sql").exists()
         assert (snap / "materialized_views" / "hourly_events.sql").exists()
-        assert (snap / "dictionaries" / "dict_topic.sql").exists()
+        assert (snap / "dictionaries" / "dict_product.sql").exists()
 
     @patch("ch_migrate.connection.get_client")
     @patch("ch_migrate.introspect.get_live_schema")
@@ -157,7 +157,7 @@ class TestSnapshotCommand:
 
         assert (snap / "tables" / "users.sql").exists()
         assert (snap / "views" / "active_users.sql").exists()
-        assert (snap / "dictionaries" / "dict_topic.sql").exists()
+        assert (snap / "dictionaries" / "dict_product.sql").exists()
         assert not (snap / "tables" / "events.sql").exists()
 
     @patch("ch_migrate.connection.get_client")

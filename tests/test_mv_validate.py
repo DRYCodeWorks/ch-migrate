@@ -210,11 +210,11 @@ class TestRowPolicyDetection:
 class TestPermissiveRowPolicyDetection:
     def test_finds_permissive_policy(self):
         policies = _find_permissive_row_policies(
-            "CREATE ROW POLICY my_policy ON {db}.logs USING 1 TO intake_writer;"
+            "CREATE ROW POLICY my_policy ON {db}.logs USING 1 TO ingest_writer;"
         )
         assert len(policies) == 1
         assert policies[0][0] == "logs"
-        assert "intake_writer" in policies[0][1]
+        assert "ingest_writer" in policies[0][1]
 
     def test_finds_multi_user(self):
         policies = _find_permissive_row_policies(
@@ -288,9 +288,9 @@ class TestMVDeclarationRequired:
             "create_mv",
             sql=(
                 "CREATE MATERIALIZED VIEW {db}.my_mv TO {db}.dest AS SELECT 1 FROM {db}.src;\n"
-                "GRANT INSERT ON {db}.dest TO intake_writer"
+                "GRANT INSERT ON {db}.dest TO ingest_writer"
             ),
-            mv_declarations='[{"mv_name": "my_mv", "source_table": "src", "target_table": "dest", "inserting_users": ["intake_writer"]}]',
+            mv_declarations='[{"mv_name": "my_mv", "source_table": "src", "target_table": "dest", "inserting_users": ["ingest_writer"]}]',
         )
         errors = validate_mv_migrations(versions)
         assert errors == []
@@ -411,13 +411,13 @@ class TestGrantInsertValidation:
             versions,
             "create_mv",
             sql="CREATE MATERIALIZED VIEW {db}.my_mv TO {db}.dest AS SELECT 1 FROM {db}.src",
-            mv_declarations='[{"mv_name": "my_mv", "source_table": "src", "target_table": "dest", "inserting_users": ["intake_writer"]}]',
+            mv_declarations='[{"mv_name": "my_mv", "source_table": "src", "target_table": "dest", "inserting_users": ["ingest_writer"]}]',
         )
         errors = validate_mv_migrations(versions)
         assert len(errors) == 1
         assert "GRANT INSERT" in errors[0].message
         assert "dest" in errors[0].message
-        assert "intake_writer" in errors[0].message
+        assert "ingest_writer" in errors[0].message
 
     def test_grant_in_same_migration_passes(self, tmp_path: Path):
         versions = tmp_path / "versions"
@@ -426,9 +426,9 @@ class TestGrantInsertValidation:
             "create_mv",
             sql=(
                 "CREATE MATERIALIZED VIEW {db}.my_mv TO {db}.dest AS SELECT 1 FROM {db}.src;\n"
-                "GRANT INSERT ON {db}.dest TO intake_writer"
+                "GRANT INSERT ON {db}.dest TO ingest_writer"
             ),
-            mv_declarations='[{"mv_name": "my_mv", "source_table": "src", "target_table": "dest", "inserting_users": ["intake_writer"]}]',
+            mv_declarations='[{"mv_name": "my_mv", "source_table": "src", "target_table": "dest", "inserting_users": ["ingest_writer"]}]',
         )
         errors = validate_mv_migrations(versions)
         assert errors == []
@@ -439,13 +439,13 @@ class TestGrantInsertValidation:
             versions,
             "create_mv",
             sql="CREATE MATERIALIZED VIEW {db}.my_mv TO {db}.dest AS SELECT 1 FROM {db}.src",
-            mv_declarations='[{"mv_name": "my_mv", "source_table": "src", "target_table": "dest", "inserting_users": ["intake_writer"]}]',
+            mv_declarations='[{"mv_name": "my_mv", "source_table": "src", "target_table": "dest", "inserting_users": ["ingest_writer"]}]',
             revision="aaa000000001",
         )
         _write_migration(
             versions,
             "grant_mv",
-            sql="GRANT INSERT ON {db}.dest TO intake_writer",
+            sql="GRANT INSERT ON {db}.dest TO ingest_writer",
             revision="bbb000000002",
             down_revision="aaa000000001",
         )
@@ -648,12 +648,12 @@ class TestOptionalTargetRLS:
             ),
             mv_declarations=(
                 '[{"mv_name": "mv", "source_table": "src", "target_table": "dest",'
-                ' "inserting_users": ["writer"], "target_rls_policies": ["default_deny"]}]'
+                ' "inserting_users": ["writer"], "target_rls_policies": ["deny_all"]}]'
             ),
         )
         errors = validate_mv_migrations(versions)
         assert len(errors) == 1
-        assert "default_deny" in errors[0].message
+        assert "deny_all" in errors[0].message
 
     def test_target_rls_present_passes(self, tmp_path: Path):
         versions = tmp_path / "versions"
@@ -663,11 +663,11 @@ class TestOptionalTargetRLS:
             sql=(
                 "CREATE MATERIALIZED VIEW {db}.mv TO {db}.dest AS SELECT 1 FROM {db}.src;\n"
                 "GRANT INSERT ON {db}.dest TO writer;\n"
-                "CREATE ROW POLICY dest_default_deny ON {db}.dest USING 0 TO ALL;"
+                "CREATE ROW POLICY dest_deny_all ON {db}.dest USING 0 TO ALL;"
             ),
             mv_declarations=(
                 '[{"mv_name": "mv", "source_table": "src", "target_table": "dest",'
-                ' "inserting_users": ["writer"], "target_rls_policies": ["default_deny"]}]'
+                ' "inserting_users": ["writer"], "target_rls_policies": ["deny_all"]}]'
             ),
         )
         errors = validate_mv_migrations(versions)

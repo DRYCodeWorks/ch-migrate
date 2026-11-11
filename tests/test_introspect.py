@@ -56,21 +56,21 @@ ORDER BY (event_id)
 """
 
 SHARED_MERGETREE_DDL = """\
-CREATE TABLE mydb.geo_indicators
+CREATE TABLE mydb.store_sales
 (
-    `geo_layer` String,
-    `topic_key` String,
-    `start_year` UInt16,
-    `geo_id` String,
-    `stratification_key` String,
-    `region_label` String,
-    `time_period` String,
+    `store_id` String,
+    `product_key` String,
+    `fiscal_year` UInt16,
+    `channel` String,
+    `segment` String,
+    `label` String,
+    `period` String,
     `value` Nullable(Float64),
-    `moe` Nullable(Float64),
-    `states` Array(String)
+    `error_margin` Nullable(Float64),
+    `tags` Array(String)
 )
 ENGINE = SharedReplacingMergeTree('/clickhouse/tables/{uuid}', '{server}')
-ORDER BY (geo_layer, topic_key, start_year, geo_id, stratification_key, region_label, time_period)
+ORDER BY (store_id, product_key, fiscal_year, channel, segment, label, period)
 SETTINGS index_granularity = 8192
 """
 
@@ -128,26 +128,26 @@ JOIN mydb.users AS u ON e.user_id = u.id
 """
 
 DICT_TABLE_SOURCE_DDL = """\
-CREATE DICTIONARY mydb.dict_topic
+CREATE DICTIONARY mydb.dict_product
 (
     `key` String,
     `name` String,
     `units` String
 )
 PRIMARY KEY key
-SOURCE(CLICKHOUSE(TABLE 'public_attributes_attribute' DB 'mydb'))
+SOURCE(CLICKHOUSE(TABLE 'products' DB 'mydb'))
 LAYOUT(COMPLEX_KEY_HASHED())
 LIFETIME(MIN 300 MAX 600)
 """
 
 DICT_QUERY_SOURCE_DDL = """\
-CREATE DICTIONARY mydb.dict_topic_category
+CREATE DICTIONARY mydb.dict_product_category
 (
-    `topic_key` String,
+    `product_key` String,
     `category_name` String
 )
-PRIMARY KEY topic_key
-SOURCE(CLICKHOUSE(QUERY 'SELECT a.key AS topic_key, c.name AS category_name FROM mydb.attributes AS a JOIN mydb.categories AS c ON a.cat_id = c.id'))
+PRIMARY KEY product_key
+SOURCE(CLICKHOUSE(QUERY 'SELECT p.key AS product_key, c.name AS category_name FROM mydb.products AS p JOIN mydb.categories AS c ON p.category_id = c.id'))
 LAYOUT(COMPLEX_KEY_HASHED())
 LIFETIME(MIN 300 MAX 600)
 """
@@ -223,10 +223,10 @@ class TestParseCreateTable:
     def test_shared_mergetree(self):
         result = parse_create_table(SHARED_MERGETREE_DDL)
         assert result is not None
-        assert result.name == "geo_indicators"
+        assert result.name == "store_sales"
         assert "SharedReplacingMergeTree" in result.engine
         assert len(result.order_by) == 7
-        assert result.order_by[0] == "geo_layer"
+        assert result.order_by[0] == "store_id"
 
     def test_materialized_and_alias_columns(self):
         result = parse_create_table(TABLE_WITH_MATERIALIZED_COL)
@@ -334,10 +334,10 @@ class TestParseCreateDictionary:
     def test_table_source(self):
         result = parse_create_dictionary(DICT_TABLE_SOURCE_DDL)
         assert result is not None
-        assert result.name == "dict_topic"
+        assert result.name == "dict_product"
         assert result.primary_key == "key"
         assert result.source_type == "clickhouse"
-        assert result.source_table == "public_attributes_attribute"
+        assert result.source_table == "products"
         assert result.source_db == "mydb"
         assert result.layout == "COMPLEX_KEY_HASHED"
         assert result.lifetime is not None
@@ -345,10 +345,10 @@ class TestParseCreateDictionary:
     def test_query_source(self):
         result = parse_create_dictionary(DICT_QUERY_SOURCE_DDL)
         assert result is not None
-        assert result.name == "dict_topic_category"
+        assert result.name == "dict_product_category"
         assert result.source_type == "clickhouse"
         assert result.source_query is not None
-        assert "attributes" in result.source_query
+        assert "products" in result.source_query
         assert result.source_table is None
 
     def test_unparseable_returns_none(self):
@@ -379,7 +379,7 @@ class TestParseCreateStatement:
     def test_dispatches_to_dictionary(self):
         result = parse_create_statement(DICT_TABLE_SOURCE_DDL)
         assert isinstance(result, DictDefinition)
-        assert result.name == "dict_topic"
+        assert result.name == "dict_product"
 
     def test_unparseable_returns_none(self):
         assert parse_create_statement("DROP TABLE foo") is None
@@ -456,7 +456,7 @@ class TestSchema:
         schema.tables["users"] = parse_create_table(MERGETREE_DDL)
         schema.views["active_users"] = parse_create_view(VIEW_DDL)
         schema.materialized_views["hourly_events"] = parse_create_mv(MV_WITH_TO_DDL)
-        schema.dictionaries["dict_topic"] = parse_create_dictionary(DICT_TABLE_SOURCE_DDL)
+        schema.dictionaries["dict_product"] = parse_create_dictionary(DICT_TABLE_SOURCE_DDL)
 
         assert len(schema.tables) == 1
         assert len(schema.views) == 1

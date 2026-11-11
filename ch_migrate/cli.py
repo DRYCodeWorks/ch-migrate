@@ -1132,7 +1132,7 @@ def snapshot(environment: str, exclude: tuple[str, ...], include_filter: tuple[s
     Examples:
       ch-migrate snapshot dev
       ch-migrate snapshot dev --exclude 'system_*' --exclude 'peerdb_*'
-      ch-migrate snapshot dev --filter 'geo_*'
+      ch-migrate snapshot dev --filter 'orders_*'
     """
     import fnmatch
 

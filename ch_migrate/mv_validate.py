@@ -11,11 +11,11 @@ Usage in migrations:
         "mv_name": "my_new_mv",
         "source_table": "logs",
         "target_table": "my_new_aggregate",
-        "inserting_users": ["intake_writer"],
+        "inserting_users": ["ingest_writer"],
         # Optional fields for additional validation:
         "select_users": ["readonly_user"],
-        "source_rls_users": ["intake_writer"],
-        "target_rls_policies": ["default_deny", "full_access"],
+        "source_rls_users": ["ingest_writer"],
+        "target_rls_policies": ["deny_all", "allow_all"],
     }]
 
 Escape hatch:
