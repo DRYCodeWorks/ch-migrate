@@ -484,14 +484,20 @@ schema:
 
 ```bash
 ch-migrate snapshot dev
-ch-migrate diff dev --snapshot-dir migrations/sql/snapshots/20261002_120000 --json
+mv migrations/sql/snapshots/20261002_120000 migrations/sql/snapshots/dev
+ch-migrate diff dev --snapshot-dir migrations/sql/snapshots/dev --json
 ```
 
-Replace the example timestamp with the directory reported by `snapshot`. Review
-and commit that directory alongside the migration head. Do not regenerate the
-snapshot automatically in the drift job: doing so would accept an out-of-band
-change as the new expected schema. Re-snapshot after an intentional migration or
-an explicitly reviewed reconciliation, not merely to turn a failed check green.
+`snapshot` writes a new timestamped directory every time; replace the example
+timestamp with the one it reports. Give each environment's snapshot a fixed name,
+such as `snapshots/dev`, so `CH_MIGRATE_SNAPSHOT_DIR` never changes and the next
+snapshot shows up in review as a diff against this one. Review and commit that
+directory alongside the migration head. Do not regenerate the snapshot
+automatically in the drift job: doing so would accept an out-of-band change as the
+new expected schema. Re-snapshot after an intentional migration or an explicitly
+reviewed reconciliation, not merely to turn a failed check green. To re-snapshot,
+run `snapshot` again, delete the old `snapshots/dev`, and move the new directory
+into its place, so the commit also shows objects that were dropped.
 
 Copy [the GitHub Actions example](docs/examples/github-actions-drift.yml) into the
 consumer repository's `.github/workflows/`. It runs on a daily schedule and
