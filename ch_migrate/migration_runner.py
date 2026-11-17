@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+import sys
 import traceback
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -28,6 +29,7 @@ from ch_migrate.runner import (
     _report_success,
     _start_migration,
 )
+from ch_migrate.secrets import hide_secrets
 from ch_migrate.sql import clean_database_error
 from ch_migrate.waiting.display import WaitDisplay
 from ch_migrate.waiting.errors import (
@@ -137,7 +139,7 @@ def _report_failure(upgrade: Upgrade, progress: _Progress, error: Exception) -> 
     elif isinstance(waiting, InterruptedStep):
         _report_interrupted_step(upgrade.environment, waiting)
     elif waiting is not None:
-        ui.error(f"{where}: {waiting}")
+        ui.error(f"{where}: {hide_secrets(str(waiting))}")
     else:
         _report_statement_failure(upgrade, where, error)
 
@@ -151,7 +153,7 @@ def _report_mutation_failure(environment: str, where: str, failure: FailedMutati
         )
     else:
         ui.error(f"{where} failed: mutation {failure.mutation} on {failure.table} failed{on_host}")
-    ui.detail(clean_database_error(failure.reason), stderr=True)
+    ui.detail(hide_secrets(clean_database_error(failure.reason)), stderr=True)
     ui.hint(
         "It was not recorded as applied. ClickHouse keeps retrying a failed mutation, and later "
         f"mutations on {failure.table} wait behind it.",
@@ -188,7 +190,8 @@ def _report_interrupted_step(environment: str, stop: InterruptedStep) -> None:
     )
     for item in stop.unvouched:
         where = f"{item.statement.source}:{item.statement.line}"
-        ui.detail(f"{where}  {item.why}: {item.statement.sql.splitlines()[0]}", stderr=True)
+        first_line = hide_secrets(item.statement.sql.splitlines()[0])
+        ui.detail(f"{where}  {item.why}: {first_line}", stderr=True)
     ui.hint(
         "Some of its statements may already have applied. Check what the earlier run changed, "
         f"then run `ch-migrate up {environment} --rerun-interrupted {revision}`.",
@@ -198,14 +201,16 @@ def _report_interrupted_step(environment: str, stop: InterruptedStep) -> None:
 
 def _report_statement_failure(upgrade: Upgrade, where: str, error: Exception) -> None:
     ui.error(f"{where} failed")
-    ui.detail(_reason(error), stderr=True)
+    ui.detail(hide_secrets(_reason(error)), stderr=True)
     ui.hint(
         "It was not recorded as applied. Anything it ran before the failure stays in place, "
         f"so make the SQL safe to re-run, then run `ch-migrate up {upgrade.environment}` again.",
         stderr=True,
     )
     if upgrade.verbose:
-        traceback.print_exception(error)
+        # SQLAlchemy's message quotes the statement, which can carry a password, such as a
+        # dictionary source's.
+        sys.stderr.write(hide_secrets("".join(traceback.format_exception(error))))
     else:
         ui.hint("Add `--verbose` to see the full traceback.", stderr=True)
 

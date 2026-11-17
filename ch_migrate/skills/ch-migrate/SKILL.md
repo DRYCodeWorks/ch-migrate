@@ -35,7 +35,12 @@ The `standalone_set` gate rule cannot be lowered through configuration.
 | Command | Description |
 |---------|-------------|
 | `ch-migrate init [PATH] [--name NAME]` | Initialize project structure |
-| `ch-migrate bootstrap ENV [--dry-run]` | Create database, roles, users |
+| `ch-migrate bootstrap ENV [--dry-run]` | Create the database and the migration role and user |
+| `ch-migrate access validate ENV [--sql]` | Check access.yaml offline; `--sql` prints SQL for a DBA |
+| `ch-migrate access show ENV [NAME...]` | Print what the server holds, in access.yaml form |
+| `ch-migrate access plan ENV` | Show how the server differs from access.yaml (0 in sync, 1 pending, 2 error) |
+| `ch-migrate access apply ENV [--reset-passwords]` | Make the server match access.yaml, as the admin |
+| `ch-migrate access check ENV` | Check the migration role's grants, as the migration user |
 | `ch-migrate new ENV NAME [--table X] [--irreversible REASON]` | Create upgrade/downgrade SQL and their revision |
 | `ch-migrate up ENV [-r REV]` | Apply migrations (default: head, or to REV) |
 | `ch-migrate down ENV [-r REV]` | Rollback (default: last, or to REV) |
@@ -71,6 +76,7 @@ before Alembic writes a revision.
 ```
 project/
 ├── config.yaml           # ClickHouse hosts and settings
+├── access.yaml           # Users, roles and grants (init writes it)
 ├── .env.local            # Secrets (gitignored)
 ├── alembic.ini           # Alembic configuration
 └── migrations/
@@ -251,7 +257,12 @@ inserts arriving during the copy. Review the schema and column mapping.
 The generated revision is irreversible because it drops the old table.
 
 For dictionaries, `create_dictionary("history/dictionaries/NAME/file.sql")`
-retains the configured dictionary reader's automatic SELECT grant.
+fills in `{db}` and `{password}`: the reader's password, from
+`DICT_READER_PASSWORD` or else the environment's `dict_reader_password` secret
+(SSM path or `CH_<ENV>_DICT_READER_PASSWORD`). Without an access.yaml it first
+grants SELECT on the source table to `dict_reader`. With one it grants nothing:
+declare the reader and its SELECT in access.yaml and run `access apply` before
+`up`.
 
 For offline SQL, set `CH_ENVIRONMENT` and run `alembic upgrade head --sql`.
 Existing projects need `ch-migrate upgrade-env` for the offline version-table
@@ -260,13 +271,46 @@ and literal-rendering fixes. Keep credentials out of SQL files and logs.
 
 ## Roles Created by Bootstrap
 
-| Role | Purpose |
-|------|---------|
-| `{project}_migration_role` | Schema changes (CREATE/DROP/ALTER TABLE/VIEW/DICTIONARY), data ops (SELECT/INSERT/DELETE/TRUNCATE), and introspection including explicit `system.grants` access |
-| `{project}_readonly_role` | SELECT + SHOW (if mcp_user configured) |
-| `{project}_dict_role` | Dictionary source access (if dict_reader configured) |
+`bootstrap` creates the database and the migration role and user. With an
+`access.yaml` (what `init` writes), every other user and role is declared there
+and made by `ch-migrate access apply ENV`, logged in as the admin. Without one,
+the project is in legacy mode and gets 0.8's roles.
 
-Note: Bootstrap uses explicit grants (not `GRANT ALL`) for ClickHouse Cloud compatibility.
+| Role | When | Grants |
+|------|------|--------|
+| `{project}_migration_role`, or `migration_role` from config.yaml | Always | With access.yaml: its profile, `core` by default, plus `migration_role.grants`. Core is schema changes (CREATE/DROP/UNDROP/ALTER TABLE, VIEW, DICTIONARY) and data ops (SELECT/INSERT/DELETE/TRUNCATE/OPTIMIZE) on `{db}.*`, SHOW, and SELECT on `system.databases`, `system.tables`, `system.mutations` and `system.dictionaries`, with no grant option and no user or role management. Without access.yaml: the `legacy` profile, 0.8's grants, which add grant option, functions, user, role and row-policy management, and `system.*` |
+| `{project}_readonly_role` | Legacy mode, with `mcp_user_name` | SELECT and SHOW TABLES on `{db}.*` |
+| `{project}_dict_role` | Legacy mode, with `dict_reader_name` | None at first; `create_dictionary` grants SELECT on each source table to `dict_reader` |
+| Roles declared in access.yaml | `access apply` | Exactly what access.yaml declares |
+
+Notes:
+- Grants are explicit, never `GRANT ALL`. Best-effort grants (cluster,
+  remote-read, sync, `system.parts`, `system.replicas`) land as far as the
+  admin can give them; the rest are warnings.
+- `bootstrap` and `access apply` only ever add to the migration role. Revoke
+  extras by hand; `access plan` lists them with `!`.
+- A core migration role can't create users or roles, or grant to another user.
+  Declare them in access.yaml, or set `migration_role.profile: legacy` when
+  migrations do that. A grant a migration gives to a user or role access.yaml
+  declares is revoked at the next `access apply` unless access.yaml declares it
+  too. With an access.yaml, `create_dictionary` grants nothing: declare the
+  dictionary's reader and its SELECT there.
+- The `access` commands and `bootstrap`, with or without an access.yaml, need
+  ClickHouse 25.8 or later. The admin's `ROLE ADMIN` lets it grant any role to anyone.
+- On a self-hosted cluster that keeps users and roles on each node's own disk,
+  with `cluster` set: `access apply`, and `bootstrap` with an access.yaml, run
+  ON CLUSTER (the admin needs `CLUSTER ON *.*`). Legacy `bootstrap` never does,
+  so run it on each node, and run `access validate --sql` output on each node.
+  `access plan`, `access apply`, and `bootstrap` with an access.yaml, read only
+  the node they connect to, and name it. After a failed ON CLUSTER apply, point `host` at each node in
+  turn and run `access plan` there: the first node can report in sync while
+  another still lacks the change.
+- Where users and roles are replicated (Keeper, or ClickHouse Cloud), the access
+  commands read every replica at once through `clusterAllReplicas`, which needs
+  the admin's `READ ON REMOTE`. Without it, or with no one cluster to read
+  through, a missing row is read again for up to `access_read_timeout` seconds.
+  A lone replicated node keeps this wait too. The reason prints once, only
+  when the command actually waits.
 
 ## Troubleshooting
 
@@ -284,9 +328,12 @@ Note: Bootstrap uses explicit grants (not `GRANT ALL`) for ClickHouse Cloud comp
 # Check what SQL would run
 ch-migrate bootstrap dev --dry-run
 
-# Should show masked passwords like:
-# CREATE USER IF NOT EXISTS migration_dev
-# IDENTIFIED BY '********';
+# Shows each password as a placeholder, which fails to parse if run unedited:
+# CREATE USER IF NOT EXISTS migration_dev IDENTIFIED BY <secret:migration_password>;
+
+# Check access.yaml offline, then compare it with the server
+ch-migrate access validate dev
+ch-migrate access plan dev
 ```
 
 ## ClickHouse Cloud Notes
@@ -294,4 +341,6 @@ ch-migrate bootstrap dev --dry-run
 - Uses standard engines (MergeTree, ReplacingMergeTree) - auto-upgraded to Shared* on Cloud
 - Default port 8443 (HTTPS), use 8123 for local HTTP
 - DDL is non-transactional - migrations can't be atomically rolled back
+- Cloud grants `CLUSTER` to every login, so the access commands treat core's
+  best-effort `CLUSTER ON *.*` as held and don't warn about it
 - Each `op.execute()` runs one statement

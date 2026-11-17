@@ -1,6 +1,6 @@
 # Spike: the official clickhouse-connect dialect (open questions 1–4)
 
-**Date:** 2026-10-02 · **For:** capability 3 of `2026-10-02-ch-migrate-1.0.md` · **Ticket:** DRY-1391
+**Date:** 2026-10-02 · **For:** capability 3 of `2026-10-02-ch-migrate-1.0.md`
 **Setup:** ClickHouse 26.3.32.14 in throwaway local containers (one with Keeper). Legacy runs used
 our real `env.py`. Scripts, migrations and logs are in `spikes/2026-10-02-dialect/`.
 
@@ -15,10 +15,9 @@ our real `env.py`. Scripts, migrations and logs are in `spikes/2026-10-02-dialec
   was also verified to keep a `SET` in effect.
 - **Independent of the dialect, today's version table can re-run a migration** (Q2). This must be
   fixed in 0.6.
-- **Decision (Dan, 2026-10-02):** 0.6 adopts the official dialect and requires Python 3.10 or
+- **Decision (2026-10-02):** 0.6 adopts the official dialect and requires Python 3.10 or
   later. This replaces the product definition's original rule, which made 3.9 a hard requirement
-  and would have forced the fallback. 0.5.x is the last line for 3.9. Implementation: DRY-1392
-  (dialect) and DRY-1412 (version table).
+  and would have forced the fallback. 0.5.x is the last line for 3.9.
 
 ## Q1. Does a `SET` carry over to the next statement?
 
@@ -187,7 +186,7 @@ directly (`bootstrap.py:329-363`) and never imports SQLAlchemy.
 - `session_timeout` passed through clickhouse-sqlalchemy's `ch_settings`.
 - Both claims marked *Not tested* in Q2.
 
-## Clean-environment reproduction (DRY-1391 validation)
+## Clean-environment reproduction
 
 Re-run on 2026-10-02 from the local `dy/ch-migrate-1.0` branch. This validates
 Q1 and Q4 without switching the package's production dialect. The probe copies

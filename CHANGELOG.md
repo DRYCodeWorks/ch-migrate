@@ -2,7 +2,60 @@
 
 Changes are recorded in [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format.
 
-## [Unreleased]
+## [0.9.0]
+
+0.9 declares users, roles and grants in `access.yaml`. `ch-migrate access plan` shows how a server differs from it, and `access apply` makes the server match, logged in as the admin. A new project's migration role holds only what migrations need, with no right to manage users or roles. A normal `pip install -U` reaches 0.9 from 0.8, so read this before upgrading:
+
+1. **A project without `access.yaml` keeps 0.8's grants, but `bootstrap` reports differently.**
+   - It creates the migration role and user before any grant, attempts every grant and names each one that fails. **With an admin that can't give every grant, the role and user now exist and hold every grant the admin could give, and `bootstrap` exits 1 naming each failed grant.** 0.8 stopped at the first refused grant, `CREATE FUNCTION`, before it created the migration user.
+   - A best-effort `CURRENT GRANTS` that lands short is now a warning instead of passing silently.
+   - It ends by checking the migration role's grants, logged in as the migration user. **If it can't log in as that user, for example because the user's password differs from its secret, it exits 1.** To make them match, run `ALTER USER <migration_user> IDENTIFIED BY '<secret>'` as the admin; `access apply --reset-passwords` resets only the users `access.yaml` declares. 0.8 never logged in as the migration user.
+   - **It needs ClickHouse 25.8 or later,** with or without an `access.yaml`, and exits 2 before any change on an older server. 0.8's `bootstrap` already failed on 24.8.
+2. **An error before any change now exits 2 instead of 1,** such as a missing secret, a `config.yaml` problem or a server that can't be reached. Update CI jobs that test for exit 1.
+3. **`init` writes `access.yaml`.** Running `init` again in an existing project adds one, and the next `bootstrap` then gives the `core` profile instead of 0.8's grants. Delete the file to keep 0.8's behavior.
+4. **Legacy `bootstrap` still runs on one node.** Without an `access.yaml` it never uses `ON CLUSTER`, even with `cluster` set, and sends best-effort grants as `CURRENT GRANTS`, as 0.8 does. On a self-hosted cluster that keeps users and roles on each node's own disk, bootstrap each node.
+5. **To adopt `access.yaml` in an existing project,** set `migration_role.profile: legacy` if your migrations create users or roles or grant to other users, start each existing user or role from `ch-migrate access show ENV NAME`, written to another file and copied in, and review the first `access plan` before `access apply`. `apply` revokes, from each user and role the file declares, every grant the file leaves out. With an `access.yaml`, `create_dictionary` no longer grants to `dict_reader`, even under `profile: legacy`: declare the reader and its `SELECT` there.
+6. **No `upgrade-env` this time.**
+
+To stay on 0.8, pin `ch-migrate-cli==0.8.0`.
+
+### Added
+
+- `access.yaml` declares users, roles, the roles each one holds (with default roles) and grants (with grant option), with a block per environment and `absent: true` to drop a user or role. An `access.yaml` that is empty, or only comments, is an error, not legacy mode: delete it to keep 0.8's grants. Grants use ClickHouse's own words. `{db}`, `{project}`, `{env}` and `{migration_role}` are placeholders, and `{secret: NAME}` reads a password from SSM or from `CH_<ENV>_<NAME>`.
+- `ch-migrate access validate ENV [--sql]` checks `access.yaml` and the built-in profiles offline, with no server and no secrets. `--sql` prints the SQL for a DBA to review and run, with each password as an unquoted placeholder. A privilege name the bundled ClickHouse 26.3 list doesn't know is a warning, and so is a `READ` or `WRITE` on a source without the other direction.
+- `ch-migrate access show ENV [NAME...]` prints what the server holds, in `access.yaml` form: the starting point for adopting existing users and roles.
+- `ch-migrate access plan ENV` lists each create, grant, revoke and drop without changing anything. It exits 0 in sync, 1 with changes pending and 2 on an error. `READ` and `WRITE` on one source compare as one grant, because ClickHouse keeps them apart only with `access_control_improvements.enable_read_write_grants` on, which is off by default.
+- `ch-migrate access apply ENV [--reset-passwords]` makes the server match, logged in as the admin. It grants before it revokes, and reads every secret before its first change. It narrows a grant's scope with one `GRANT ... WITH REPLACE OPTION`, which keeps what is held inside a declared best-effort grant's scope; a replace that can't keep that exactly, such as `SELECT ON system.*` held less `system.users`, isn't sent: it's skipped and named, the user or role keeps its access, and `apply` exits 1. Revokes, replaces and default-role changes run only if every earlier change succeeded; otherwise they're skipped and named, so old access survives and a role the user keeps stays active at login. A user whose create or password reset fails gets nothing more from that run. A role's replace runs before that of any user or role that holds it, whatever the order in `access.yaml`. Users and roles the file doesn't declare are never touched.
+- `ch-migrate access check ENV` checks, logged in as the migration user, that it holds the migration role's grants, for servers where ch-migrate has no admin login.
+- Two built-in profiles for the migration role: `core`, what migrations need on the project's database, with no grant option and no user or role management; and `legacy`, 0.8's grants exactly. `migration_role.grants` in `access.yaml` adds to either. `bootstrap` and `apply` only ever add to the migration role.
+- `migration_role` in `config.yaml` names a migration role that another project directory shares.
+- Where users and roles are replicated, as on ClickHouse Cloud, `access show`, `plan`, `apply` and `bootstrap` read every replica at once, through `clusterAllReplicas` on `cluster` from `config.yaml`, or else on the one cluster that holds the node and another host. A row missing on every replica is absent at once, with no wait. Replicas that disagree are read again until they agree; if they still disagree at the deadline, one line names them, and what the node connected to holds counts. Where every replica can't be read, for example because the admin lacks `READ ON REMOTE` or only one node is listed, a missing row on the connected node is read again before it counts as absent. The fallback reason prints once, only when the command actually waits.
+- `access_read_timeout` in `config.yaml`: a deadline, in seconds from the first read, for the access commands and `bootstrap` to keep reading where a replica is behind. Read time counts toward it as well as the waits; one last read may start at the deadline, and each of its requests is bounded by the driver's request timeout. It must be a finite number, 0 or more; `.inf` or `.nan` exits 2 before any change. The default is 30.
+- Where the server grants `CLUSTER` to every login, as ClickHouse Cloud does, the best-effort `CLUSTER ON *.*` counts as held: `plan`, `apply`, `check` and `bootstrap` don't warn about it, and `apply` doesn't try it on every run.
+- Users and roles are created in the first user directory that can take one, and that is the storage the access commands read: ClickHouse Cloud lists its read-only `jwt` directory first.
+- `show`, `plan`, `apply` and `check`, and `bootstrap`, with or without an `access.yaml`, need ClickHouse 25.8 or later, and exit 2 on an older server, naming its version. 0.8's `bootstrap` already failed on 24.8.
+- On a self-hosted cluster that keeps users and roles on each node's own disk, with `cluster` set, `apply`, and `bootstrap` with an `access.yaml`, run every statement `ON CLUSTER`, with the cluster's name backquoted so a name such as `c-1` works, and send each best-effort privilege as its own `GRANT ... ON CLUSTER`. There `access plan`, `access apply`, and `bootstrap` with an `access.yaml`, read only the node they connect to, and print a line naming it before any change. An `ON CLUSTER` change that failed on another node goes unseen by the next run against this one, so after a failed `ON CLUSTER` apply, run `access plan` against each node. Reading every node is a planned follow-up.
+
+### Changed
+
+- `bootstrap` runs on the access engine. With an `access.yaml`, it gives the migration role its profile and `migration_role.grants`, and `access apply` makes the rest. Without one, it gives 0.8's grants, as the upgrade notes describe.
+- `bootstrap --dry-run` reads no secret and prints each password as a `<secret:NAME>` placeholder, which fails to parse if run unedited. With an `access.yaml` it prints every statement, without `ON CLUSTER`, because offline it can't tell what the server already holds.
+- `init` writes `access.yaml`, with the `core` profile and commented examples.
+- `create_dictionary` grants nothing in a project with an `access.yaml`: declare the dictionary's reader and its `SELECT` there, and run `access apply` before `up`. Without one, it grants `SELECT` on the source table to `dict_reader` first, as before.
+
+### Deprecated
+
+- `build_bootstrap_sql`. It returns the same statements as 0.8, rendered from the built-in `legacy` profile, with the roles and users created first.
+
+### Removed
+
+- `ch_migrate/templates/bootstrap/init_users.sql`, which no code read.
+
+### Fixed
+
+- `up`'s failure report, `--verbose` traceback included, hides every secret ch-migrate has read, raw, URL-encoded and as SQLAlchemy escapes it. `create_dictionary` writes the reader's password into the statement, and SQLAlchemy's message quotes the statement.
+- `create_dictionary` works with a reader password that starts with `:`. SQLAlchemy read it as a bind parameter, so the migration failed and its error named part of the password.
+- `create_dictionary` reads the reader's password from the environment's `dict_reader_password` secret, its `ssm:` path in `config.yaml` or `CH_<ENV>_DICT_READER_PASSWORD`, when `DICT_READER_PASSWORD` isn't set. It read only `DICT_READER_PASSWORD`, which neither `config.yaml` nor the `.env.local` template sets.
 
 ## [0.8.0]
 

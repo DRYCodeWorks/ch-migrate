@@ -152,7 +152,7 @@ def test_failed_mutation_is_not_recorded_and_names_its_kill(project):
 
 
 def test_killed_mutation_then_fixed_sql_runs_again(project):
-    """DRY-1604: after the kill, fixing the file and running `up` is the whole recovery."""
+    """After the kill, fixing the file and running `up` is the whole recovery."""
     db = project.database
     project.client.command(
         f"CREATE TABLE {db}.orders (id UInt64, raw String, qty UInt64) ENGINE=MergeTree ORDER BY id"
@@ -183,7 +183,7 @@ def test_killed_mutation_then_fixed_sql_runs_again(project):
 
 
 def test_rejected_statement_can_be_fixed_and_run_again(project):
-    """DRY-1604: ClickHouse refuses a sorting-key change; the corrected file then applies."""
+    """ClickHouse refuses a sorting-key change; the corrected file then applies."""
     _seed(project)
     path = _upgrade_sql(project, "ALTER TABLE {db}.counter MODIFY COLUMN id String")
     rejected = project.run("up", "it")

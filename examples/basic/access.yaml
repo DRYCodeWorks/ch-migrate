@@ -1,0 +1,42 @@
+# Users, roles and grants for the basic example, declared.
+#   ch-migrate access validate dev   checks this file, offline
+#   ch-migrate access plan dev       shows how the server differs from it
+#   ch-migrate access apply dev      makes the server match, logged in as admin_user
+#
+# The migration role holds the `core` profile: what migrations need on the project's
+# database, with no user or role management. `ch-migrate bootstrap dev` gives it.
+migration_role:
+  profile: core
+  # Grants the migration role needs beyond core, such as for functions:
+  # grants:
+  #   - CREATE FUNCTION, DROP FUNCTION ON *.*
+
+# `access apply` creates these and keeps their grants and roles exactly as declared.
+# Users and roles not named here are never touched. {db} is the environment's database.
+roles:
+  analyst:
+    grants:
+      - SELECT, SHOW TABLES ON {db}.*
+  loader:
+    grants:
+      - INSERT, SELECT ON {db}.users
+  reporting:
+    roles: [analyst]      # a role can hold roles
+
+users:
+  dashboards:
+    # Read from environments.dev.ssm.dashboards_password in config.yaml, else from
+    # CH_DEV_DASHBOARDS_PASSWORD. It is set only when the user is created.
+    password: {secret: dashboards_password}
+    roles: [reporting]
+  etl:
+    password: {secret: etl_password}
+    roles: [loader]
+    default_roles: [loader]
+
+# A block per environment merges over the above: mappings merge and lists replace.
+# `absent: true` drops a user or role in that environment only.
+# environments:
+#   dev:
+#     users:
+#       etl: {absent: true}

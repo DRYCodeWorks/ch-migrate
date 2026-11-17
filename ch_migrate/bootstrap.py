@@ -1,29 +1,89 @@
-"""
-Bootstrap script for initializing ClickHouse database and users.
+"""`ch-migrate bootstrap`: the database and the migration role and user for an environment.
 
 Usage:
     ch-migrate bootstrap <environment>
     ch-migrate bootstrap <environment> --dry-run
 
-This script:
-1. Connects using admin credentials
-2. Creates the target database (if not exists)
-3. Creates roles for migration, read-only, and dict access
-4. Creates users and assigns roles
-5. Is idempotent - safe to run multiple times
+It runs on the access engine (`ch_migrate.access.bootstrap`; design note, 2.5):
+- with an access.yaml, it adds the role's profile and `migration_role.grants`;
+- without one, legacy mode gives the grants 0.8 gave, plus the read-only and dictionary
+  roles and users config.yaml names, with every failure reported (Decisions 6 and 13);
+- either way, it needs ClickHouse 25.8 or later, and ends with `access check`, logged in
+  as the migration user.
+
+Its exit codes are `access apply`'s: 0 when done, 1 when something failed (each failure
+named), and 2 on an error before any change. `--dry-run` prints the SQL without connecting
+or reading a secret. It is safe to run again.
+
+`run_bootstrap` and `build_bootstrap_sql` keep their 0.8 signatures, because client code may
+call them. `build_bootstrap_sql` is deprecated.
 """
+
+from __future__ import annotations
 
 import re
 import sys
 from pathlib import Path
 from typing import Optional
 
+import click
+
 from ch_migrate import ui
-from ch_migrate.config import get_env_config
-from ch_migrate.secrets import get_secret
 
 # Pattern for valid SQL identifiers (database, user, role names)
 _IDENTIFIER_PATTERN = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
+
+
+def main() -> None:
+    """CLI entrypoint for bootstrap."""
+    if len(sys.argv) < 2:
+        print("Usage: ch-migrate bootstrap <environment> [--dry-run]")
+        print("Example: ch-migrate bootstrap dev")
+        sys.exit(1)
+
+    dry_run = "--dry-run" in sys.argv
+    env_name = sys.argv[1]
+
+    try:
+        run_bootstrap(env_name, dry_run=dry_run)
+    except BootstrapFailed as failure:
+        sys.exit(failure.exit_code)
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(2)
+
+
+class BootstrapFailed(Exception):
+    """`bootstrap` changed something and then failed; what failed is already printed."""
+
+    def __init__(self, exit_code: int = 1):
+        super().__init__(f"bootstrap failed (exit code {exit_code})")
+        self.exit_code = exit_code
+
+
+@click.command("bootstrap")
+@click.argument("environment")
+@click.option("--dry-run", is_flag=True, help="Show SQL without connecting or reading a secret")
+@click.option("--verbose", "-v", is_flag=True, help="Show SQL statements as they execute")
+def bootstrap_command(environment: str, dry_run: bool, verbose: bool) -> None:
+    """Set up the database, migration role and user for an environment.
+
+    With access.yaml, the migration role gets its profile and `migration_role.grants`;
+    `access apply` makes the rest. Without it, bootstrap gives what 0.8 gave: the migration
+    role and user, and the optional MCP and dict_reader users. Then it checks the grants,
+    logged in as the migration user. Safe to run again.
+
+    Requires admin and migration credentials in .env.local or SSM, but none with --dry-run.
+    Exits 0 when done, 1 when something failed (each failure named), and 2 on an error
+    before any change.
+    """
+    try:
+        run_bootstrap(environment, dry_run=dry_run, verbose=verbose)
+    except BootstrapFailed as failure:
+        raise click.exceptions.Exit(failure.exit_code) from None
+    except Exception as error:  # noqa: BLE001 - run_bootstrap raises these before any change
+        _report_error(error)
+        raise click.exceptions.Exit(2) from None
 
 
 def validate_identifier(name: str, label: str) -> str:
@@ -58,7 +118,7 @@ def escape_sql_string(s: str) -> str:
     return s.replace("\\", "\\\\").replace("'", "''")
 
 
-def build_bootstrap_sql(
+def build_bootstrap_sql(  # style-ok: public signature kept for compatibility
     *,
     project: str,
     db: str,
@@ -69,321 +129,82 @@ def build_bootstrap_sql(
     mcp_user_name: Optional[str] = None,
     mcp_password: Optional[str] = None,
 ) -> str:
+    """Deprecated: the SQL 0.8's `bootstrap` ran, rendered from the built-in `legacy` profile.
+
+    `ch-migrate bootstrap` doesn't run this text any more; it runs the access engine. This
+    stays because client code may call it. It returns 0.8's statements, each password a
+    quoted string, with the roles and users created before any grant (Decision 6). An MCP or
+    dict reader user is included only with its password, as in 0.8.
+
+    Raises ValueError for a name that isn't a valid identifier.
     """
-    Build the bootstrap SQL with optional users.
+    from ch_migrate.access.bootstrap import legacy_bootstrap_sql
+    from ch_migrate.access.settings import ProjectSettings
 
-    Args:
-        project: Project name (used for role prefixes)
-        db: Database name
-        migration_user: Migration user name
-        migration_password: Migration user password
-        dict_reader_name: Optional dict reader user name
-        dict_reader_password: Optional dict reader password
-        mcp_user_name: Optional MCP user name
-        mcp_password: Optional MCP user password
-
-    Returns:
-        Complete SQL string for bootstrap
-
-    Raises:
-        ValueError: If any identifier contains invalid characters
-    """
-    # Validate all identifiers to prevent SQL injection
-    project = validate_identifier(project, "project name")
-    db = validate_identifier(db, "database name")
-    migration_user = validate_identifier(migration_user, "migration user")
-    if dict_reader_name:
-        dict_reader_name = validate_identifier(dict_reader_name, "dict reader user")
-    if mcp_user_name:
-        mcp_user_name = validate_identifier(mcp_user_name, "MCP user")
-
-    lines = [
-        "-- Bootstrap script for ClickHouse database",
-        "-- Safe to run multiple times (idempotent)",
-        "",
-        "-- Create database",
-        f"CREATE DATABASE IF NOT EXISTS {db};",
-        "",
-        "-- =============================================================================",
-        "-- ROLES",
-        "-- =============================================================================",
-        "",
-        "-- Migration role: schema changes and data operations",
-        "-- (Explicit grants instead of ALL for ClickHouse Cloud compatibility)",
-        f"CREATE ROLE IF NOT EXISTS {project}_migration_role;",
-        "",
-        "-- Schema operations (RENAME is part of ALTER)",
-        f"GRANT CREATE TABLE, DROP TABLE, UNDROP TABLE, ALTER ON {db}.* TO {project}_migration_role WITH GRANT OPTION;",
-        f"GRANT CREATE VIEW, DROP VIEW ON {db}.* TO {project}_migration_role WITH GRANT OPTION;",
-        f"GRANT CREATE DICTIONARY, DROP DICTIONARY ON {db}.* TO {project}_migration_role WITH GRANT OPTION;",
-        f"GRANT CREATE FUNCTION, DROP FUNCTION ON *.* TO {project}_migration_role WITH GRANT OPTION;",
-        "",
-        "-- User/role management (for migrations that create RLS users/roles)",
-        "-- CURRENT GRANTS: ClickHouse Cloud's admin cannot grant ALTER/DROP USER on its managed sql-console user",
-        f"GRANT CURRENT GRANTS(CREATE USER, ALTER USER, DROP USER ON *.*) TO {project}_migration_role WITH GRANT OPTION;",
-        f"GRANT CREATE ROLE, ALTER ROLE, DROP ROLE ON *.* TO {project}_migration_role WITH GRANT OPTION;",
-        f"GRANT ROLE ADMIN ON *.* TO {project}_migration_role WITH GRANT OPTION;",
-        "",
-        "-- Row-level security management",
-        f"GRANT ACCESS MANAGEMENT ON {db}.* TO {project}_migration_role WITH GRANT OPTION;",
-        f"GRANT CREATE ROW POLICY, ALTER ROW POLICY, DROP ROW POLICY, SHOW ROW POLICIES ON {db}.* TO {project}_migration_role WITH GRANT OPTION;",
-        "",
-        "-- Data operations",
-        f"GRANT SELECT, INSERT, DELETE, TRUNCATE, OPTIMIZE ON {db}.* TO {project}_migration_role WITH GRANT OPTION;",
-        "",
-        "-- Introspection (needed by Alembic)",
-        f"GRANT SHOW TABLES, SHOW COLUMNS, SHOW DICTIONARIES ON {db}.* TO {project}_migration_role WITH GRANT OPTION;",
-        "",
-        "-- Temp tables (for zero-downtime migrations with EXCHANGE TABLES)",
-        "-- Note: EXCHANGE TABLES requires DROP on both tables, already granted above",
-        f"GRANT CREATE TEMPORARY TABLE ON *.* TO {project}_migration_role WITH GRANT OPTION;",
-        "",
-        "-- System table access (monitoring migrations, RLS introspection, user/role management)",
-        "-- Use CURRENT GRANTS to avoid failure when admin lacks access to some system tables",
-        "-- (e.g., system.zookeeper on ClickHouse Cloud)",
-        f"GRANT CURRENT GRANTS(SELECT ON system.*) TO {project}_migration_role WITH GRANT OPTION;",
-        "-- ClickHouse Cloud requires explicit grants for individual system tables",
-        f"GRANT SELECT ON system.grants TO {project}_migration_role;",
-        f"GRANT SELECT ON system.databases TO {project}_migration_role;",
-        f"GRANT SELECT ON system.tables TO {project}_migration_role;",
-        f"GRANT SELECT ON system.mutations TO {project}_migration_role;",
-        f"GRANT CURRENT GRANTS(SELECT ON system.replicas) TO {project}_migration_role;",
-        f"GRANT CURRENT GRANTS(SELECT ON system.parts) TO {project}_migration_role;",
-        f"GRANT CURRENT GRANTS(SYSTEM SYNC REPLICA ON {db}.*) TO {project}_migration_role;",
-        f"GRANT CURRENT GRANTS(SYSTEM SYNC DATABASE REPLICA ON {db}.*) TO {project}_migration_role;",
-        f"GRANT CURRENT GRANTS(CLUSTER ON *.*) TO {project}_migration_role;",
-        f"GRANT CURRENT GRANTS(READ ON REMOTE) TO {project}_migration_role;",
-    ]
-
-    # MCP readonly role (optional)
-    if mcp_user_name and mcp_password:
-        lines.extend(
-            [
-                "",
-                "-- Read-only role: for MCP tools",
-                f"CREATE ROLE IF NOT EXISTS {project}_readonly_role;",
-                f"GRANT SELECT ON {db}.* TO {project}_readonly_role;",
-                f"GRANT SHOW TABLES ON {db}.* TO {project}_readonly_role;",
-            ]
-        )
-
-    # Dict reader role (optional)
-    if dict_reader_name and dict_reader_password:
-        lines.extend(
-            [
-                "",
-                "-- Dict reader role: for dictionary sources",
-                f"CREATE ROLE IF NOT EXISTS {project}_dict_role;",
-                "-- SELECT grants added per-table when dictionaries are created",
-            ]
-        )
-
-    lines.extend(
-        [
-            "",
-            "-- =============================================================================",
-            "-- USERS",
-            "-- =============================================================================",
-            "",
-            "-- Migration user (required)",
-            f"CREATE USER IF NOT EXISTS {migration_user}",
-            f"IDENTIFIED BY '{escape_sql_string(migration_password)}';",
-            f"GRANT {project}_migration_role TO {migration_user};",
-        ]
+    settings = ProjectSettings(
+        environment="",
+        project=validate_identifier(project, "project name"),
+        database=validate_identifier(db, "database name"),
+        migration_user=validate_identifier(migration_user, "migration user"),
+        dict_reader_name=_optional_name(dict_reader_name, dict_reader_password, "dict reader user"),
+        mcp_user_name=_optional_name(mcp_user_name, mcp_password, "MCP user"),
+    )
+    passwords = {
+        "migration_password": migration_password,
+        "dict_reader_password": dict_reader_password or "",
+        "mcp_password": mcp_password or "",
+    }
+    return legacy_bootstrap_sql(
+        settings, lambda secret: f"'{escape_sql_string(passwords[secret.name])}'"
     )
 
-    # MCP user (optional)
-    if mcp_user_name and mcp_password:
-        lines.extend(
-            [
-                "",
-                "-- MCP user: read-only access for AI tools",
-                f"CREATE USER IF NOT EXISTS {mcp_user_name}",
-                f"IDENTIFIED BY '{escape_sql_string(mcp_password)}';",
-                f"GRANT {project}_readonly_role TO {mcp_user_name};",
-            ]
-        )
 
-    # Dict reader user (optional)
-    if dict_reader_name and dict_reader_password:
-        lines.extend(
-            [
-                "",
-                "-- Dict reader user: for dictionary sources",
-                f"CREATE USER IF NOT EXISTS {dict_reader_name}",
-                f"IDENTIFIED BY '{escape_sql_string(dict_reader_password)}';",
-                f"GRANT {project}_dict_role TO {dict_reader_name};",
-            ]
-        )
-
-    return "\n".join(lines)
-
-
-def run_bootstrap(
+def run_bootstrap(  # style-ok: public signature kept for compatibility
     env_name: str,
     config_path: Optional[Path] = None,
     dry_run: bool = False,
     verbose: bool = False,
 ) -> None:
+    """Bootstrap one environment, as `ch-migrate bootstrap ENV` does.
+
+    `config_path` defaults to ./config.yaml; access.yaml is read from the same directory.
+    Before any change it raises: ValueError for config.yaml, and
+    `ch_migrate.access.server.AccessError` for access.yaml, a secret or the server. Once a
+    change may have been made, a failure is printed, then raises `BootstrapFailed`.
     """
-    Run bootstrap for the specified environment.
+    from ch_migrate.access.bootstrap import Bootstrap, dry_run_sql, run
+    from ch_migrate.access.settings import load_settings
 
-    Args:
-        env_name: Environment name (dev, staging, production, etc.)
-        config_path: Path to config.yaml (defaults to ./config.yaml)
-        dry_run: If True, print SQL without executing
-        verbose: If True, print each SQL statement as it executes
-    """
-    if config_path is None:
-        config_path = Path.cwd() / "config.yaml"
-
-    env_config = get_env_config(env_name, config_path)
-
-    # Get SSM paths if configured
-    ssm_config = env_config.get("ssm", {})
-
-    # Get AWS region for SSM lookups (optional, uses AWS default if not set)
-    aws_region = env_config.get("aws_region")
-
-    # Get required credentials
-    admin_password = get_secret(
-        env_name,
-        "admin_password",
-        ssm_path=ssm_config.get("admin_password"),
-        aws_region=aws_region,
-        required=True,
-    )
-
-    migration_password = get_secret(
-        env_name,
-        "migration_password",
-        ssm_path=ssm_config.get("migration_password"),
-        aws_region=aws_region,
-        required=True,
-    )
-    assert admin_password is not None  # required=True ensures this
-    assert migration_password is not None  # required=True ensures this
-
-    # Get optional credentials
-    dict_reader_name = env_config.get("dict_reader_name")
-    dict_reader_password = None
-    if dict_reader_name:
-        dict_reader_password = get_secret(
-            env_name,
-            "dict_reader_password",
-            ssm_path=ssm_config.get("dict_reader_password"),
-            aws_region=aws_region,
-            required=True,
-        )
-
-    mcp_user_name = env_config.get("mcp_user_name")
-    mcp_password = None
-    if mcp_user_name:
-        mcp_password = get_secret(
-            env_name,
-            "mcp_password",
-            ssm_path=ssm_config.get("mcp_password"),
-            aws_region=aws_region,
-            required=True,
-        )
-
-    # Get migration user - support both new 'migration_user' and legacy 'user' field
-    migration_user = env_config.get("migration_user") or env_config.get("user")
-    if not migration_user:
-        raise ValueError(f"migration_user is required in config.yaml for environment '{env_name}'")
-
-    # Build SQL
-    project_config = env_config.get("project")
-    if project_config:
-        project = project_config
-    else:
-        # Derive from database name (e.g., myproject_dev -> myproject)
-        project = env_config["database"].split("_")[0]
-
-    sql = build_bootstrap_sql(
-        project=project,
-        db=env_config["database"],
-        migration_user=migration_user,
-        migration_password=migration_password,
-        dict_reader_name=dict_reader_name,
-        dict_reader_password=dict_reader_password,
-        mcp_user_name=mcp_user_name,
-        mcp_password=mcp_password,
-    )
-
+    path = config_path or Path.cwd() / "config.yaml"
+    request = Bootstrap(load_settings(env_name, path), path.parent, verbose)
     if dry_run:
-        ui.step(f"Dry run for {env_name}: the SQL bootstrap would run")
-        # Mask passwords in output
-        masked_sql = sql
-        for pw in [migration_password, dict_reader_password, mcp_password]:
-            if pw:
-                masked_sql = masked_sql.replace(pw, "********")
-        print(masked_sql)
+        ui.step(f"Dry run for {env_name}: the SQL `bootstrap` would run", stderr=True)
+        click.echo(dry_run_sql(request))
         return
-
-    host = env_config["host"]
-    admin_user = env_config.get("admin_user", "default")
-    secure = env_config.get("secure", True)
-    port = env_config.get("port", 8443 if secure else 8123)
-
-    ui.step(
-        f"Bootstrapping {env_name}: database {env_config['database']} on {host}, as {admin_user}"
-    )
-    ui.detail(f"Migration user: {migration_user}")
-    if dict_reader_name:
-        ui.detail(f"Dict reader: {dict_reader_name}")
-    if mcp_user_name:
-        ui.detail(f"MCP user: {mcp_user_name}")
-
-    import clickhouse_connect
-
-    client = clickhouse_connect.get_client(
-        host=host,
-        port=port,
-        username=admin_user,
-        password=admin_password,
-        secure=secure,
-        interface="https" if secure else "http",
-    )
-
-    # Collect passwords for masking in verbose output
-    passwords_to_mask = [p for p in [migration_password, dict_reader_password, mcp_password] if p]
-
-    # Execute each statement
-    for statement in sql.split(";"):
-        statement = statement.strip()
-        # Strip leading comment lines to get to the actual SQL
-        lines = statement.split("\n")
-        sql_lines = [line for line in lines if not line.strip().startswith("--")]
-        actual_sql = "\n".join(sql_lines).strip()
-        if actual_sql:
-            if verbose:
-                # Mask passwords in output
-                masked = statement
-                for pw in passwords_to_mask:
-                    masked = masked.replace(pw, "********")
-                ui.detail(f"{masked};")
-            client.command(actual_sql)
-
-    ui.success(f"Bootstrap complete for {env_name}.")
-    ui.hint(f"Next: `ch-migrate new {env_name} NAME --table TABLE`, or `ch-migrate up {env_name}`.")
+    code = run(request)
+    if code:
+        raise BootstrapFailed(code)  # 1, or 130 when interrupted
 
 
-def main() -> None:
-    """CLI entrypoint for bootstrap."""
-    if len(sys.argv) < 2:
-        print("Usage: ch-migrate bootstrap <environment> [--dry-run]")
-        print("Example: ch-migrate bootstrap dev")
-        sys.exit(1)
+def _optional_name(name: Optional[str], password: Optional[str], label: str) -> Optional[str]:
+    """An optional user's name, validated; 0.8 creates the user only with its password."""
+    if name:
+        validate_identifier(name, label)
+    return name if name and password else None
 
-    dry_run = "--dry-run" in sys.argv
-    env_name = sys.argv[1]
 
-    try:
-        run_bootstrap(env_name, dry_run=dry_run)
-    except Exception as e:
-        print(f"Error: {e}", file=sys.stderr)
-        sys.exit(1)
+def _report_error(error: Exception) -> None:
+    """What stopped `bootstrap` before any change: each reason a `Refusal` gives, or one."""
+    from ch_migrate.access.server import AccessError, hide_secrets
+
+    messages = getattr(error, "messages", None)
+    if messages:
+        for message in messages:
+            ui.error(hide_secrets(message))
+        return
+    known = isinstance(error, (ValueError, AccessError))
+    reason = str(error) if known else f"{type(error).__name__}: {error}"
+    ui.error(f"Bootstrap failed: {hide_secrets(reason)}")
 
 
 if __name__ == "__main__":

@@ -1,11 +1,15 @@
 """Tests for migration helpers."""
 
 from pathlib import Path
+from types import SimpleNamespace
 
+import alembic
 import pytest
 
 from ch_migrate.helpers import (
+    DICT_READER_PASSWORD_ATTRIBUTE,
     _parse_source_table,
+    create_dictionary,
     get_cluster,
     get_db,
     on_cluster,
@@ -133,3 +137,75 @@ class TestParseSourceTable:
         '))
         """
         assert _parse_source_table(sql) == "customers"
+
+
+DICTIONARY_SQL = (
+    "CREATE DICTIONARY IF NOT EXISTS {db}.statuses (id UInt64, status String) PRIMARY KEY id "
+    "SOURCE(CLICKHOUSE(TABLE 'events' USER 'dict_reader' PASSWORD '{password}')) "
+    "LAYOUT(FLAT()) LIFETIME(0)"
+)
+
+
+class TestCreateDictionary:
+    @pytest.fixture
+    def executed(self, tmp_path: Path, monkeypatch):
+        """Statements create_dictionary sends, in a project whose environment holds a secret."""
+        sql_dir = tmp_path / "migrations" / "sql"
+        sql_dir.mkdir(parents=True)
+        (sql_dir / "dict.sql").write_text(DICTIONARY_SQL)
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("CH_DATABASE", "mydb")
+        monkeypatch.delenv("DICT_READER_PASSWORD", raising=False)
+        statements: list[str] = []
+        monkeypatch.setattr(alembic, "op", SimpleNamespace(execute=statements.append))
+        attributes = {DICT_READER_PASSWORD_ATTRIBUTE: "from-environment"}
+        monkeypatch.setattr(
+            alembic, "context", SimpleNamespace(config=SimpleNamespace(attributes=attributes))
+        )
+        return statements
+
+    def test_grants_then_creates_without_access_yaml(self, executed):
+        create_dictionary("dict.sql")
+        assert executed[0] == "GRANT SELECT ON mydb.events TO dict_reader"
+        assert executed[1].startswith("CREATE DICTIONARY IF NOT EXISTS mydb.statuses")
+        assert len(executed) == 2
+
+    def test_only_creates_with_access_yaml(self, executed, tmp_path: Path):
+        (tmp_path / "access.yaml").write_text("migration_role:\n  profile: core\n")
+        create_dictionary("dict.sql")
+        assert len(executed) == 1
+        assert executed[0].startswith("CREATE DICTIONARY IF NOT EXISTS mydb.statuses")
+
+    def test_an_empty_access_yaml_is_an_error_not_legacy_mode(self, executed, tmp_path: Path):
+        """The access commands' rule, so up can't skip the grant."""
+        (tmp_path / "access.yaml").write_text("# nothing yet\n")
+        with pytest.raises(ValueError, match="access.yaml is empty"):
+            create_dictionary("dict.sql")
+        assert executed == []
+
+    def test_reads_the_environment_secret(self, executed):
+        create_dictionary("dict.sql")
+        assert "PASSWORD 'from-environment'" in executed[-1]
+
+    def test_dict_reader_password_wins_over_the_environment_secret(self, executed, monkeypatch):
+        monkeypatch.setenv("DICT_READER_PASSWORD", "from-variable")
+        create_dictionary("dict.sql")
+        assert "PASSWORD 'from-variable'" in executed[-1]
+
+    def test_an_explicit_password_wins(self, executed, monkeypatch):
+        monkeypatch.setenv("DICT_READER_PASSWORD", "from-variable")
+        create_dictionary("dict.sql", password="explicit")
+        assert "PASSWORD 'explicit'" in executed[-1]
+
+    def test_a_colon_reaches_sqlalchemy_escaped(self, executed):
+        """SQLAlchemy reads `:name` as a bind parameter."""
+        create_dictionary("dict.sql", password=":lead")
+        assert "PASSWORD '\\:lead'" in executed[-1]
+
+    def test_no_password_anywhere_names_where_to_set_it(self, executed, monkeypatch):
+        monkeypatch.setattr(
+            alembic, "context", SimpleNamespace(config=SimpleNamespace(attributes={}))
+        )
+        with pytest.raises(ValueError, match="CH_<ENV>_DICT_READER_PASSWORD"):
+            create_dictionary("dict.sql")
+        assert executed == []

@@ -21,6 +21,7 @@ from sqlalchemy.sql.dml import Insert
 
 from ch_migrate import ui
 from ch_migrate.config import get_env_config
+from ch_migrate.helpers import DICT_READER_PASSWORD_ATTRIBUTE
 from ch_migrate.hooks import HookRegistry, run_hooks
 from ch_migrate.rebase import _literal_assignment
 from ch_migrate.version_table import (
@@ -82,8 +83,8 @@ class ChMigrateImpl(ClickHouseImpl):
         return SimpleNamespace(rowcount=1)
 
     def _insert_version_row(self, construct) -> None:
-        # Replicated and Shared MergeTree silently drop a block identical to an earlier insert
-        # (DRY-1447), so re-inserting a previous head after `down` left no version row at all.
+        # Replicated and Shared MergeTree silently drop a block identical to an earlier insert,
+        # so re-inserting a previous head after `down` left no version row at all.
         # A token unique to this write keeps every intentional version row.
         value = self._compile_clause(next(iter(construct._values.values())))
         token = f"'chm_version_{uuid4().hex}'"
@@ -105,6 +106,10 @@ def run() -> None:
         "ch_migrate_environment", os.environ.get("CH_ENVIRONMENT", "dev")
     )
     env_config = get_env_config(environment, root / "config.yaml")
+    # In memory, not the process environment: create_dictionary reads it during the run.
+    context.config.attributes[DICT_READER_PASSWORD_ATTRIBUTE] = env_config.get(
+        "dict_reader_password"
+    )
     os.environ["CH_DATABASE"] = env_config["database"]
     if env_config.get("cluster"):
         os.environ["CH_CLUSTER"] = env_config["cluster"]
