@@ -1,4 +1,4 @@
-"""ClickHouse Cloud-only checks; they skip on self-hosted servers (DRY-1413)."""
+"""ClickHouse Cloud-only checks; they skip on self-hosted servers."""
 
 import subprocess
 import sys

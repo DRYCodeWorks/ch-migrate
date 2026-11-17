@@ -1,0 +1,23 @@
+# The `core` profile: what the migration role needs in a new project (design note, 2.4).
+#
+# - Required grants carry no grant option. Rights for other users and roles come from
+#   access.yaml, which the admin applies.
+# - Best-effort grants are given as `GRANT CURRENT GRANTS(...)`, or ON CLUSTER as one plain
+#   GRANT per privilege: the admin gives what it can, and a shortfall is a warning. On a
+#   self-hosted cluster, `up` needs CLUSTER, READ ON REMOTE, SYSTEM SYNC REPLICA and, while
+#   a mutation on a replicated table is pending, SELECT ON system.replicas.
+grants:
+  - CREATE TABLE, DROP TABLE, UNDROP TABLE, ALTER ON {db}.*
+  - CREATE VIEW, DROP VIEW, CREATE DICTIONARY, DROP DICTIONARY ON {db}.*
+  - SELECT, INSERT, DELETE, TRUNCATE, OPTIMIZE ON {db}.*
+  - SHOW TABLES, SHOW COLUMNS, SHOW DICTIONARIES ON {db}.*
+  - SELECT ON system.databases
+  - SELECT ON system.tables
+  - SELECT ON system.mutations
+  - SELECT ON system.dictionaries
+  - {grant: SELECT ON system.parts, best_effort: true}
+  - {grant: SELECT ON system.replicas, best_effort: true}
+  - {grant: "SYSTEM SYNC REPLICA, SYSTEM SYNC DATABASE REPLICA ON {db}.*", best_effort: true}
+  - {grant: CLUSTER ON *.*, best_effort: true}
+  - {grant: READ ON REMOTE, best_effort: true}
+  - {grant: CREATE TEMPORARY TABLE ON *.*, best_effort: true}

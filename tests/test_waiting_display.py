@@ -137,6 +137,26 @@ def test_interrupted_step_names_what_it_cannot_vouch_for(capsys):
     assert "ch-migrate up dev --rerun-interrupted 3f9c2a1b" in err
 
 
+def test_interrupted_step_and_mutation_reports_hide_secrets(capsys, monkeypatch):
+    """Both quote SQL, which can carry a password."""
+    monkeypatch.setattr("ch_migrate.secrets._SEEN", {"Probe!pw"})
+    statement = MigrationStatement(
+        "CREATE DICTIONARY d SOURCE(CLICKHOUSE(PASSWORD 'Probe!pw'))",
+        "migrations/sql/d.up.sql",
+        1,
+        (),
+        "upgrade",
+    )
+    stop = InterruptedStep(Step("3f9c2a1b5d6e", "upgrade", None), [Unvouched(statement, "why")])
+    _report_failure(Upgrade("dev"), _current("3f9c2a1b  d"), stop)
+    failure = FailedMutation("d.t", "mutation_7.txt", "h1", "near 'Probe!pw'", "KILL MUTATION")
+    error = _statement_error(MutationFailed("failed", failure))
+    _report_failure(Upgrade("dev"), _current("3f9c2a1b  d"), error)
+    err = capsys.readouterr().err
+    assert "Probe!pw" not in err
+    assert "PASSWORD '[hidden]'" in err and "near '[hidden]'" in err
+
+
 def test_interrupt_says_the_work_continues(capsys):
     _report_interrupt("dev", _current("3f9c2a1b  backfill"))
     err = capsys.readouterr().err

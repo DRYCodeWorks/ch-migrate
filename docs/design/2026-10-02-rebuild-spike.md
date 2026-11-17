@@ -1,6 +1,6 @@
 # Spike: rebuild_table mechanics (open questions 10–11)
 
-**Date:** 2026-10-02 · **For:** capability 8 of `2026-10-02-ch-migrate-1.0.md` · **Ticket:** DRY-1406
+**Date:** 2026-10-02 · **For:** capability 8 of `2026-10-02-ch-migrate-1.0.md`
 **Setup:** ClickHouse 26.3.32.14 in a throwaway local container, with embedded Keeper for
 replicated runs. Every experiment's SQL and output is in `spikes/2026-10-02-rebuild/`. Files are
 named after the sections below: `a_*`, `b*_*`, `d*_*`, `f*_*`, and `e2e.py` with `run_e2e*.sh`.
@@ -21,10 +21,10 @@ Four things change from the planned mechanism:
 **Materialized views follow the table name across `EXCHANGE`,** so dependent views need no
 re-pointing.
 
-**Decision (Dan, 2026-10-02):** all four are adopted. The guarantee is now "no acknowledged row is
+**Decision (2026-10-02):** all four are adopted. The guarantee is now "no acknowledged row is
 lost". Fire-and-forget async writers need an opt-in written in the migration file. Partition-key
 changes are refused in 1.0. Cloud is verified on a DRY-owned Cloud service at each acceptance
-check (DRY-1413). Implementation: DRY-1407.
+check.
 
 ## End-to-end runs
 

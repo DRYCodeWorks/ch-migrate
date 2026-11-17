@@ -17,7 +17,9 @@ import click
 from dotenv import load_dotenv
 
 from ch_migrate import __version__, ui
+from ch_migrate.access.cli import access
 from ch_migrate.authoring import NewOptions
+from ch_migrate.bootstrap import bootstrap_command
 from ch_migrate.config import get_env_config
 from ch_migrate.json_output import (
     JsonCommand,
@@ -28,6 +30,7 @@ from ch_migrate.json_output import (
     lint_document,
     status_document,
 )
+from ch_migrate.project_init import get_template_path, init, render_template  # noqa: F401
 from ch_migrate.runner import alembic_failure, run_alembic, run_migrations
 
 if TYPE_CHECKING:
@@ -39,19 +42,6 @@ if TYPE_CHECKING:
 _env_local = Path.cwd() / ".env.local"
 if _env_local.exists():
     load_dotenv(_env_local)
-
-
-def get_template_path(name: str) -> Path:
-    """Get path to a template file."""
-    return Path(__file__).parent / "templates" / "project" / f"{name}.template"
-
-
-def render_template(template_path: Path, **kwargs: str) -> str:
-    """Render a template with substitutions."""
-    content = template_path.read_text()
-    for key, value in kwargs.items():
-        content = content.replace(f"{{{key}}}", value)
-    return content
 
 
 def _require_current_env() -> None:
@@ -145,95 +135,6 @@ def main() -> None:
       ch-migrate status dev              # Check migration status
     """
     pass
-
-
-@main.command()
-@click.argument("path", default=".", type=click.Path())
-@click.option("--name", "-n", default=None, help="Project name (defaults to directory name)")
-def init(path: str, name: str | None) -> None:
-    """Initialize a new ClickHouse migration project.
-
-    Creates the project structure with config.yaml and migrations directory.
-    """
-    project_path = Path(path).resolve()
-
-    if name is None:
-        name = project_path.name
-
-    # Normalize project name (replace spaces/hyphens with underscores for database names)
-    safe_name = name.replace("-", "_").replace(" ", "_").lower()
-
-    ui.step(f"Creating ClickHouse migration project {name} in {project_path}")
-
-    # Create directories
-    project_path.mkdir(parents=True, exist_ok=True)
-    (project_path / "migrations" / "sql" / "bootstrap").mkdir(parents=True, exist_ok=True)
-    (project_path / "migrations" / "sql" / "history" / "tables").mkdir(parents=True, exist_ok=True)
-    (project_path / "migrations" / "sql" / "history" / "views").mkdir(parents=True, exist_ok=True)
-    (project_path / "migrations" / "sql" / "history" / "dictionaries").mkdir(
-        parents=True, exist_ok=True
-    )
-    (project_path / "migrations" / "versions").mkdir(parents=True, exist_ok=True)
-
-    # Copy/render templates
-    templates = [
-        ("alembic.ini", "alembic.ini"),
-        ("config.yaml", "config.yaml"),
-        ("env.local.example", ".env.local.example"),
-        ("script.py.mako", "migrations/script.py.mako"),
-    ]
-
-    for template_name, output_name in templates:
-        template_path = get_template_path(template_name)
-        output_path = project_path / output_name
-
-        if output_path.exists():
-            ui.detail(f"Skipped {output_name} (already exists)")
-            continue
-
-        content = render_template(template_path, project_name=safe_name)
-        output_path.write_text(content)
-        ui.detail(f"Created {output_name}")
-
-    # Copy env.py from package
-    env_py_src = Path(__file__).parent / "env.py"
-    env_py_dst = project_path / "migrations" / "env.py"
-    if not env_py_dst.exists():
-        shutil.copy(env_py_src, env_py_dst)
-        ui.detail("Created migrations/env.py")
-
-    # Create .gitignore
-    gitignore_path = project_path / ".gitignore"
-    if not gitignore_path.exists():
-        gitignore_path.write_text(".env.local\n__pycache__/\n*.pyc\n")
-        ui.detail("Created .gitignore")
-
-    ui.success("Project created. Next steps:")
-    ui.hint("  1. Point config.yaml at your ClickHouse servers.")
-    ui.hint("  2. Copy .env.local.example to .env.local and add the passwords.")
-    ui.hint("  3. Run `ch-migrate bootstrap dev`.")
-    ui.hint("  4. Run `ch-migrate new dev create_users --table users`, then write the SQL")
-    ui.hint("     in the .up.sql and .down.sql files it creates.")
-
-
-@main.command()
-@click.argument("environment")
-@click.option("--dry-run", is_flag=True, help="Show SQL without executing")
-@click.option("--verbose", "-v", is_flag=True, help="Show SQL statements as they execute")
-def bootstrap(environment: str, dry_run: bool, verbose: bool) -> None:
-    """Initialize database and users for an environment.
-
-    Creates the database, roles, and users (migration user, optional MCP user,
-    optional dict_reader user). Safe to run multiple times (idempotent).
-
-    Requires admin credentials in .env.local or SSM.
-    """
-    from ch_migrate.bootstrap import run_bootstrap
-
-    try:
-        run_bootstrap(environment, dry_run=dry_run, verbose=verbose)
-    except Exception as e:
-        ui.fail(f"Bootstrap failed: {e}")
 
 
 @main.command()
@@ -1208,6 +1109,10 @@ def snapshot(environment: str, exclude: tuple[str, ...], include_filter: tuple[s
         excluded=excluded_count,
     )
 
+
+main.add_command(init)
+main.add_command(bootstrap_command)
+main.add_command(access)
 
 if __name__ == "__main__":
     main()

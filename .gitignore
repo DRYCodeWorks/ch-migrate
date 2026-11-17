@@ -66,6 +66,11 @@ tmp/
 temp/
 
 examples/
+# Except the basic example, which is tracked. Git can't re-include a directory under an
+# excluded one, so the top-level examples/ comes back first and only its contents are ignored.
+!/examples/
+/examples/*
+!/examples/basic/
 # Documentation examples are reviewed source, not local sample projects.
 !docs/examples/
 lambda-exporter/

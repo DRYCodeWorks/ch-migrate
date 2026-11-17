@@ -2,8 +2,7 @@
 
 **Reviewer:** Principal Architect
 **Date:** 2026-03-05
-**Design under review:** DRY-11 feature proposals (12 proposed features for ch-migrate)
-**Related issues:** [DRY-11](/issues/DRY-11) (feature proposals), [DRY-12](/issues/DRY-12) (design), [DRY-13](/issues/DRY-13) (this review)
+**Design under review:** feature proposals (12 proposed features for ch-migrate)
 
 ---
 
@@ -206,9 +205,7 @@ The one pattern break is the introspection module, which introduces live DB intr
 
 3. **The priority split into tiers is sensible.** Tier 1 features are genuinely high-impact. Tier 3 features are correctly deferred.
 
-4. **The "lead magnet for consulting agency" framing** is a good product lens. Features 1 (diff), 3 (lint), and 8 (PG helper) have the strongest lead magnet potential.
-
-5. **The proposal acknowledges that declarative mode is too large** for the current phase. Good restraint.
+4. **The proposal acknowledges that declarative mode is too large** for the current phase. Good restraint.
 
 ---
 

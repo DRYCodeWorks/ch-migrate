@@ -1,4 +1,4 @@
-"""Explicit DRY-1391 reproduction; not part of automatic test collection.
+"""Explicit reproduction of the dialect spike; not part of automatic test collection.
 
 Run this file with CH_MIGRATE_SPIKE_PYTHON pointing to the clean 3.10 environment
 containing clickhouse-connect[alembic]==1.9.0 and clickhouse-sqlalchemy==0.3.2.

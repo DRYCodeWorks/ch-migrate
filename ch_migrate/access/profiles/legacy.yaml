@@ -1,0 +1,34 @@
+# The `legacy` profile: 0.8's migration role exactly (design note, 2.4).
+#
+# Each entry is one GRANT statement from 0.8's `build_bootstrap_sql`, in its order and
+# spelling. 0.8's `GRANT CURRENT GRANTS(...)` statements are the best-effort entries.
+# For projects whose migrations create users or roles: set `migration_role.profile: legacy`.
+grants:
+  # Schema operations (RENAME is part of ALTER)
+  - CREATE TABLE, DROP TABLE, UNDROP TABLE, ALTER ON {db}.* WITH GRANT OPTION
+  - CREATE VIEW, DROP VIEW ON {db}.* WITH GRANT OPTION
+  - CREATE DICTIONARY, DROP DICTIONARY ON {db}.* WITH GRANT OPTION
+  - CREATE FUNCTION, DROP FUNCTION ON *.* WITH GRANT OPTION
+  # User and role management, for migrations that create users and roles
+  - {grant: "CREATE USER, ALTER USER, DROP USER ON *.* WITH GRANT OPTION", best_effort: true}
+  - CREATE ROLE, ALTER ROLE, DROP ROLE ON *.* WITH GRANT OPTION
+  - ROLE ADMIN ON *.* WITH GRANT OPTION
+  # Row-level security
+  - ACCESS MANAGEMENT ON {db}.* WITH GRANT OPTION
+  - CREATE ROW POLICY, ALTER ROW POLICY, DROP ROW POLICY, SHOW ROW POLICIES ON {db}.* WITH GRANT OPTION
+  # Data operations and introspection
+  - SELECT, INSERT, DELETE, TRUNCATE, OPTIMIZE ON {db}.* WITH GRANT OPTION
+  - SHOW TABLES, SHOW COLUMNS, SHOW DICTIONARIES ON {db}.* WITH GRANT OPTION
+  - CREATE TEMPORARY TABLE ON *.* WITH GRANT OPTION
+  # System tables
+  - {grant: SELECT ON system.* WITH GRANT OPTION, best_effort: true}
+  - SELECT ON system.grants
+  - SELECT ON system.databases
+  - SELECT ON system.tables
+  - SELECT ON system.mutations
+  - {grant: SELECT ON system.replicas, best_effort: true}
+  - {grant: SELECT ON system.parts, best_effort: true}
+  - {grant: "SYSTEM SYNC REPLICA ON {db}.*", best_effort: true}
+  - {grant: "SYSTEM SYNC DATABASE REPLICA ON {db}.*", best_effort: true}
+  - {grant: CLUSTER ON *.*, best_effort: true}
+  - {grant: READ ON REMOTE, best_effort: true}

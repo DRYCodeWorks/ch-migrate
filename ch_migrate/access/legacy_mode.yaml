@@ -1,0 +1,23 @@
+# Legacy mode: what 0.8's `bootstrap` creates for a project with no access.yaml (design
+# note, 2.4). The migration role holds the `legacy` profile. Besides that, config.yaml's
+# `mcp_user_name` and `dict_reader_name` each add the role and user below, written as
+# access.yaml writes them. They stay additive: 0.8 never converged them.
+mcp_user_name:
+  roles:
+    '{project}_readonly_role':
+      grants:
+        - SELECT ON {db}.*
+        - SHOW TABLES ON {db}.*
+  users:
+    '{mcp_user_name}':
+      password: {secret: mcp_password}
+      roles: ['{project}_readonly_role']
+
+dict_reader_name:
+  roles:
+    # SELECT grants are added per table when dictionaries are created.
+    '{project}_dict_role': {}
+  users:
+    '{dict_reader_name}':
+      password: {secret: dict_reader_password}
+      roles: ['{project}_dict_role']

@@ -1,0 +1,140 @@
+{
+  "limited_admin": {
+    "grants": [
+      {"access_object": "", "access_type": "ALTER ROW POLICY", "column": null, "database": "{db}", "grant_option": 1, "is_partial_revoke": 0, "role_name": "{project}_migration_role", "table": null, "user_name": null},
+      {"access_object": "", "access_type": "ALTER", "column": null, "database": "{db}", "grant_option": 1, "is_partial_revoke": 0, "role_name": "{project}_migration_role", "table": null, "user_name": null},
+      {"access_object": "", "access_type": "CREATE DICTIONARY", "column": null, "database": "{db}", "grant_option": 1, "is_partial_revoke": 0, "role_name": "{project}_migration_role", "table": null, "user_name": null},
+      {"access_object": "", "access_type": "CREATE ROW POLICY", "column": null, "database": "{db}", "grant_option": 1, "is_partial_revoke": 0, "role_name": "{project}_migration_role", "table": null, "user_name": null},
+      {"access_object": "", "access_type": "CREATE TABLE", "column": null, "database": "{db}", "grant_option": 1, "is_partial_revoke": 0, "role_name": "{project}_migration_role", "table": null, "user_name": null},
+      {"access_object": "", "access_type": "CREATE TEMPORARY TABLE", "column": null, "database": null, "grant_option": 1, "is_partial_revoke": 0, "role_name": "{project}_migration_role", "table": null, "user_name": null},
+      {"access_object": "", "access_type": "CREATE VIEW", "column": null, "database": "{db}", "grant_option": 1, "is_partial_revoke": 0, "role_name": "{project}_migration_role", "table": null, "user_name": null},
+      {"access_object": "", "access_type": "DROP DICTIONARY", "column": null, "database": "{db}", "grant_option": 1, "is_partial_revoke": 0, "role_name": "{project}_migration_role", "table": null, "user_name": null},
+      {"access_object": "", "access_type": "DROP ROW POLICY", "column": null, "database": "{db}", "grant_option": 1, "is_partial_revoke": 0, "role_name": "{project}_migration_role", "table": null, "user_name": null},
+      {"access_object": "", "access_type": "DROP TABLE", "column": null, "database": "{db}", "grant_option": 1, "is_partial_revoke": 0, "role_name": "{project}_migration_role", "table": null, "user_name": null},
+      {"access_object": "", "access_type": "DROP VIEW", "column": null, "database": "{db}", "grant_option": 1, "is_partial_revoke": 0, "role_name": "{project}_migration_role", "table": null, "user_name": null},
+      {"access_object": "", "access_type": "INSERT", "column": null, "database": "{db}", "grant_option": 1, "is_partial_revoke": 0, "role_name": "{project}_migration_role", "table": null, "user_name": null},
+      {"access_object": "", "access_type": "OPTIMIZE", "column": null, "database": "{db}", "grant_option": 1, "is_partial_revoke": 0, "role_name": "{project}_migration_role", "table": null, "user_name": null},
+      {"access_object": "", "access_type": "SELECT", "column": null, "database": "system", "grant_option": 1, "is_partial_revoke": 0, "role_name": "{project}_migration_role", "table": null, "user_name": null},
+      {"access_object": "", "access_type": "SELECT", "column": null, "database": "{db}", "grant_option": 1, "is_partial_revoke": 0, "role_name": "{project}_migration_role", "table": null, "user_name": null},
+      {"access_object": "", "access_type": "SHOW COLUMNS", "column": null, "database": "{db}", "grant_option": 1, "is_partial_revoke": 0, "role_name": "{project}_migration_role", "table": null, "user_name": null},
+      {"access_object": "", "access_type": "SHOW DICTIONARIES", "column": null, "database": "{db}", "grant_option": 1, "is_partial_revoke": 0, "role_name": "{project}_migration_role", "table": null, "user_name": null},
+      {"access_object": "", "access_type": "SHOW ROW POLICIES", "column": null, "database": "{db}", "grant_option": 1, "is_partial_revoke": 0, "role_name": "{project}_migration_role", "table": null, "user_name": null},
+      {"access_object": "", "access_type": "SHOW TABLES", "column": null, "database": "{db}", "grant_option": 1, "is_partial_revoke": 0, "role_name": "{project}_migration_role", "table": null, "user_name": null},
+      {"access_object": "", "access_type": "SYSTEM SYNC DATABASE REPLICA", "column": null, "database": "{db}", "grant_option": 0, "is_partial_revoke": 0, "role_name": "{project}_migration_role", "table": null, "user_name": null},
+      {"access_object": "", "access_type": "SYSTEM SYNC REPLICA", "column": null, "database": "{db}", "grant_option": 0, "is_partial_revoke": 0, "role_name": "{project}_migration_role", "table": null, "user_name": null},
+      {"access_object": "", "access_type": "TRUNCATE", "column": null, "database": "{db}", "grant_option": 1, "is_partial_revoke": 0, "role_name": "{project}_migration_role", "table": null, "user_name": null},
+      {"access_object": "", "access_type": "UNDROP TABLE", "column": null, "database": "{db}", "grant_option": 1, "is_partial_revoke": 0, "role_name": "{project}_migration_role", "table": null, "user_name": null}
+    ],
+    "role_grants": [
+      {"granted_role_is_default": 1, "granted_role_name": "{project}_migration_role", "role_name": null, "user_name": "{project}_migration", "with_admin_option": 0}
+    ],
+    "users": [
+      {"default_roles_all": 1, "default_roles_except": [], "default_roles_list": [], "name": "{project}_migration"}
+    ],
+    "roles": [
+      {"name": "{project}_migration_role"}
+    ]
+  },
+  "mcp_user_and_dict_reader": {
+    "grants": [
+      {"access_object": "", "access_type": "ALTER ROLE", "column": null, "database": null, "grant_option": 1, "is_partial_revoke": 0, "role_name": "{project}_migration_role", "table": null, "user_name": null},
+      {"access_object": "", "access_type": "ALTER ROW POLICY", "column": null, "database": "{db}", "grant_option": 1, "is_partial_revoke": 0, "role_name": "{project}_migration_role", "table": null, "user_name": null},
+      {"access_object": "", "access_type": "ALTER USER", "column": null, "database": null, "grant_option": 1, "is_partial_revoke": 0, "role_name": "{project}_migration_role", "table": null, "user_name": null},
+      {"access_object": "", "access_type": "ALTER", "column": null, "database": "{db}", "grant_option": 1, "is_partial_revoke": 0, "role_name": "{project}_migration_role", "table": null, "user_name": null},
+      {"access_object": "", "access_type": "CLUSTER", "column": null, "database": null, "grant_option": 0, "is_partial_revoke": 0, "role_name": "{project}_migration_role", "table": null, "user_name": null},
+      {"access_object": "", "access_type": "CREATE DICTIONARY", "column": null, "database": "{db}", "grant_option": 1, "is_partial_revoke": 0, "role_name": "{project}_migration_role", "table": null, "user_name": null},
+      {"access_object": "", "access_type": "CREATE FUNCTION", "column": null, "database": null, "grant_option": 1, "is_partial_revoke": 0, "role_name": "{project}_migration_role", "table": null, "user_name": null},
+      {"access_object": "", "access_type": "CREATE ROLE", "column": null, "database": null, "grant_option": 1, "is_partial_revoke": 0, "role_name": "{project}_migration_role", "table": null, "user_name": null},
+      {"access_object": "", "access_type": "CREATE ROW POLICY", "column": null, "database": "{db}", "grant_option": 1, "is_partial_revoke": 0, "role_name": "{project}_migration_role", "table": null, "user_name": null},
+      {"access_object": "", "access_type": "CREATE TABLE", "column": null, "database": "{db}", "grant_option": 1, "is_partial_revoke": 0, "role_name": "{project}_migration_role", "table": null, "user_name": null},
+      {"access_object": "", "access_type": "CREATE TEMPORARY TABLE", "column": null, "database": null, "grant_option": 1, "is_partial_revoke": 0, "role_name": "{project}_migration_role", "table": null, "user_name": null},
+      {"access_object": "", "access_type": "CREATE USER", "column": null, "database": null, "grant_option": 1, "is_partial_revoke": 0, "role_name": "{project}_migration_role", "table": null, "user_name": null},
+      {"access_object": "", "access_type": "CREATE VIEW", "column": null, "database": "{db}", "grant_option": 1, "is_partial_revoke": 0, "role_name": "{project}_migration_role", "table": null, "user_name": null},
+      {"access_object": "", "access_type": "DROP DICTIONARY", "column": null, "database": "{db}", "grant_option": 1, "is_partial_revoke": 0, "role_name": "{project}_migration_role", "table": null, "user_name": null},
+      {"access_object": "", "access_type": "DROP FUNCTION", "column": null, "database": null, "grant_option": 1, "is_partial_revoke": 0, "role_name": "{project}_migration_role", "table": null, "user_name": null},
+      {"access_object": "", "access_type": "DROP ROLE", "column": null, "database": null, "grant_option": 1, "is_partial_revoke": 0, "role_name": "{project}_migration_role", "table": null, "user_name": null},
+      {"access_object": "", "access_type": "DROP ROW POLICY", "column": null, "database": "{db}", "grant_option": 1, "is_partial_revoke": 0, "role_name": "{project}_migration_role", "table": null, "user_name": null},
+      {"access_object": "", "access_type": "DROP TABLE", "column": null, "database": "{db}", "grant_option": 1, "is_partial_revoke": 0, "role_name": "{project}_migration_role", "table": null, "user_name": null},
+      {"access_object": "", "access_type": "DROP USER", "column": null, "database": null, "grant_option": 1, "is_partial_revoke": 0, "role_name": "{project}_migration_role", "table": null, "user_name": null},
+      {"access_object": "", "access_type": "DROP VIEW", "column": null, "database": "{db}", "grant_option": 1, "is_partial_revoke": 0, "role_name": "{project}_migration_role", "table": null, "user_name": null},
+      {"access_object": "", "access_type": "INSERT", "column": null, "database": "{db}", "grant_option": 1, "is_partial_revoke": 0, "role_name": "{project}_migration_role", "table": null, "user_name": null},
+      {"access_object": "", "access_type": "OPTIMIZE", "column": null, "database": "{db}", "grant_option": 1, "is_partial_revoke": 0, "role_name": "{project}_migration_role", "table": null, "user_name": null},
+      {"access_object": "", "access_type": "ROLE ADMIN", "column": null, "database": null, "grant_option": 1, "is_partial_revoke": 0, "role_name": "{project}_migration_role", "table": null, "user_name": null},
+      {"access_object": "", "access_type": "SELECT", "column": null, "database": "system", "grant_option": 1, "is_partial_revoke": 0, "role_name": "{project}_migration_role", "table": null, "user_name": null},
+      {"access_object": "", "access_type": "SELECT", "column": null, "database": "{db}", "grant_option": 0, "is_partial_revoke": 0, "role_name": "{project}_readonly_role", "table": null, "user_name": null},
+      {"access_object": "", "access_type": "SELECT", "column": null, "database": "{db}", "grant_option": 1, "is_partial_revoke": 0, "role_name": "{project}_migration_role", "table": null, "user_name": null},
+      {"access_object": "", "access_type": "SHOW COLUMNS", "column": null, "database": "{db}", "grant_option": 1, "is_partial_revoke": 0, "role_name": "{project}_migration_role", "table": null, "user_name": null},
+      {"access_object": "", "access_type": "SHOW DICTIONARIES", "column": null, "database": "{db}", "grant_option": 1, "is_partial_revoke": 0, "role_name": "{project}_migration_role", "table": null, "user_name": null},
+      {"access_object": "", "access_type": "SHOW ROW POLICIES", "column": null, "database": "{db}", "grant_option": 1, "is_partial_revoke": 0, "role_name": "{project}_migration_role", "table": null, "user_name": null},
+      {"access_object": "", "access_type": "SHOW TABLES", "column": null, "database": "{db}", "grant_option": 0, "is_partial_revoke": 0, "role_name": "{project}_readonly_role", "table": null, "user_name": null},
+      {"access_object": "", "access_type": "SHOW TABLES", "column": null, "database": "{db}", "grant_option": 1, "is_partial_revoke": 0, "role_name": "{project}_migration_role", "table": null, "user_name": null},
+      {"access_object": "", "access_type": "SYSTEM SYNC DATABASE REPLICA", "column": null, "database": "{db}", "grant_option": 0, "is_partial_revoke": 0, "role_name": "{project}_migration_role", "table": null, "user_name": null},
+      {"access_object": "", "access_type": "SYSTEM SYNC REPLICA", "column": null, "database": "{db}", "grant_option": 0, "is_partial_revoke": 0, "role_name": "{project}_migration_role", "table": null, "user_name": null},
+      {"access_object": "", "access_type": "TRUNCATE", "column": null, "database": "{db}", "grant_option": 1, "is_partial_revoke": 0, "role_name": "{project}_migration_role", "table": null, "user_name": null},
+      {"access_object": "", "access_type": "UNDROP TABLE", "column": null, "database": "{db}", "grant_option": 1, "is_partial_revoke": 0, "role_name": "{project}_migration_role", "table": null, "user_name": null},
+      {"access_object": "REMOTE", "access_type": "READ", "column": null, "database": null, "grant_option": 0, "is_partial_revoke": 0, "role_name": "{project}_migration_role", "table": null, "user_name": null}
+    ],
+    "role_grants": [
+      {"granted_role_is_default": 1, "granted_role_name": "{project}_dict_role", "role_name": null, "user_name": "{project}_dict", "with_admin_option": 0},
+      {"granted_role_is_default": 1, "granted_role_name": "{project}_migration_role", "role_name": null, "user_name": "{project}_migration", "with_admin_option": 0},
+      {"granted_role_is_default": 1, "granted_role_name": "{project}_readonly_role", "role_name": null, "user_name": "{project}_mcp", "with_admin_option": 0}
+    ],
+    "users": [
+      {"default_roles_all": 1, "default_roles_except": [], "default_roles_list": [], "name": "{project}_dict"},
+      {"default_roles_all": 1, "default_roles_except": [], "default_roles_list": [], "name": "{project}_mcp"},
+      {"default_roles_all": 1, "default_roles_except": [], "default_roles_list": [], "name": "{project}_migration"}
+    ],
+    "roles": [
+      {"name": "{project}_dict_role"},
+      {"name": "{project}_migration_role"},
+      {"name": "{project}_readonly_role"}
+    ]
+  },
+  "plain": {
+    "grants": [
+      {"access_object": "", "access_type": "ALTER ROLE", "column": null, "database": null, "grant_option": 1, "is_partial_revoke": 0, "role_name": "{project}_migration_role", "table": null, "user_name": null},
+      {"access_object": "", "access_type": "ALTER ROW POLICY", "column": null, "database": "{db}", "grant_option": 1, "is_partial_revoke": 0, "role_name": "{project}_migration_role", "table": null, "user_name": null},
+      {"access_object": "", "access_type": "ALTER USER", "column": null, "database": null, "grant_option": 1, "is_partial_revoke": 0, "role_name": "{project}_migration_role", "table": null, "user_name": null},
+      {"access_object": "", "access_type": "ALTER", "column": null, "database": "{db}", "grant_option": 1, "is_partial_revoke": 0, "role_name": "{project}_migration_role", "table": null, "user_name": null},
+      {"access_object": "", "access_type": "CLUSTER", "column": null, "database": null, "grant_option": 0, "is_partial_revoke": 0, "role_name": "{project}_migration_role", "table": null, "user_name": null},
+      {"access_object": "", "access_type": "CREATE DICTIONARY", "column": null, "database": "{db}", "grant_option": 1, "is_partial_revoke": 0, "role_name": "{project}_migration_role", "table": null, "user_name": null},
+      {"access_object": "", "access_type": "CREATE FUNCTION", "column": null, "database": null, "grant_option": 1, "is_partial_revoke": 0, "role_name": "{project}_migration_role", "table": null, "user_name": null},
+      {"access_object": "", "access_type": "CREATE ROLE", "column": null, "database": null, "grant_option": 1, "is_partial_revoke": 0, "role_name": "{project}_migration_role", "table": null, "user_name": null},
+      {"access_object": "", "access_type": "CREATE ROW POLICY", "column": null, "database": "{db}", "grant_option": 1, "is_partial_revoke": 0, "role_name": "{project}_migration_role", "table": null, "user_name": null},
+      {"access_object": "", "access_type": "CREATE TABLE", "column": null, "database": "{db}", "grant_option": 1, "is_partial_revoke": 0, "role_name": "{project}_migration_role", "table": null, "user_name": null},
+      {"access_object": "", "access_type": "CREATE TEMPORARY TABLE", "column": null, "database": null, "grant_option": 1, "is_partial_revoke": 0, "role_name": "{project}_migration_role", "table": null, "user_name": null},
+      {"access_object": "", "access_type": "CREATE USER", "column": null, "database": null, "grant_option": 1, "is_partial_revoke": 0, "role_name": "{project}_migration_role", "table": null, "user_name": null},
+      {"access_object": "", "access_type": "CREATE VIEW", "column": null, "database": "{db}", "grant_option": 1, "is_partial_revoke": 0, "role_name": "{project}_migration_role", "table": null, "user_name": null},
+      {"access_object": "", "access_type": "DROP DICTIONARY", "column": null, "database": "{db}", "grant_option": 1, "is_partial_revoke": 0, "role_name": "{project}_migration_role", "table": null, "user_name": null},
+      {"access_object": "", "access_type": "DROP FUNCTION", "column": null, "database": null, "grant_option": 1, "is_partial_revoke": 0, "role_name": "{project}_migration_role", "table": null, "user_name": null},
+      {"access_object": "", "access_type": "DROP ROLE", "column": null, "database": null, "grant_option": 1, "is_partial_revoke": 0, "role_name": "{project}_migration_role", "table": null, "user_name": null},
+      {"access_object": "", "access_type": "DROP ROW POLICY", "column": null, "database": "{db}", "grant_option": 1, "is_partial_revoke": 0, "role_name": "{project}_migration_role", "table": null, "user_name": null},
+      {"access_object": "", "access_type": "DROP TABLE", "column": null, "database": "{db}", "grant_option": 1, "is_partial_revoke": 0, "role_name": "{project}_migration_role", "table": null, "user_name": null},
+      {"access_object": "", "access_type": "DROP USER", "column": null, "database": null, "grant_option": 1, "is_partial_revoke": 0, "role_name": "{project}_migration_role", "table": null, "user_name": null},
+      {"access_object": "", "access_type": "DROP VIEW", "column": null, "database": "{db}", "grant_option": 1, "is_partial_revoke": 0, "role_name": "{project}_migration_role", "table": null, "user_name": null},
+      {"access_object": "", "access_type": "INSERT", "column": null, "database": "{db}", "grant_option": 1, "is_partial_revoke": 0, "role_name": "{project}_migration_role", "table": null, "user_name": null},
+      {"access_object": "", "access_type": "OPTIMIZE", "column": null, "database": "{db}", "grant_option": 1, "is_partial_revoke": 0, "role_name": "{project}_migration_role", "table": null, "user_name": null},
+      {"access_object": "", "access_type": "ROLE ADMIN", "column": null, "database": null, "grant_option": 1, "is_partial_revoke": 0, "role_name": "{project}_migration_role", "table": null, "user_name": null},
+      {"access_object": "", "access_type": "SELECT", "column": null, "database": "system", "grant_option": 1, "is_partial_revoke": 0, "role_name": "{project}_migration_role", "table": null, "user_name": null},
+      {"access_object": "", "access_type": "SELECT", "column": null, "database": "{db}", "grant_option": 1, "is_partial_revoke": 0, "role_name": "{project}_migration_role", "table": null, "user_name": null},
+      {"access_object": "", "access_type": "SHOW COLUMNS", "column": null, "database": "{db}", "grant_option": 1, "is_partial_revoke": 0, "role_name": "{project}_migration_role", "table": null, "user_name": null},
+      {"access_object": "", "access_type": "SHOW DICTIONARIES", "column": null, "database": "{db}", "grant_option": 1, "is_partial_revoke": 0, "role_name": "{project}_migration_role", "table": null, "user_name": null},
+      {"access_object": "", "access_type": "SHOW ROW POLICIES", "column": null, "database": "{db}", "grant_option": 1, "is_partial_revoke": 0, "role_name": "{project}_migration_role", "table": null, "user_name": null},
+      {"access_object": "", "access_type": "SHOW TABLES", "column": null, "database": "{db}", "grant_option": 1, "is_partial_revoke": 0, "role_name": "{project}_migration_role", "table": null, "user_name": null},
+      {"access_object": "", "access_type": "SYSTEM SYNC DATABASE REPLICA", "column": null, "database": "{db}", "grant_option": 0, "is_partial_revoke": 0, "role_name": "{project}_migration_role", "table": null, "user_name": null},
+      {"access_object": "", "access_type": "SYSTEM SYNC REPLICA", "column": null, "database": "{db}", "grant_option": 0, "is_partial_revoke": 0, "role_name": "{project}_migration_role", "table": null, "user_name": null},
+      {"access_object": "", "access_type": "TRUNCATE", "column": null, "database": "{db}", "grant_option": 1, "is_partial_revoke": 0, "role_name": "{project}_migration_role", "table": null, "user_name": null},
+      {"access_object": "", "access_type": "UNDROP TABLE", "column": null, "database": "{db}", "grant_option": 1, "is_partial_revoke": 0, "role_name": "{project}_migration_role", "table": null, "user_name": null},
+      {"access_object": "REMOTE", "access_type": "READ", "column": null, "database": null, "grant_option": 0, "is_partial_revoke": 0, "role_name": "{project}_migration_role", "table": null, "user_name": null}
+    ],
+    "role_grants": [
+      {"granted_role_is_default": 1, "granted_role_name": "{project}_migration_role", "role_name": null, "user_name": "{project}_migration", "with_admin_option": 0}
+    ],
+    "users": [
+      {"default_roles_all": 1, "default_roles_except": [], "default_roles_list": [], "name": "{project}_migration"}
+    ],
+    "roles": [
+      {"name": "{project}_migration_role"}
+    ]
+  }
+}

@@ -2,7 +2,8 @@
 
 import json
 import os
-from typing import Optional, Union
+from typing import Iterable, Optional, Union
+from urllib.parse import quote, quote_plus
 
 
 class SSMSecretNotFoundError(Exception):
@@ -15,6 +16,83 @@ class SSMJsonKeyError(Exception):
     """Raised when a JSON key cannot be found in an SSM parameter value."""
 
     pass
+
+
+# Every secret `get_secret` has returned in this process, so that no error ch-migrate prints
+# later shows one, raw or URL-encoded.
+_SEEN: set[str] = set()
+
+
+# style-ok: get_secret's public keyword signature predates 0.9; callers pass these by name
+def get_secret(
+    env_name: str,
+    key: str,
+    *,
+    ssm_path: Optional[Union[str, dict]] = None,
+    aws_region: Optional[str] = None,
+    required: bool = True,
+) -> Optional[str]:
+    """
+    Get a secret value from SSM or environment variable.
+
+    Precedence:
+    1. SSM parameter at ssm_path (if provided) - use SSM directly
+    2. Environment variable CH_{ENV}_{KEY} (e.g., CH_DEV_MIGRATION_PASSWORD)
+    3. Legacy env var for migration_password: CH_{ENV}_PASSWORD
+    4. None (if not required) or raise ValueError
+
+    SSM path formats:
+    - Simple string: "/myproject/dev/password"
+    - With JSON key (hash suffix): "/myproject/credentials#password"
+    - With JSON key (object): {"path": "/myproject/credentials", "json_key": "password"}
+
+    Args:
+        env_name: Environment name (dev, staging, production)
+        key: Secret key (migration_password, admin_password, dict_reader_password)
+        ssm_path: Optional SSM parameter path (string or dict with path/json_key)
+        aws_region: Optional AWS region for SSM lookups (e.g., 'us-east-1')
+        required: Whether to raise if secret not found
+
+    Returns:
+        Secret value or None if not required and not found
+
+    Raises:
+        ValueError: If required and not found in env or SSM
+        SSMSecretNotFoundError: If SSM path provided but parameter not found
+        SSMJsonKeyError: If JSON key specified but not found in parameter value
+        ImportError: If SSM path provided but boto3 not installed
+    """
+    value = _find_secret(env_name, key, ssm_path=ssm_path, aws_region=aws_region, required=required)
+    if value:
+        remember_secret(value)
+    return value
+
+
+def remember_secret(value: str) -> None:
+    """Hide `value` in every error printed from now on, as `get_secret` does for its own."""
+    if value:
+        _SEEN.add(str(value))
+
+
+def hide_secrets(text: str, secrets: Iterable[str] = ()) -> str:
+    """`text` with every secret seen so far, and each of `secrets`, replaced by `[hidden]`.
+
+    Each is hidden raw, as a URL or a form encodes it, since a driver error can quote the
+    request, and as SQLAlchemy escapes it in a statement it quotes: `%` doubled, and `:`
+    after a backslash.
+    """
+    for secret in sorted({*_SEEN, *secrets}, key=len, reverse=True):
+        if not secret:  # "" would put the mark between every two characters
+            continue
+        for form in sorted(_forms(secret), key=len, reverse=True):
+            text = text.replace(form, "[hidden]")
+    return text
+
+
+def _forms(secret: str) -> set[str]:
+    """`secret` as it can appear in an error: raw, URL- or form-encoded, or SQL-escaped."""
+    escaped = {secret.replace("%", "%%"), secret.replace(":", "\\:")}
+    return {secret, quote(secret), quote(secret, safe=""), quote_plus(secret), *escaped}
 
 
 def _get_ssm_client(region: Optional[str] = None):  # type: ignore[no-untyped-def]
@@ -69,7 +147,8 @@ def _parse_ssm_path(ssm_path: Union[str, dict]) -> tuple[str, Optional[str]]:
         return ssm_path, None
 
 
-def get_secret(
+# style-ok: 0.8's get_secret body, unchanged apart from its name
+def _find_secret(
     env_name: str,
     key: str,
     *,
@@ -77,36 +156,7 @@ def get_secret(
     aws_region: Optional[str] = None,
     required: bool = True,
 ) -> Optional[str]:
-    """
-    Get a secret value from SSM or environment variable.
-
-    Precedence:
-    1. SSM parameter at ssm_path (if provided) - use SSM directly
-    2. Environment variable CH_{ENV}_{KEY} (e.g., CH_DEV_MIGRATION_PASSWORD)
-    3. Legacy env var for migration_password: CH_{ENV}_PASSWORD
-    4. None (if not required) or raise ValueError
-
-    SSM path formats:
-    - Simple string: "/myproject/dev/password"
-    - With JSON key (hash suffix): "/myproject/credentials#password"
-    - With JSON key (object): {"path": "/myproject/credentials", "json_key": "password"}
-
-    Args:
-        env_name: Environment name (dev, staging, production)
-        key: Secret key (migration_password, admin_password, dict_reader_password)
-        ssm_path: Optional SSM parameter path (string or dict with path/json_key)
-        aws_region: Optional AWS region for SSM lookups (e.g., 'us-east-1')
-        required: Whether to raise if secret not found
-
-    Returns:
-        Secret value or None if not required and not found
-
-    Raises:
-        ValueError: If required and not found in env or SSM
-        SSMSecretNotFoundError: If SSM path provided but parameter not found
-        SSMJsonKeyError: If JSON key specified but not found in parameter value
-        ImportError: If SSM path provided but boto3 not installed
-    """
+    """`get_secret` without remembering what it found."""
     # If SSM path provided, use SSM directly (don't check env vars)
     if ssm_path:
         path, json_key = _parse_ssm_path(ssm_path)

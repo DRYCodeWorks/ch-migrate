@@ -1,17 +1,28 @@
 """Tests for bootstrap module."""
 
+import json
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+# The stand-in below replaces the `clickhouse_connect` module only; its driver stays real.
+import clickhouse_connect.driver.exceptions  # noqa: F401
 import pytest
+import yaml
 
+from ch_migrate.access.privileges import BUNDLED_LIST
+from ch_migrate.access.templates import statement
 from ch_migrate.bootstrap import (
     build_bootstrap_sql,
     escape_sql_string,
     run_bootstrap,
     validate_identifier,
 )
+
+# What 0.8's `build_bootstrap_sql` returned, recorded before it became a wrapper around the
+# `legacy` profile: one statement per line, comments dropped and whitespace collapsed.
+RECORDED_0_8 = Path(__file__).parent / "fixtures" / "access" / "build_bootstrap_sql_0_8.json"
 
 
 class TestEscapeSqlString:
@@ -179,6 +190,38 @@ class TestBuildBootstrapSql:
                 migration_password="secret",
             )
 
+    @pytest.mark.parametrize("case", sorted(json.loads(RECORDED_0_8.read_text())))
+    def test_returns_0_8_statements(self, case):
+        """The same statements as 0.8, password escaping included, in any order."""
+        recorded = json.loads(RECORDED_0_8.read_text())[case]
+        mcp, dict_reader = "mcp" in case, "dict_reader" in case
+        sql = build_bootstrap_sql(
+            project="shop",
+            db="shop_dev",
+            migration_user="shop_migrator",
+            migration_password="pw'one\\x",
+            mcp_user_name="shop_mcp" if mcp else None,
+            mcp_password="pw-mcp" if mcp else None,
+            dict_reader_name="shop_dict" if dict_reader else None,
+            dict_reader_password="pw-dict" if dict_reader else None,
+        )
+        assert sorted(_statements(sql)) == sorted(recorded)
+
+    def test_creates_roles_and_users_before_any_grant(self):
+        """Decision 6: 0.8 created the migration user last, after every grant."""
+        sql = build_bootstrap_sql(
+            project="myproject",
+            db="myproject_dev",
+            migration_user="migration_dev",
+            migration_password="secret123",
+            mcp_user_name="mcp_reader",
+            mcp_password="mcppass",
+        )
+        kinds = [" ".join(statement.split()[:2]) for statement in _statements(sql)]
+        # The migration and read-only roles, then the migration and MCP users.
+        assert kinds[:5] == ["CREATE DATABASE"] + ["CREATE ROLE"] * 2 + ["CREATE USER"] * 2
+        assert all(kind.startswith("GRANT") for kind in kinds[5:])
+
     def test_rejects_invalid_migration_user(self):
         with pytest.raises(ValueError, match="Invalid migration user"):
             build_bootstrap_sql(
@@ -190,7 +233,11 @@ class TestBuildBootstrapSql:
 
 
 class TestRunBootstrap:
-    """Integration tests for run_bootstrap() with mocked connections."""
+    """run_bootstrap() in legacy mode, against a stand-in for clickhouse_connect.
+
+    The stand-in answers like a 26.3 server holding nothing yet, so bootstrap reads back what
+    it granted and then checks, logged in as the migration user (design note, 2.5).
+    """
 
     @pytest.fixture
     def mock_env_config(self):
@@ -208,113 +255,159 @@ class TestRunBootstrap:
     def mock_clickhouse_connect(self):
         """Mock clickhouse_connect module for lazy import."""
         mock_module = MagicMock()
-        mock_client = MagicMock()
+        mock_client = _FakeClient()
         mock_module.get_client.return_value = mock_client
         return mock_module, mock_client
 
-    @patch("ch_migrate.bootstrap.get_secret")
-    @patch("ch_migrate.bootstrap.get_env_config")
-    def test_executes_sql_statements(
-        self, mock_get_env_config, mock_get_secret, mock_env_config, mock_clickhouse_connect
-    ):
+    @pytest.fixture(autouse=True)
+    def secrets(self, monkeypatch):
+        for name in ("ADMIN", "MIGRATION", "DICT_READER", "MCP"):
+            monkeypatch.delenv(f"CH_DEV_{name}_PASSWORD", raising=False)
+        monkeypatch.setenv("CH_DEV_ADMIN_PASSWORD", "adminpass")
+        monkeypatch.setenv("CH_DEV_MIGRATION_PASSWORD", "migrationpass")
+
+    def test_executes_sql_statements(self, tmp_path, mock_env_config, mock_clickhouse_connect):
         """Test that run_bootstrap executes SQL statements on the client."""
         mock_module, mock_client = mock_clickhouse_connect
-        mock_get_env_config.return_value = mock_env_config
-        mock_get_secret.side_effect = lambda env, key, **kwargs: {
-            "admin_password": "adminpass",
-            "migration_password": "migrationpass",
-        }.get(key)
+        config_path = _write_config(tmp_path, mock_env_config)
 
         with patch.dict(sys.modules, {"clickhouse_connect": mock_module}):
-            run_bootstrap("dev", config_path=Path("/fake/config.yaml"))
+            run_bootstrap("dev", config_path=config_path)
 
-        # Verify client was created with correct params
-        mock_module.get_client.assert_called_once()
-        call_kwargs = mock_module.get_client.call_args[1]
-        assert call_kwargs["host"] == "localhost"
-        assert call_kwargs["username"] == "default"
-        assert call_kwargs["password"] == "adminpass"
+        # The admin logs in first; then the migration user, to check its grants (2.5).
+        admin, migration = mock_module.get_client.call_args_list
+        assert admin.kwargs["host"] == "localhost"
+        assert admin.kwargs["username"] == "default"
+        assert admin.kwargs["password"] == "adminpass"
+        assert migration.kwargs["host"] == "localhost"
+        assert migration.kwargs["username"] == "migration_dev"
+        assert migration.kwargs["password"] == "migrationpass"
 
         # Verify SQL was executed
-        assert mock_client.command.call_count > 0
+        assert len(mock_client.commands) > 0
 
-    @patch("ch_migrate.bootstrap.get_secret")
-    @patch("ch_migrate.bootstrap.get_env_config")
     def test_dry_run_does_not_execute(
-        self, mock_get_env_config, mock_get_secret, mock_env_config, mock_clickhouse_connect
+        self, tmp_path, mock_env_config, mock_clickhouse_connect, monkeypatch
     ):
-        """Test that dry_run=True prints SQL without executing."""
+        """Test that dry_run=True prints SQL without executing, or reading a secret."""
         mock_module, mock_client = mock_clickhouse_connect
-        mock_get_env_config.return_value = mock_env_config
-        mock_get_secret.side_effect = lambda env, key, **kwargs: {
-            "admin_password": "adminpass",
-            "migration_password": "migrationpass",
-        }.get(key)
-
-        run_bootstrap("dev", config_path=Path("/fake/config.yaml"), dry_run=True)
-
-        # Client should not be created in dry run (import never happens)
-        mock_module.get_client.assert_not_called()
-
-    @patch("ch_migrate.bootstrap.get_secret")
-    @patch("ch_migrate.bootstrap.get_env_config")
-    def test_raises_without_migration_user(self, mock_get_env_config, mock_get_secret):
-        """Test that missing migration_user raises ValueError."""
-        mock_get_env_config.return_value = {
-            "host": "localhost",
-            "database": "myproject_dev",
-            # No migration_user or user field
-        }
-        mock_get_secret.side_effect = lambda env, key, **kwargs: "password"
-
-        with pytest.raises(ValueError, match="migration_user is required"):
-            run_bootstrap("dev", config_path=Path("/fake/config.yaml"))
-
-    @patch("ch_migrate.bootstrap.get_secret")
-    @patch("ch_migrate.bootstrap.get_env_config")
-    def test_supports_legacy_user_field(
-        self, mock_get_env_config, mock_get_secret, mock_clickhouse_connect
-    ):
-        """Test that legacy 'user' field is supported."""
-        mock_module, mock_client = mock_clickhouse_connect
-        mock_get_env_config.return_value = {
-            "host": "localhost",
-            "database": "myproject_dev",
-            "user": "migration_dev",  # Legacy field
-            "project": "myproject",
-            "secure": False,
-        }
-        mock_get_secret.side_effect = lambda env, key, **kwargs: "password"
+        monkeypatch.delenv("CH_DEV_ADMIN_PASSWORD")
+        monkeypatch.delenv("CH_DEV_MIGRATION_PASSWORD")
+        config_path = _write_config(tmp_path, mock_env_config)
 
         with patch.dict(sys.modules, {"clickhouse_connect": mock_module}):
-            run_bootstrap("dev", config_path=Path("/fake/config.yaml"))
+            run_bootstrap("dev", config_path=config_path, dry_run=True)
 
-        # Should work without error
-        mock_module.get_client.assert_called_once()
+        # Client should not be created in dry run
+        mock_module.get_client.assert_not_called()
 
-    @patch("ch_migrate.bootstrap.get_secret")
-    @patch("ch_migrate.bootstrap.get_env_config")
+    def test_raises_without_migration_user(self, tmp_path):
+        """Test that missing migration_user raises ValueError."""
+        config_path = _write_config(
+            tmp_path,
+            {
+                "host": "localhost",
+                "database": "myproject_dev",
+                # No migration_user or user field
+            },
+        )
+
+        with pytest.raises(ValueError, match="migration_user is required"):
+            run_bootstrap("dev", config_path=config_path)
+
+    def test_supports_legacy_user_field(self, tmp_path, mock_clickhouse_connect):
+        """Test that legacy 'user' field is supported."""
+        mock_module, mock_client = mock_clickhouse_connect
+        config_path = _write_config(
+            tmp_path,
+            {
+                "host": "localhost",
+                "database": "myproject_dev",
+                "user": "migration_dev",  # Legacy field
+                "project": "myproject",
+                "secure": False,
+            },
+        )
+
+        with patch.dict(sys.modules, {"clickhouse_connect": mock_module}):
+            run_bootstrap("dev", config_path=config_path)
+
+        # Should work without error: the admin, then the legacy field's user
+        logins = [call.kwargs["username"] for call in mock_module.get_client.call_args_list]
+        assert logins == ["default", "migration_dev"]
+
     def test_includes_optional_users_when_configured(
-        self, mock_get_env_config, mock_get_secret, mock_clickhouse_connect
+        self, tmp_path, mock_clickhouse_connect, monkeypatch
     ):
         """Test that dict_reader and mcp_user are included when configured."""
         mock_module, mock_client = mock_clickhouse_connect
-        mock_get_env_config.return_value = {
-            "host": "localhost",
-            "database": "myproject_dev",
-            "migration_user": "migration_dev",
-            "project": "myproject",
-            "dict_reader_name": "dict_reader",
-            "mcp_user_name": "mcp_user",
-            "secure": False,
-        }
-        mock_get_secret.side_effect = lambda env, key, **kwargs: f"{key}_value"
+        monkeypatch.setenv("CH_DEV_DICT_READER_PASSWORD", "dict_reader_password_value")
+        monkeypatch.setenv("CH_DEV_MCP_PASSWORD", "mcp_password_value")
+        config_path = _write_config(
+            tmp_path,
+            {
+                "host": "localhost",
+                "database": "myproject_dev",
+                "migration_user": "migration_dev",
+                "project": "myproject",
+                "dict_reader_name": "dict_reader",
+                "mcp_user_name": "mcp_user",
+                "secure": False,
+            },
+        )
 
         with patch.dict(sys.modules, {"clickhouse_connect": mock_module}):
-            run_bootstrap("dev", config_path=Path("/fake/config.yaml"))
+            run_bootstrap("dev", config_path=config_path)
 
         # Get all executed SQL
-        executed_sql = " ".join(str(call[0][0]) for call in mock_client.command.call_args_list)
+        executed_sql = " ".join(mock_client.commands)
 
         assert "dict_reader" in executed_sql
         assert "mcp_user" in executed_sql
+
+
+class _FakeClient:
+    """A 26.3 server holding no user or role yet, on its own disk; it records each command.
+
+    Every CHECK GRANT answers 1.
+    """
+
+    server_version = "26.3.1.1"
+
+    def __init__(self):
+        self.commands = []
+        self.rows = {
+            statement("live", "privileges"): json.loads(BUNDLED_LIST.read_text())["privileges"],
+            statement("live", "storage"): [{"type": "local_directory"}],
+        }
+
+    def command(self, sql, parameters=None, settings=None):
+        self.commands.append(sql)
+        return 1 if sql.startswith("CHECK GRANT") else None
+
+    def raw_query(self, sql, parameters=None, settings=None):
+        """A statement with a bound password, sent form-encoded in the request body."""
+        return self.command(sql, parameters, settings)
+
+    def query(self, sql, parameters=None, settings=None):
+        rows = self.rows.get(sql, [])
+        return SimpleNamespace(named_results=lambda: iter(rows))
+
+    def close(self):
+        pass
+
+
+def _write_config(tmp_path, environment):
+    """config.yaml with one environment, `dev`, as written; `project` goes under `project`."""
+    environment = dict(environment)
+    config = {"environments": {"dev": environment}}
+    if "project" in environment:
+        config["project"] = {"name": environment.pop("project")}
+    path = tmp_path / "config.yaml"
+    path.write_text(yaml.safe_dump(config))
+    return path
+
+
+def _statements(sql):
+    lines = [line for line in sql.splitlines() if not line.strip().startswith("--")]
+    return [" ".join(part.split()) for part in "\n".join(lines).split(";") if part.strip()]

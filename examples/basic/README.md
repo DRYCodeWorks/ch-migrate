@@ -52,8 +52,17 @@ A minimal example showing ch-migrate-cli in action.
    ch-migrate up dev
    ```
 
+7. Create the users and roles that `access.yaml` declares. `apply` sets the passwords of
+   the users it creates, so first add `CH_DEV_DASHBOARDS_PASSWORD` and
+   `CH_DEV_ETL_PASSWORD` to `.env.local`, or their SSM paths to `config.yaml`:
+   ```bash
+   ch-migrate access plan dev
+   ch-migrate access apply dev
+   ```
+
 ## Files
 
 - `config.yaml` - ClickHouse connection settings (edit hosts)
+- `access.yaml` - Users, roles and grants, declared
 - `.env.local.example` - Template for secrets
 - `migrations/sql/history/tables/users/001_example.sql` - Example table schema

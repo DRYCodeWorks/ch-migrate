@@ -7,10 +7,9 @@ import re
 from pathlib import Path
 from typing import Any
 
-
-def _get_sql_dir() -> Path:
-    """Get the SQL directory relative to current working directory."""
-    return Path.cwd() / "migrations" / "sql"
+# The Alembic config attribute that carries the environment's dict_reader_password secret
+# from the migration environment to create_dictionary.
+DICT_READER_PASSWORD_ATTRIBUTE = "ch_migrate_dict_reader_password"
 
 
 def read_sql(path: str, **kwargs: Any) -> str:
@@ -96,18 +95,23 @@ def get_config_value(key: str) -> str | None:
 
 def create_dictionary(path: str, *, db: str | None = None, password: str | None = None) -> None:
     """
-    Create a dictionary with automatic SELECT grant for dict_reader.
+    Create a dictionary; without an access.yaml, first grant dict_reader SELECT on its source.
 
     This helper:
-    1. Reads the dictionary SQL file
-    2. Parses the source table from the SQL
-    3. Grants SELECT on that table to dict_reader
-    4. Creates the dictionary
+    1. Reads the dictionary SQL file, filling in `{db}` and `{password}`
+    2. Without an access.yaml, grants SELECT on the source table to dict_reader
+    3. Creates the dictionary
+
+    With an access.yaml, the dictionary's reader and its SELECT are declared there, so the
+    helper grants nothing: the core profile can't grant, and `access apply` would revoke a
+    grant a migration gave that access.yaml doesn't declare.
 
     Args:
         path: Relative path to dictionary SQL file
         db: Database name (defaults to get_db())
-        password: dict_reader password (defaults to DICT_READER_PASSWORD env var)
+        password: the reader's password (defaults to DICT_READER_PASSWORD, else the
+            environment's dict_reader_password secret: its SSM path in config.yaml, or
+            CH_<ENV>_DICT_READER_PASSWORD)
 
     Example:
         create_dictionary("history/dictionaries/dict_users/001_abc.sql")
@@ -115,27 +119,21 @@ def create_dictionary(path: str, *, db: str | None = None, password: str | None 
     # Import here to avoid circular imports and allow usage without alembic context
     from alembic import op
 
+    from ch_migrate.secrets import remember_secret
+
     if db is None:
         db = get_db()
-    if password is None:
-        password = os.environ.get("DICT_READER_PASSWORD")
-        if not password:
-            raise ValueError(
-                "DICT_READER_PASSWORD environment variable is required for dictionaries."
-            )
-
-    # Read and format the dictionary SQL
+    password = password or _dict_reader_password()
+    # The statement carries the password as a literal, so an error that quotes it must hide it.
+    remember_secret(password)
     dict_sql = read_sql(path, db=db, password=password)
-
-    # Parse the source table from the SQL
     source_table = _parse_source_table(dict_sql)
-
-    if source_table:
-        # Grant SELECT to dict_reader before creating dictionary
+    if source_table and not _has_access_file():
+        # style-ok: GRANT names identifiers, which ClickHouse can't take as bound parameters
         op.execute(f"GRANT SELECT ON {db}.{source_table} TO dict_reader")
-
-    # Create the dictionary
-    op.execute(dict_sql)
+    # SQLAlchemy reads `:name` as a bind parameter, so a password starting with `:` broke the
+    # statement. `\:` keeps the colon, as run_sql does.
+    op.execute(dict_sql.replace(":", r"\:"))
 
 
 def _parse_source_table(dict_sql: str) -> str | None:
@@ -160,3 +158,34 @@ def _parse_source_table(dict_sql: str) -> str | None:
         return query_match.group(1)
 
     return None
+
+
+def _dict_reader_password() -> str:
+    # The migration environment resolves config.yaml's dict_reader_password secret, from SSM
+    # or CH_<ENV>_DICT_READER_PASSWORD, and hands it over in memory (alembic_env.run).
+    from alembic import context
+
+    password = os.environ.get("DICT_READER_PASSWORD") or context.config.attributes.get(
+        DICT_READER_PASSWORD_ATTRIBUTE
+    )
+    if not password:
+        raise ValueError(
+            "create_dictionary needs the dictionary reader's password: set "
+            "CH_<ENV>_DICT_READER_PASSWORD, an ssm path for dict_reader_password in "
+            "config.yaml, or DICT_READER_PASSWORD."
+        )
+    return password
+
+
+def _has_access_file() -> bool:
+    # access.yaml sits beside config.yaml in the project root, the working directory during
+    # a migration, as migrations/sql does for _get_sql_dir. The access commands' rule decides:
+    # an empty one is an error, not legacy mode.
+    from ch_migrate.access.loader import declares_access
+
+    return declares_access(Path.cwd())
+
+
+def _get_sql_dir() -> Path:
+    """Get the SQL directory relative to current working directory."""
+    return Path.cwd() / "migrations" / "sql"

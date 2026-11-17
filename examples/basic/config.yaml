@@ -5,7 +5,6 @@ defaults:
   port: 8443
   secure: true
   admin_user: default
-  dict_reader_name: dict_reader
 
 environments:
   dev:
